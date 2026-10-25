@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, UpdateOne
 import os
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
@@ -1248,22 +1248,28 @@ def _user_can_pin_chat(user_id: str, chat_id: str) -> bool:
 
 @app.on_event("startup")
 async def startup_db():
-    await cl_users.create_index("chatId", unique=True)
-    await cl_users.create_index("login.email", unique=True)
-    await cl_users.create_index("login.sessions.tokenHash")
-    await cl_users.create_index("profile.username", unique=True)
-    await cl_chats.create_index([("participants", 1)])
-    await cl_chats.create_index([("updatedAt", -1)])
-    await cl_messages.create_index("chatId")
-    await cl_messages.create_index([("chatId", 1), ("timestamp", -1)])
-    await cl_ai_messages.create_index("userId")
-    await cl_ai_messages.create_index(
-        [("userId", 1), ("aiChatId", 1), ("timestamp", -1)]
-    )
-    await cl_ai_chats.create_index([("userId", 1), ("updatedAt", -1)])
-    await cl_users.update_many({}, {"$set": {"online": False, "wsConnectionCount": 0}})
-    await migrate_unencrypted_messages()
-    await encrypt_existing_uploads()
+    try:
+        await asyncio.gather(
+            cl_users.create_index("chatId", unique=True),
+            cl_users.create_index("login.email", unique=True),
+            cl_users.create_index("login.sessions.tokenHash"),
+            cl_users.create_index("profile.username", unique=True),
+            cl_chats.create_index([("participants", 1)]),
+            cl_chats.create_index([("updatedAt", -1)]),
+            cl_messages.create_index("chatId"),
+            cl_messages.create_index([("chatId", 1), ("timestamp", -1)]),
+            cl_ai_messages.create_index("userId"),
+            cl_ai_messages.create_index(
+                [("userId", 1), ("aiChatId", 1), ("timestamp", -1)]
+            ),
+            cl_ai_chats.create_index([("userId", 1), ("updatedAt", -1)]),
+            return_exceptions=True,
+        )
+        await cl_users.update_many({}, {"$set": {"online": False, "wsConnectionCount": 0}})
+    except Exception as e:
+        print(f"Startup DB warning: {e}")
+    asyncio.create_task(migrate_unencrypted_messages())
+    asyncio.create_task(encrypt_existing_uploads())
 
 
 async def migrate_unencrypted_messages():

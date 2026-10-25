@@ -50,6 +50,13 @@ fi
 
 .venv/bin/python3 -m uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
+
+echo -n "[*] Waiting for backend startup to complete..."
+while ! curl -s http://127.0.0.1:8000/health >/dev/null 2>&1; do
+    sleep 0.5
+    echo -n "."
+done
+echo -e " ${GREEN}[Ready]${NC}"
 echo -e "${GREEN}[✓] Backend running at http://localhost:8000 (PID: $BACKEND_PID)${NC}"
 
 echo -e "\n${GREEN}[2/2] Starting Frontend (Vite)...${NC}"
