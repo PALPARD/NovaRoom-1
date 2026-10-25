@@ -77,7 +77,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure HS256 secret is at least 32 bytes to avoid PyJWT InsecureKeyLengthWarning.
 _raw_secret = os.getenv("SECRET_KEY", "")
 if not _raw_secret:
     _raw_secret = "dev-secret-change-me"
@@ -101,14 +100,12 @@ cl_ai_messages = db["ai_messages"]
 cl_ai_chats = db["ai_chats"]
 cl_ai_usage = db["ai_usage"]
 
-# Store active connections (multiple tabs/devices per user)
 active_connections: Dict[str, List[WebSocket]] = {}
 active_ai_connections: Dict[str, List[WebSocket]] = {}
 active_ai_stream_tasks: Dict[str, asyncio.Task] = {}
 
 security = HTTPBearer()
 
-# Valid emojis for reactions
 VALID_REACTIONS = [
     "👍",
     "👎",
@@ -132,7 +129,6 @@ VALID_REACTIONS = [
     "😨",
 ]
 
-# Pin settings
 MAX_PINNED_CHATS = 20
 MAX_CHAT_MESSAGE_LENGTH = 6000
 MAX_AI_MESSAGE_LENGTH = 3000
@@ -285,8 +281,6 @@ def decrypt_with_fallback(cipher: Any, token: str, scope: str) -> str:
         value = str(cipher or "")
         if not is_ciphertext(value):
             return value
-        # Compatibility path for legacy non-AI records encrypted server-side
-        # before client-side E2EE rollout.
         plain = _decrypt_scoped_text_raw(value, token, scope)
         if plain:
             return plain
@@ -302,7 +296,6 @@ def decrypt_with_fallback(cipher: Any, token: str, scope: str) -> str:
     legacy_plain = decrypt_scoped_text(cipher, LEGACY_BOOTSTRAP_TOKEN, scope)
     if legacy_plain:
         return legacy_plain
-    # Prevent empty UI bubbles when decrypt fails for unknown legacy formats.
     return "🔐"
 
 
@@ -377,7 +370,6 @@ async def _remap_forward_file_to_target_chat(
     target_scope = f"chat:{target_chat_id}"
     plain = decrypt_client_file_bytes(source_raw, source_scope)
     if plain is None:
-        # Unknown/legacy format; keep original bytes instead of corrupting payload.
         plain = source_raw
     remapped_raw = encrypt_client_file_bytes(plain, target_scope)
 
@@ -417,8 +409,6 @@ async def _remap_forward_file_to_target_chat(
                 else remapped_meta.get("coverArtUrl")
             )
 
-    # Image/video preview assets are not chat-scoped encrypted.
-    # Reuse original preview references so forwarded media keeps its cover.
     for key in ("previewUrl", "thumbUrl", "imagePreviewUrl", "previewFileId"):
         if key in file_meta and file_meta.get(key):
             remapped_meta[key] = file_meta.get(key)
@@ -444,7 +434,6 @@ def dt_to_epoch_ms(dt: Any) -> int:
     if dt is None:
         return int(utc_now().timestamp() * 1000)
     if isinstance(dt, (int, float)):
-        # support ms/seconds
         v = float(dt)
         if v < 1_000_000_000_000:
             v *= 1000
@@ -452,7 +441,6 @@ def dt_to_epoch_ms(dt: Any) -> int:
 
     if isinstance(dt, datetime):
         if dt.tzinfo is None:
-            # Mongo returns naive datetimes; we store them as UTC.
             dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp() * 1000)
 
@@ -540,7 +528,6 @@ def should_delete_file_with_message(message_doc: Dict[str, Any]) -> bool:
     file_id = str(file_data.get("fileId") or "").strip()
     if not file_id:
         return False
-    # Forwarded messages share source fileId and must not remove file from server.
     return not bool(message_doc.get("forwardedFrom"))
 
 
@@ -555,19 +542,16 @@ def extract_message_file_ids(message_doc: Dict[str, Any]) -> List[str]:
 
 
 async def jwt_encode_async(payload: dict) -> str:
-    # Offload JWT crypto to a worker thread.
     return await asyncio.to_thread(jwt.encode, payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 async def jwt_decode_async(token: str) -> dict:
-    # Offload JWT crypto to a worker thread.
     return await asyncio.to_thread(
         jwt.decode, token, SECRET_KEY, algorithms=[ALGORITHM]
     )
 
 
 async def bcrypt_checkpw_async(password: str, stored_hash: str) -> bool:
-    # bcrypt is CPU-bound; run it off the event loop.
     pw = password.encode("utf-8")
     sh = stored_hash.encode("utf-8")
     return await asyncio.to_thread(bcrypt.checkpw, pw, sh)
@@ -1220,12 +1204,10 @@ async def _filter_recipients_by_block_status(
 
 
 def _user_can_pin_chat(user_id: str, chat_id: str) -> bool:
-    # Allow pin for saved messages.
     if chat_id == get_saved_messages_id(user_id):
         return True
     if is_official_channel_chat(chat_id):
         return True
-    # Allow only real chat ids.
     return isinstance(chat_id, str) and (
         chat_id.startswith("chat_") or chat_id.startswith("grp_")
     )
@@ -1352,7 +1334,6 @@ async def pin_chat(
     if not _user_can_pin_chat(user_id, chat_id):
         raise HTTPException(status_code=400, detail="Invalid chatId")
 
-    # Ensure user can access chat (except saved messages)
     if chat_id != get_saved_messages_id(user_id) and not is_official_channel_chat(
         chat_id
     ):
@@ -1498,12 +1479,10 @@ async def unblock_user(
 @limiter.limit("5/minute;20/hour")
 async def register_email(request: Request, req: RegisterEmailRequest):
     """Step 1: Send verification code to email"""
-    # Check if email already exists
     existing_user = await cl_users.find_one({"login.email": req.email})
     if existing_user:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    # Send verification email
     code = await send_verification_email(req.email)
     if not code:
         raise HTTPException(status_code=500, detail="Failed to send verification email")
@@ -1515,7 +1494,6 @@ async def register_email(request: Request, req: RegisterEmailRequest):
 @limiter.limit("5/minute;20/hour")
 async def verify_registration_code(request: Request, req: VerifyCodeRequest):
     """Step 2: Verify the code sent to email"""
-    # Verify the code
     is_valid = await verify_code(req.email, req.code)
     if not is_valid:
         raise HTTPException(
@@ -1529,17 +1507,14 @@ async def verify_registration_code(request: Request, req: VerifyCodeRequest):
 @limiter.limit("5/minute;20/hour")
 async def complete_registration(req: CompleteRegistrationRequest, request: Request):
     """Step 3: Complete registration with name, username and password"""
-    # Check if email already exists
     existing_user = await cl_users.find_one({"login.email": req.email})
     if existing_user:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    # Validate username
     desired_username = normalize_username(req.username)
     if not validate_username(desired_username):
         raise HTTPException(status_code=400, detail="Invalid username format")
 
-    # Check if username is taken
     existing_username = await cl_users.find_one(
         {
             "profile.username": {
@@ -1551,20 +1526,16 @@ async def complete_registration(req: CompleteRegistrationRequest, request: Reque
     if existing_username:
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    # Generate unique chatId
     chat_id = f"user_{uuid.uuid4().hex[:16]}"
 
-    # Hash password
     def _hash_password(password: str) -> str:
         return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     hashed_password = await asyncio.to_thread(_hash_password, req.password)
 
-    # Get current Jalali date
     now_jalali = jdatetime.datetime.now()
     registration_date = f"{now_jalali.year}/{now_jalali.month}/{now_jalali.day}"
 
-    # Create user document
     user_doc = {
         "chatId": chat_id,
         "login": {"email": req.email, "password": hashed_password, "sessions": []},
@@ -1586,10 +1557,8 @@ async def complete_registration(req: CompleteRegistrationRequest, request: Reque
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-    # Generate token
     token = await create_access_token({"chatId": chat_id})
 
-    # Save hashed token session in database
     device_name = normalize_device_name(req.deviceName) or normalize_device_name(
         request.headers.get("x-device-name")
     )
@@ -1616,13 +1585,10 @@ async def complete_registration(req: CompleteRegistrationRequest, request: Reque
 @limiter.limit("5/minute;20/hour")
 async def request_password_reset(request: Request, req: PasswordResetRequest):
     """Request password reset - sends code to email"""
-    # Check if email exists
     user = await cl_users.find_one({"login.email": req.email})
     if not user:
-        # Don't reveal if email exists or not for security
         return {"message": "If the email exists, a reset code has been sent"}
 
-    # Send reset code
     code = await send_password_reset_email(req.email)
     if not code:
         raise HTTPException(status_code=500, detail="Failed to send reset email")
@@ -1634,23 +1600,19 @@ async def request_password_reset(request: Request, req: PasswordResetRequest):
 @limiter.limit("5/minute;20/hour")
 async def verify_and_reset_password(request: Request, req: PasswordResetVerifyRequest):
     """Verify reset code and change password"""
-    # Verify the code
     is_valid = await verify_reset_code(req.email, req.code)
     if not is_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
 
-    # Check if user exists
     user = await cl_users.find_one({"login.email": req.email})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Hash new password
     def _hash_password(password: str) -> str:
         return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     hashed_password = await asyncio.to_thread(_hash_password, req.new_password)
 
-    # Update password
     await cl_users.update_one(
         {"login.email": req.email},
         {
@@ -1659,7 +1621,6 @@ async def verify_and_reset_password(request: Request, req: PasswordResetVerifyRe
         },
     )
 
-    # Clear the reset code
     await clear_reset_code(req.email)
 
     return {"message": "Password reset successful"}
@@ -2048,7 +2009,6 @@ async def leave_group(
         {"$pull": {"participants": my_id}, "$set": {"updatedAt": utc_now()}},
     )
 
-    # If no members left, clean up the group.
     updated = await cl_chats.find_one({"_id": chat_id}, {"participants": 1})
     remaining = (updated or {}).get("participants", []) or []
     if not remaining:
@@ -2127,7 +2087,6 @@ async def get_chat_list(
         await cl_chats.find({"participants": my_id}).sort("updatedAt", -1).to_list(50)
     )
 
-    # Check if user has saved messages
     saved_chat_id = get_saved_messages_id(my_id)
     saved_count = await cl_messages.count_documents({"chatId": saved_chat_id})
 
@@ -2138,7 +2097,6 @@ async def get_chat_list(
 
     chat_ids = [c["_id"] for c in chats]
 
-    # Resolve other users in one query (avoid N+1 queries)
     other_ids: List[str] = []
     for c in chats:
         other_id = next(
@@ -2152,7 +2110,6 @@ async def get_chat_list(
     )
     user_by_id = {u["chatId"]: u for u in other_users}
 
-    # Compute unread counts in one aggregation (avoid N count_documents)
     unread_map: Dict[str, int] = {}
     unread_rows = await cl_messages.aggregate(
         [
@@ -2281,7 +2238,6 @@ async def get_chat_list(
             }
         )
 
-    # Add saved messages chat if it has messages
     if saved_count > 0:
         saved_msg = (
             await cl_messages.find({"chatId": saved_chat_id})
@@ -2486,7 +2442,6 @@ async def delete_chat(
 ):
     my_id = current_user["chatId"]
 
-    # Prevent deleting saved messages via normal delete endpoint
     saved_chat_id = get_saved_messages_id(my_id)
     if chat_id == saved_chat_id:
         raise HTTPException(status_code=403, detail="Cannot delete saved messages")
@@ -2499,7 +2454,6 @@ async def delete_chat(
     if my_id not in participants:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    # For groups, only verified users can delete the whole group.
     if chat.get("chatType") == "group" and not bool(
         current_user.get("verified", False)
     ):
@@ -2507,7 +2461,6 @@ async def delete_chat(
             status_code=403, detail="Only verified users can delete groups"
         )
 
-    # Delete associated files
     messages = await cl_messages.find({"chatId": chat_id}).to_list(None)
     for msg in messages:
         if should_delete_file_with_message(msg):
@@ -2577,10 +2530,8 @@ async def get_messages(
             ]
         }
 
-    # Check if this is saved messages
     saved_chat_id = get_saved_messages_id(current_user_id)
     if chat_id == saved_chat_id:
-        # For saved messages, don't mark as seen (no seenBy logic needed)
         query: Dict[str, Any] = {"chatId": chat_id}
         extra = _cursor_filter()
         if extra:
@@ -2686,7 +2637,6 @@ async def get_messages(
         if current_user_id not in participants:
             raise HTTPException(status_code=403, detail="Not allowed")
 
-    # Mark messages as seen by the current user.
     await cl_messages.update_many(
         {"chatId": chat_id, "seenBy": {"$ne": current_user_id}},
         {"$addToSet": {"seenBy": current_user_id}},
@@ -2710,8 +2660,6 @@ async def get_messages(
         seen_by = m.get("seenBy", []) or []
         sender_id = m.get("senderId")
 
-        # For my outgoing messages, "seen" should mean the other participant(s) saw it,
-        # not that I (the sender) saw my own message.
         if sender_id == current_user_id:
             if not participants:
                 return False
@@ -2720,7 +2668,6 @@ async def get_messages(
                 return False
             return any(p in seen_by for p in other_participants)
 
-        # For incoming messages (only used by UI as theirs), keep it consistent.
         return current_user_id in seen_by
 
     payload = [
@@ -2798,7 +2745,6 @@ async def get_messages(
     }
 
 
-# File upload endpoint
 @app.post("/files/upload")
 @limiter.limit("30/minute;500/hour")
 async def upload_file(
@@ -2810,7 +2756,6 @@ async def upload_file(
 ):
     file_content = await file.read()
 
-    # Validate size
     if len(file_content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=413,
@@ -2818,7 +2763,6 @@ async def upload_file(
         )
 
     try:
-        # Save file and get metadata
         file_metadata = await save_uploaded_file(
             file_content, file.filename or "unnamed"
         )
@@ -2844,7 +2788,6 @@ async def upload_file(
         raise HTTPException(status_code=500, detail="Failed to upload file")
 
 
-# File download endpoint
 @app.get("/files/{file_id}")
 @limiter.limit("100/minute;2000/hour")
 async def download_file(
@@ -2852,7 +2795,6 @@ async def download_file(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    # Validate file exists
     if not validate_file_access(file_id):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -2928,11 +2870,9 @@ async def add_reaction(
     user_id = current_user["chatId"]
     emoji = req.emoji
 
-    # Validate emoji
     if emoji not in VALID_REACTIONS:
         raise HTTPException(status_code=400, detail="Invalid emoji")
 
-    # Get message
     oid = await try_object_id(message_id)
     if not oid:
         raise HTTPException(status_code=400, detail="Invalid message ID")
@@ -2943,29 +2883,22 @@ async def add_reaction(
 
     reactions = msg.get("reactions", [])
 
-    # Find user's existing reaction
     user_reaction = next((r for r in reactions if r.get("userId") == user_id), None)
 
     if user_reaction:
         if user_reaction.get("emoji") == emoji:
-            # Same emoji - remove it (toggle off)
             reactions = [r for r in reactions if r.get("userId") != user_id]
         else:
-            # Different emoji - replace it
             for r in reactions:
                 if r.get("userId") == user_id:
                     r["emoji"] = emoji
     else:
-        # Add new reaction
         reactions.append({"userId": user_id, "emoji": emoji})
 
-    # Update message with raw reactions
     await cl_messages.update_one({"_id": oid}, {"$set": {"reactions": reactions}})
 
-    # Aggregate for broadcast
     aggregated_reactions = aggregate_reactions(reactions)
 
-    # Broadcast to participants
     saved_chat_id = get_saved_messages_id(user_id)
     is_saved = chat_id == saved_chat_id
 
@@ -3066,7 +2999,6 @@ async def remove_reaction(
     """Remove user's reaction from a message"""
     user_id = current_user["chatId"]
 
-    # Get message
     oid = await try_object_id(message_id)
     if not oid:
         raise HTTPException(status_code=400, detail="Invalid message ID")
@@ -3077,16 +3009,12 @@ async def remove_reaction(
 
     reactions = msg.get("reactions", [])
 
-    # Remove user's reaction
     reactions = [r for r in reactions if r.get("userId") != user_id]
 
-    # Update message
     await cl_messages.update_one({"_id": oid}, {"$set": {"reactions": reactions}})
 
-    # Aggregate for broadcast
     aggregated_reactions = aggregate_reactions(reactions)
 
-    # Broadcast to participants
     saved_chat_id = get_saved_messages_id(user_id)
     is_saved = chat_id == saved_chat_id
 
@@ -3125,16 +3053,13 @@ async def forward_message(
     message_id = req.messageId
     target_chat_id = req.targetChatId
 
-    # Get original message - check all collections
     oid = await try_object_id(message_id)
     if not oid:
         raise HTTPException(status_code=400, detail="Invalid message ID")
 
-    # Try to find in regular messages first
     original_msg = await cl_messages.find_one({"_id": oid})
     is_ai_message = False
 
-    # If not found, try AI messages
     if not original_msg:
         original_msg = await cl_ai_messages.find_one({"_id": oid})
         is_ai_message = True
@@ -3142,22 +3067,18 @@ async def forward_message(
     if not original_msg:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # Check if user has access to the original message
     if is_ai_message:
-        # For AI messages, check if it belongs to the user
         if original_msg.get("userId") != user_id:
             raise HTTPException(status_code=403, detail="Not authorized")
     else:
         original_chat_id = original_msg.get("chatId")
         saved_chat_id = get_saved_messages_id(user_id)
 
-        # For saved messages, only the owner can forward
         if original_chat_id == saved_chat_id:
-            pass  # User can forward their own saved messages
+            pass
         elif is_official_channel_chat(original_chat_id):
-            pass  # Everyone can read/forward from official channel
+            pass
         else:
-            # For regular chats, check if user is a participant
             chat_doc = await cl_chats.find_one({"_id": original_chat_id})
             if not chat_doc:
                 raise HTTPException(status_code=404, detail="Original chat not found")
@@ -3166,7 +3087,6 @@ async def forward_message(
             if user_id not in participants:
                 raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Check if target chat exists or is saved messages or official channel
     is_target_saved = target_chat_id == get_saved_messages_id(user_id)
     is_target_official = is_official_channel_chat(target_chat_id)
     if is_target_official and not bool(current_user.get("verified", False)):
@@ -3200,7 +3120,6 @@ async def forward_message(
     )
     client_id = str(req.clientId or "").strip()
 
-    # Get original sender info and file data
     file_data = None
     source_chat_for_file = ""
     if is_ai_message:
@@ -3212,8 +3131,6 @@ async def forward_message(
                 "username": "novaroom_ai",
             }
         else:
-            # AI history also stores user's own messages with role="user".
-            # Preserve user as original source so re-forwarding keeps this label.
             profile = current_user.get("profile", {})
             forwarded_from_info = {
                 "originalSenderId": user_id,
@@ -3269,8 +3186,6 @@ async def forward_message(
             ).strip()
 
         if existing_original_sender_id:
-            # Preserve the original forwarded label chain:
-            # if message is already forwarded, keep its first source.
             forwarded_from_info = {
                 "originalSenderId": existing_original_sender_id,
                 "name": existing_name,
@@ -3323,7 +3238,6 @@ async def forward_message(
             ai_model_label_from_key(ai_model_key) if ai_model_key else None
         )
 
-    # Create forwarded message
     target_scope = f"chat:{target_chat_id}"
     encrypted_forward_text = (
         provided_encrypted_text
@@ -3342,7 +3256,7 @@ async def forward_message(
         "textEncrypted": True,
         "timestamp": utc_now(),
         "seenBy": [user_id],
-        "replyTo": None,  # Forwarded messages don't preserve replies
+        "replyTo": None,
         "reactions": [],
         "forwardedFrom": forwarded_from_info,
         "reasoningContent": encrypted_forward_reasoning,
@@ -3352,7 +3266,6 @@ async def forward_message(
         "aiModelName": ai_model_name,
     }
 
-    # Add file data if present (remap encrypted bytes to target chat scope)
     if file_data:
         remapped_file = await _remap_forward_file_to_target_chat(
             dict(file_data),
@@ -3374,14 +3287,12 @@ async def forward_message(
         "file": file_data,
     }
 
-    # Update chat document (only for non-saved chats)
     if not is_target_saved and not is_target_official:
         await cl_chats.update_one(
             {"_id": target_chat_id},
             {"$set": {"lastMessage": last_msg, "updatedAt": utc_now()}},
         )
 
-    # Broadcast to participants
     participants_to_notify = [user_id] if is_target_saved else []
     if is_target_official:
         participants_to_notify = await cl_users.distinct("chatId", {})
@@ -3450,7 +3361,6 @@ async def safe_send(user_id: str, message: dict):
 
 
 async def broadcast(user_ids: Iterable[str], payload: dict):
-    # Concurrently send to many users; safe_send handles cleaning dead sockets.
     await asyncio.gather(
         *(safe_send(uid, payload) for uid in set(user_ids)), return_exceptions=True
     )
@@ -3727,7 +3637,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 )
 
         if became_online:
-            # Notify contacts (only on first active connection)
             user_chats = await cl_chats.find({"participants": chat_id}).to_list(None)
             contacts_to_notify = set()
             for chat in user_chats:
@@ -3749,8 +3658,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 data = await asyncio.wait_for(websocket.receive_json(), timeout=70)
                 last_client_activity = time.time()
             except asyncio.TimeoutError:
-                # Proactively probe silent/stale connections so online status
-                # doesn't stay "stuck" for a long time on abrupt network drops.
                 if (time.time() - last_client_activity) >= WS_IDLE_TIMEOUT_SEC:
                     try:
                         await websocket.close(code=1001)
@@ -3770,17 +3677,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 text = data.get("text", "")
                 reply_to_id = data.get("replyToId")
                 client_id = data.get("clientId")
-                file_data = data.get("file")  # File metadata from upload endpoint
+                file_data = data.get("file")
                 if not isinstance(text, str):
                     continue
                 if len(text) > MAX_CHAT_MESSAGE_LENGTH:
                     continue
 
-                # Allow empty text if file is present
                 if not chat_id_target or (not text.strip() and not file_data):
                     continue
 
-                # Check if this is saved messages
                 saved_chat_id = get_saved_messages_id(chat_id)
                 is_saved = chat_id_target == saved_chat_id
                 is_official = is_official_channel_chat(chat_id_target)
@@ -3847,7 +3752,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                         reply_to.get("text", ""), token, chat_scope
                     )
 
-                # Add file data if present
                 if file_data:
                     message_doc["file"] = file_data
 
@@ -3862,7 +3766,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     "file": file_data,
                 }
 
-                # Only update chat document for normal chats (not saved messages)
                 if not is_saved and not is_official:
                     await cl_chats.update_one(
                         {"_id": chat_id_target},
@@ -3953,7 +3856,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     },
                 )
 
-                # Update lastMessage text if it points to this message.
                 if not is_saved and not is_official:
                     await cl_chats.update_one(
                         {"_id": chat_id_target, "lastMessage.id": message_id},
@@ -4043,14 +3945,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     if not chat_doc or chat_id not in chat_doc.get("participants", []):
                         continue
 
-                # Delete associated file if present
                 if should_delete_file_with_message(msg):
                     for file_id in extract_message_file_ids(msg):
                         await delete_file(file_id)
 
                 await cl_messages.delete_one({"_id": oid})
 
-                # Rebuild lastMessage if needed.
                 last_msg = None
                 if not is_saved and not is_official:
                     last_msg = await build_last_message(chat_id_target, token)
@@ -4092,7 +3992,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             elif data.get("type") == "seen":
                 chat_id_target = data.get("chatId")
                 if chat_id_target:
-                    # Skip seen logic for saved messages
                     saved_chat_id = get_saved_messages_id(chat_id)
                     if chat_id_target == saved_chat_id:
                         continue
@@ -4144,7 +4043,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 if not chat_id_target:
                     continue
 
-                # Ignore saved messages typing indicator.
                 saved_chat_id = get_saved_messages_id(chat_id)
                 if chat_id_target == saved_chat_id or is_official_channel_chat(
                     chat_id_target
@@ -4178,7 +4076,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 if not chat_id_target:
                     continue
 
-                # Ignore saved messages upload indicator.
                 saved_chat_id = get_saved_messages_id(chat_id)
                 if chat_id_target == saved_chat_id or is_official_channel_chat(
                     chat_id_target
@@ -4544,7 +4441,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 
                 became_offline = await mark_user_disconnected(chat_id)
                 if became_offline:
-                    # Notify contacts of offline status (only when last connection is gone)
                     user_chats = await cl_chats.find({"participants": chat_id}).to_list(
                         None
                     )
@@ -5032,7 +4928,6 @@ async def websocket_ai_endpoint(websocket: WebSocket, token: str = Query(...)):
                 try:
                     ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
                 except HTTPException:
-                    # In rare race cases, chat can be created immediately before ws send.
                     await asyncio.sleep(0.12)
                     try:
                         ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
@@ -5059,7 +4954,6 @@ async def websocket_ai_endpoint(websocket: WebSocket, token: str = Query(...)):
                     )
                     continue
 
-                # Save user message
                 user_message_doc = {
                     "userId": user_id,
                     "aiChatId": ai_chat_id,

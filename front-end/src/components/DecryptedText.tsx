@@ -97,7 +97,7 @@ export default function DecryptedText({
         for (let i = len - 1; i >= 0; i--) order.push(i);
         return order;
       }
-      // center
+      
       const middle = Math.floor(len / 2);
       let offset = 0;
       while (order.length < len) {
@@ -151,13 +151,13 @@ export default function DecryptedText({
 
   const triggerReverse = useCallback(() => {
     if (sequential) {
-      // compute forward order then reverse it: we'll remove indices in that order
+      
       orderRef.current = computeOrder(text.length).slice().reverse();
       pointerRef.current = 0;
-      setRevealedIndices(fillAllIndices()); // start fully revealed
+      setRevealedIndices(fillAllIndices()); 
       setDisplayText(shuffleText(text, fillAllIndices()));
     } else {
-      // non-seq: start from fully revealed as well
+      
       setRevealedIndices(fillAllIndices());
       setDisplayText(shuffleText(text, fillAllIndices()));
     }
@@ -199,7 +199,7 @@ export default function DecryptedText({
     intervalRef.current = setInterval(() => {
       setRevealedIndices(prevRevealed => {
         if (sequential) {
-          // Forward
+          
           if (direction === 'forward') {
             if (prevRevealed.size < text.length) {
               const nextIndex = getNextIndex(prevRevealed);
@@ -214,7 +214,7 @@ export default function DecryptedText({
               return prevRevealed;
             }
           }
-          // Reverse
+          
           if (direction === 'reverse') {
             if (pointerRef.current < orderRef.current.length) {
               const idxToRemove = orderRef.current[pointerRef.current++];
@@ -235,7 +235,7 @@ export default function DecryptedText({
             }
           }
         } else {
-          // Non-Sequential
+          
           if (direction === 'forward') {
             setDisplayText(shuffleText(text, prevRevealed));
             currentIteration++;
@@ -248,7 +248,7 @@ export default function DecryptedText({
             return prevRevealed;
           }
 
-          // Non-Sequential Reverse
+          
           if (direction === 'reverse') {
             let currentSet = prevRevealed;
             if (currentSet.size === 0) {
@@ -262,7 +262,7 @@ export default function DecryptedText({
               clearInterval(intervalRef.current ?? undefined);
               setIsAnimating(false);
               setIsDecrypted(false);
-              // ensure final scrambled state
+              
               setDisplayText(shuffleText(text, new Set()));
               return new Set();
             }
@@ -289,7 +289,7 @@ export default function DecryptedText({
     useOriginalCharsOnly
   ]);
 
-  /* Click Behaviour */
+  
   const handleClick = () => {
     if (animateOn !== 'click') return;
 
@@ -309,7 +309,7 @@ export default function DecryptedText({
     }
   };
 
-  /* Hover Behaviour */
+  
   const triggerHoverDecrypt = useCallback(() => {
     if (isAnimating) return;
 
@@ -329,7 +329,7 @@ export default function DecryptedText({
     setDirection('forward');
   }, [text]);
 
-  /* View Observer */
+  
   useEffect(() => {
     if (animateOn !== 'view' && animateOn !== 'inViewHover') return;
 

@@ -33,15 +33,15 @@ function getInitials(name: string): string {
 const sizeMap = { xs: 28, sm: 40, md: 48, lg: 64, xl: 80 };
 const iconSizeMap = { xs: 14, sm: 20, md: 24, lg: 32, xl: 40 };
 
-// Global cache: src key → blob URL (or passthrough URL for data/blob/http)
+
 const avatarCache = new Map<string, string>();
-// In-flight requests to avoid duplicates
+
 const avatarFetching = new Map<string, Promise<string>>();
 
 function resolveAvatarUrl(src: string): string {
   if (!src) return '';
 
-  // Passthrough for local URLs
+  
   if (src.startsWith('blob:')) return src;
   if (src.startsWith('data:')) return src;
 
@@ -52,7 +52,7 @@ function resolveAvatarUrl(src: string): string {
       !src.includes('/files/') &&
       !src.includes('/avatars/')
     ) {
-      const fileId = src.slice(API_BASE_URL.length).replace(/^\//, '');
+      const fileId = src.slice(API_BASE_URL.length).replace(/^\
       if (fileId) return `${API_BASE_URL}/files/${fileId}`;
     }
     return src;
@@ -63,7 +63,7 @@ function resolveAvatarUrl(src: string): string {
     return `${API_BASE_URL}${src}`;
   }
 
-  // Treat everything else as fileId
+  
   return `${API_BASE_URL}/files/${src}`;
 }
 
@@ -77,14 +77,14 @@ async function fetchAvatar(src: string): Promise<string> {
     const fullUrl = resolveAvatarUrl(src);
     if (!fullUrl) return '';
 
-    // data/blob can be used directly; no server fetch
+    
     if (fullUrl.startsWith('data:') || fullUrl.startsWith('blob:')) {
       avatarCache.set(cacheKey, fullUrl);
       return fullUrl;
     }
 
-    // External http(s) should be used directly.
-    // For our own API files, we fetch with Authorization and turn into a blob URL.
+    
+    
     const isHttp = fullUrl.startsWith('http://') || fullUrl.startsWith('https://');
     const isOurApi = Boolean(API_BASE_URL && isHttp && fullUrl.startsWith(API_BASE_URL));
     const isProtectedAsset = isOurApi && (fullUrl.includes('/files/') || fullUrl.includes('/avatars/'));

@@ -51,7 +51,7 @@ export function VideoMediaViewer({ videoUrl, onClose, downloadFile, token: _toke
         const video = videoRef.current;
         if (!video) return;
         void video.play().catch(() => {
-            // autoplay may fail without user gesture; keep paused controls visible
+            
         });
     }, []);
 

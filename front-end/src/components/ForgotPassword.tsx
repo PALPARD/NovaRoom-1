@@ -23,7 +23,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
         );
     };
     
-    // Determine step from URL path
+    
     const getStepFromPath = (): Step => {
         if (location.pathname.includes('/reset')) return 'reset';
         return 'email';
@@ -37,19 +37,19 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    // Sync step with URL on mount and location change
+    
     useEffect(() => {
         const newStep = getStepFromPath();
         setStepState(newStep);
         
-        // Restore email from sessionStorage if on reset step
+        
         const savedEmail = sessionStorage.getItem('forgot_email');
         if (savedEmail && newStep === 'reset') {
             setEmail(savedEmail);
         }
     }, [location.pathname]);
 
-    // Update step and navigate
+    
     const setStep = (newStep: Step) => {
         setStepState(newStep);
         if (newStep === 'email') {
@@ -59,7 +59,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
         }
     };
 
-    // Farsi error messages
+    
     const getErrorMessage = (err: any): string => {
         const message = err.message || '';
         
@@ -92,7 +92,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!email) {
             setError('لطفاً ایمیل خود را وارد کنید');
             return;
@@ -110,7 +110,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
                 body: JSON.stringify({ email }),
             });
 
-            // Save email and move to next step WITHOUT showing success here
+            
             sessionStorage.setItem('forgot_email', email);
             setStep('reset');
         } catch (err: any) {
@@ -124,7 +124,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!code || code.length !== 6) {
             setError('لطفاً کد 6 رقمی را وارد کنید');
             return;
@@ -150,10 +150,10 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
                 body: JSON.stringify({ email, code, new_password: newPassword }),
             });
 
-            // Clear sessionStorage
+            
             sessionStorage.removeItem('forgot_email');
             
-            // Redirect to login immediately
+            
             onResetSuccess();
         } catch (err: any) {
             setError(getErrorMessage(err));
@@ -172,7 +172,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
                 body: JSON.stringify({ email }),
             });
 
-            // Show temporary success
+            
             const originalError = error;
             setError('');
             setTimeout(() => setError(originalError), 3000);
@@ -204,7 +204,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
                     </p>
                 </div>
 
-                {/* Step 1: Email */}
+                {}
                 {step === 'email' && (
                     <form onSubmit={handleEmailSubmit}>
                         <div className="form-group">
@@ -242,7 +242,7 @@ export function ForgotPassword({ onBackToLogin, onResetSuccess }: ForgotPassword
                     </form>
                 )}
 
-                {/* Step 2: Reset Password */}
+                {}
                 {step === 'reset' && (
                     <form onSubmit={handleResetSubmit}>
                         <div className="form-group">

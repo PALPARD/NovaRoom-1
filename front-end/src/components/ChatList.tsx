@@ -141,7 +141,7 @@ function tehranYMD(ts: any): string {
 
 function tehranMidnightEpoch(ts: any): number {
     const ymd = tehranYMD(ts);
-    // Iran has fixed UTC+03:30 offset.
+    
     return new Date(`${ymd}T00:00:00+03:30`).getTime();
 }
 
@@ -155,15 +155,15 @@ function formatTime(timestamp: any): string {
 
     const d = new Date(normalizedTimestamp);
 
-    // Same day
+    
     if (diffDays === 0) {
         return tehranTimeFmt.format(d);
     }
-    // Yesterday
+    
     if (diffDays === 1) {
         return 'دیروز';
     }
-    // Two days ago up to six days: weekday in Persian
+    
     if (diffDays >= 2 && diffDays <= 6) {
         return tehranWeekdayFmt.format(d);
     }
@@ -310,16 +310,16 @@ function useIsMobile(breakpointPx = 768) {
 
         onChange();
 
-        // Safari < 14
-        // eslint-disable-next-line deprecation/deprecation
+        
+        
         if (mq.addEventListener) mq.addEventListener('change', onChange);
-        // eslint-disable-next-line deprecation/deprecation
+        
         else mq.addListener(onChange);
 
         return () => {
-            // eslint-disable-next-line deprecation/deprecation
+            
             if (mq.removeEventListener) mq.removeEventListener('change', onChange);
-            // eslint-disable-next-line deprecation/deprecation
+            
             else mq.removeListener(onChange);
         };
     }, [breakpointPx]);
@@ -365,7 +365,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
             const j = await res.json();
             detail = j?.detail || detail;
         } catch {
-            // ignore
+            
         }
         throw new Error(detail);
     }
@@ -400,7 +400,7 @@ export function ChatList({
 
     const isMobile = useIsMobile(768);
 
-    // Keep a local copy so we can remove deleted/left chats immediately.
+    
     const [localChats, setLocalChats] = useState<Chat[]>(chats);
     useEffect(() => {
         setLocalChats((prev) => {
@@ -418,8 +418,8 @@ export function ChatList({
                     prevChat.lastMessage.id === chat.lastMessage.id
                 );
 
-                // Guard against intermittent stale unread=0 payloads that can make
-                // another chat's unread badge disappear until full refresh.
+                
+                
                 const shouldKeepPreviousUnread = !isActive && sameLastMessageId && incomingUnread === 0 && previousUnread > 0;
 
                 return {
@@ -483,7 +483,7 @@ export function ChatList({
 
     useEffect(() => {
         clearDragHoverState();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [activeChatId]);
 
     useEffect(() => {
@@ -494,7 +494,7 @@ export function ChatList({
             window.removeEventListener('drop', onGlobalDragFinish);
             window.removeEventListener('dragend', onGlobalDragFinish);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, []);
 
     const confirmMeta = useMemo(() => {
@@ -531,7 +531,7 @@ export function ChatList({
         pinnedIdsRef.current = pinnedIds;
     }, [pinnedIds]);
 
-    // Load pinned from localStorage quickly, then try syncing from backend.
+    
     useEffect(() => {
         const key = getPinnedKey(currentUser.chatId);
         const stored = safeJsonParse<{ ids: string[] }>(localStorage.getItem(key));
@@ -546,7 +546,7 @@ export function ChatList({
                 localStorage.setItem(key, JSON.stringify({ ids }));
             })
             .catch(() => {
-                // ignore network/auth errors and rely on local state
+                
             });
     }, [currentUser.chatId]);
 
@@ -605,7 +605,7 @@ export function ChatList({
             return {
                 ...chat.otherUser,
                 chatId: chat.participantIds.find(id => id !== currentUser.chatId) || '',
-                // Make sure online is always boolean so Avatar renders the status dot.
+                
                 online: typeof chat.otherUser.online === 'boolean' ? chat.otherUser.online : false,
                 verified: Boolean((chat.otherUser as any)?.verified),
             };
@@ -658,7 +658,7 @@ export function ChatList({
 
         setPinBusy((m) => ({ ...m, [chatId]: true }));
 
-        // optimistic update
+        
         const next = currentlyPinned ? prev.filter((id) => id !== chatId) : [chatId, ...prev];
         setPinnedIds(next);
         persistPinned(next);
@@ -673,7 +673,7 @@ export function ChatList({
             setPinnedIds(ids);
             persistPinned(ids);
         } catch (e: any) {
-            // rollback by refetch
+            
             apiFetch<{ pinnedChatIds: string[] }>('/profile/me/pins')
                 .then((r) => {
                     const ids = (r?.pinnedChatIds || []).slice(0, 20);
@@ -681,7 +681,7 @@ export function ChatList({
                     persistPinned(ids);
                 })
                 .catch(() => {
-                    // if we can't refetch, keep optimistic state
+                    
                 });
             alert(e?.message || 'خطا در تغییر وضعیت سنجاق');
         } finally {
@@ -774,8 +774,8 @@ export function ChatList({
         );
     };
 
-    // Sort all chats by last message timestamp, but keep pinned at top.
-    // Within pinned: order by latest lastMessage as well.
+    
+    
     const sortedChats = [...localChats].sort((a, b) => {
         const aPinned = isPinned(a.id) ? 1 : 0;
         const bPinned = isPinned(b.id) ? 1 : 0;
@@ -786,12 +786,12 @@ export function ChatList({
         return bTime - aTime;
     });
 
-    // Apply search filter
+    
     const filteredChats = sortedChats.filter((chat) => {
-        // Don't filter if no search query
+        
         if (!searchQuery) return true;
 
-        // Check if it's saved messages
+        
         if (chat.id === savedMessagesId) {
             return (
                 'پیام‌های ذخیره شده'.includes(searchQuery) ||
@@ -800,7 +800,7 @@ export function ChatList({
             );
         }
 
-        // Search in regular chats
+        
         const contact = getContact(chat);
         return (
             contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -810,7 +810,7 @@ export function ChatList({
 
     const hasActiveChat = Boolean(activeChatId);
 
-    // Check if we should show AI chat in search results
+    
     const showAIChat = !searchQuery || 'NovaRoom AI'.includes(searchQuery.toLowerCase()) || 'دستیار'.includes(searchQuery);
 
     const confirmBusy = confirmAction ? Boolean(actionBusy[confirmAction.chatId]) : false;
@@ -823,7 +823,7 @@ export function ChatList({
 
     return (
         <div className="chat-list" style={{ position: 'relative' }}>
-            {/* Header */}
+            {}
             <div className="chat-list__header">
                 <div className="chat-list__header-left">
                     <button onClick={onOpenProfile}>
@@ -888,7 +888,7 @@ export function ChatList({
                 </div>
             </div>
 
-            {/* Search */}
+            {}
             <div className="chat-list__search">
                 <div className="chat-list__search-wrapper">
                     <span className="chat-list__search-icon">
@@ -904,7 +904,7 @@ export function ChatList({
                 </div>
             </div>
 
-            {/* Chat List */}
+            {}
             <div
                 className="chat-list__items"
                 ref={chatItemsRef}
@@ -912,7 +912,7 @@ export function ChatList({
                 onDrop={clearDragHoverState}
                 onDragEnd={clearDragHoverState}
             >
-                {/* AI Chat - Always pinned at top */}
+                {}
                 {showAIChat && (
                     <button
                         onClick={onOpenAIChat}
@@ -949,7 +949,7 @@ export function ChatList({
                     </button>
                 )}
 
-                {/* All chats - sorted by pinned then timestamp */}
+                {}
                 {loading ? (
                     <ChatListSkeleton />
                 ) : localChats.length === 0 ? (
@@ -1223,7 +1223,7 @@ export function ChatList({
                 </div>
             )}
 
-            {/* Custom confirm modal (same classes as ChatRoom) */}
+            {}
             <AnimatePresence>
                 {confirmAction && confirmMeta && (
                     <motion.div

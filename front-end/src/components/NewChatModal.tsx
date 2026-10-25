@@ -117,18 +117,18 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
         const value = rawValue.trim();
         if (!value) return '';
 
-        // senoroom://group/CODE یا novaroom://group/CODE
+        
         const deepLink = value.match(/(?:senoroom|novaroom):\/\/group\/([a-zA-Z0-9]+)/);
         if (deepLink?.[1]) return deepLink[1];
 
-        // هر URL که /group/CODE داشته باشه
+        
         const urlLink = value.match(/\/group\/([a-zA-Z0-9]+)/);
         if (urlLink?.[1]) return urlLink[1];
 
         const fullLink = value.match(/groupInvite=([a-zA-Z0-9]+)/);
         if (fullLink?.[1]) return fullLink[1];
 
-        // کد خالص
+        
         return value;
     };
 
@@ -273,7 +273,7 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
                     </>
                 ) : (
                     <div className="new-chat-modal__group-box">
-                        {/* ساخت گروه: فقط برای کاربران verified */}
+                        {}
                         {isVerified ? (
                             <>
                                 <label className="new-chat-modal__label">ساخت گروه</label>
@@ -306,7 +306,7 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
                                     ساخت گروه جدید
                                 </button>
 
-                                {/* نمایش لینک دعوت بعد از ساخت گروه */}
+                                {}
                                 {createdGroupLink && (
                                     <div style={{
                                         marginTop: 12,

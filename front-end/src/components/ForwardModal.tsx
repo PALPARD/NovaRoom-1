@@ -30,7 +30,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         onClose();
     };
 
-    // Build saved messages chat object
+    
     const savedMessagesChat = {
         id: `saved_messages_${currentUserId}`,
         name: 'پیام‌های ذخیره شده',
@@ -47,7 +47,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         });
     }, [chats]);
 
-    // Keep same order behavior as ChatList and hide stale chats with no lastMessage.
+    
     const availableChats = sortedChats.filter((chat) => {
         if (chat.id.startsWith('saved_messages_')) return false;
         if (chat.id === 'official-channel' && !currentUserVerified) return false;
@@ -65,7 +65,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         )
         : availableChats;
 
-    // Show saved messages only if no search query, always at top
+    
     const showSavedMessages = !searchQuery;
 
     return (

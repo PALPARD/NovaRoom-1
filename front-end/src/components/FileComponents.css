@@ -1,6 +1,6 @@
-/* ========================================
-   FILE UPLOAD & DOWNLOAD
-   ======================================== */
+
+
+
 
 .file-upload-container {
     display: flex;
@@ -197,12 +197,12 @@
     color: #dc2626;
 }
 
-/* File Message Display */
+
 .file-message {
     margin-top: 8px;
 }
 
-/* File Attachment (non-image files) */
+
 .file-attachment {
     display: flex;
     align-items: center;
@@ -312,7 +312,7 @@
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* Image Preview */
+
 .file-image-preview {
     position: relative;
     max-width: min(280px, 100%);
@@ -431,7 +431,7 @@
     height: 36px;
 }
 
-/* Video Player */
+
 .file-video-card {
     border-radius: 12px;
     overflow: hidden;
@@ -499,7 +499,7 @@
     pointer-events: none;
 }
 
-/* Fullscreen Image Viewer */
+
 .image-media-viewer {
     position: fixed;
     inset: 0;
@@ -573,7 +573,7 @@
     -webkit-user-drag: none;
 }
 
-/* Fullscreen Video Viewer */
+
 .video-media-viewer {
     position: fixed;
     inset: 0;

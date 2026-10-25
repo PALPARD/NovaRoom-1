@@ -4,8 +4,8 @@ import { gsap } from 'gsap';
 
 import './DotGrid.css';
 
-// We'll attempt to use InertiaPlugin if it's already registered or available globally
-// but we won't import it from 'gsap/all' as it might not exist in the project's GSAP version.
+
+
 
 const throttle = (func: (...args: any[]) => void, limit: number) => {
   let lastCall = 0;
@@ -43,7 +43,7 @@ export interface DotGridProps {
 }
 
 function hexToRgb(hex: string) {
-  // Handle rgb/rgba strings if passed
+  
   if (hex.startsWith('rgb')) {
     const m = hex.match(/\d+/g);
     if (m && m.length >= 3) {
@@ -161,14 +161,14 @@ const DotGrid: React.FC<DotGridProps> = ({
         const dy = dot.cy - py;
         const dsq = dx * dx + dy * dy;
 
-        let dotStyle = `rgba(${baseRgb.r},${baseRgb.g},${baseRgb.b}, 0.15)`; // More subtle base
+        let dotStyle = `rgba(${baseRgb.r},${baseRgb.g},${baseRgb.b}, 0.15)`; 
         if (dsq <= proxSq) {
           const dist = Math.sqrt(dsq);
-          const t = Math.pow(1 - dist / proximity, 2); // Sharper transition
+          const t = Math.pow(1 - dist / proximity, 2); 
           const r = Math.round(baseRgb.r + (activeRgb.r - baseRgb.r) * t);
           const g = Math.round(baseRgb.g + (activeRgb.g - baseRgb.g) * t);
           const b = Math.round(baseRgb.b + (activeRgb.b - baseRgb.b) * t);
-          const a = 0.15 + 0.85 * t; // Fully opaque (1.0) at the center of the mouse
+          const a = 0.15 + 0.85 * t; 
           dotStyle = `rgba(${r},${g},${b}, ${a})`;
         }
 
@@ -239,10 +239,10 @@ const DotGrid: React.FC<DotGridProps> = ({
           const pushX = dot.cx - pr.x + vx * 0.005;
           const pushY = dot.cy - pr.y + vy * 0.005;
 
-          // Check if InertiaPlugin is available
+          
           if (gsap.utils.toArray(gsap.plugins).some((p: any) => p.name === 'inertia')) {
             gsap.to(dot, {
-              // @ts-ignore
+              
               inertia: { xOffset: pushX, yOffset: pushY, resistance },
               onComplete: () => {
                 gsap.to(dot, {
@@ -255,7 +255,7 @@ const DotGrid: React.FC<DotGridProps> = ({
               }
             });
           } else {
-            // Basic animation fallback
+            
             gsap.to(dot, {
               xOffset: pushX * 0.5,
               yOffset: pushY * 0.5,
@@ -291,7 +291,7 @@ const DotGrid: React.FC<DotGridProps> = ({
 
           if (gsap.utils.toArray(gsap.plugins).some((p: any) => p.name === 'inertia')) {
             gsap.to(dot, {
-              // @ts-ignore
+              
               inertia: { xOffset: pushX, yOffset: pushY, resistance },
               onComplete: () => {
                 gsap.to(dot, {

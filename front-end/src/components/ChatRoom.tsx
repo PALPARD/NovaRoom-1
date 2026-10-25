@@ -162,7 +162,7 @@ function bubbleShape(prevSameSender: boolean, nextSameSender: boolean) {
     return 'msg-shape--single';
 }
 
-/** هر مقداری غیر از false / 0 / "false" / null / undefined رو verified حساب می‌کنیم */
+
 function resolveVerified(val: any): boolean {
     if (val === null || val === undefined) return false;
     if (val === false || val === 0 || val === 'false' || val === '0') return false;
@@ -206,10 +206,10 @@ type GroupMember = {
 
 function normalizeMessageTextForRender(text: string): string {
     let t = String(text || '').replace(/\\n/g, '\n');
-    // Convert \[ \] to $$ $$
+    
     t = t.replace(/\\\[/g, '$$$$');
     t = t.replace(/\\\]/g, '$$$$');
-    // Convert \( \) to $ $
+    
     t = t.replace(/\\\(/g, '$$');
     t = t.replace(/\\\)/g, '$$');
     return t;
@@ -236,7 +236,7 @@ type SeenByUser = {
     verified?: boolean;
 };
 
-// ── Optimistic reaction helpers ──────────────────────────────────────────────
+
 type ReactionEntry = { emoji: string; count: number; userIds: string[] };
 
 function applyOptimisticReact(
@@ -245,16 +245,16 @@ function applyOptimisticReact(
     emoji: string,
 ): ReactionEntry[] {
     const base: ReactionEntry[] = (reactions || []).map((r) => ({ ...r, userIds: [...r.userIds] }));
-    // remove existing reaction by this user from any emoji
+    
     base.forEach((r) => {
         const idx = r.userIds.indexOf(userId);
         if (idx !== -1) { r.userIds.splice(idx, 1); r.count = Math.max(0, r.count - 1); }
     });
-    // add new reaction
+    
     const existing = base.find((r) => r.emoji === emoji);
     if (existing) { existing.userIds.push(userId); existing.count += 1; }
     else base.push({ emoji, count: 1, userIds: [userId] });
-    // remove entries with count 0
+    
     return base.filter((r) => r.count > 0);
 }
 
@@ -293,7 +293,7 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch {
-            // ignore
+            
         }
     };
 
@@ -380,11 +380,11 @@ function renderTextWithLinks(text: string): React.ReactNode {
     });
 }
 
-/** ویبره خیلی کوتاه — فقط اگر دستگاه پشتیبانی کند */
+
 function triggerHaptic() {
-    try { navigator.vibrate?.(10); } catch { /* ignore */ }
+    try { navigator.vibrate?.(10); } catch {  }
 }
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 export function ChatRoom({
     chatId,
@@ -471,7 +471,7 @@ export function ChatRoom({
     const [seenByLoadingMessageId, setSeenByLoadingMessageId] = useState<string | null>(null);
     const [reasoningPanelByMessage, setReasoningPanelByMessage] = useState<Record<string, boolean>>({});
 
-    // Optimistic reactions: messageId -> overridden reactions array
+    
     const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ReactionEntry[]>>({});
 
     const menuRef = useRef<HTMLDivElement | null>(null);
@@ -537,8 +537,8 @@ export function ChatRoom({
     const userReadingOlderRef = useRef(false);
     const scrollRafRef = useRef<number | null>(null);
 
-    // Scroll memory: keep per-chat scroll position in memory until refresh.
-    // IMPORTANT: only restore exact scrollTop if user actually scrolled in that chat (prevents "always open at top").
+    
+    
     const scrollMemoryRef = useRef<Record<string, { top: number; atBottom: boolean; userInteracted: boolean }>>({});
     const forceInfoRouteActiveRef = useRef(false);
 
@@ -561,10 +561,10 @@ export function ChatRoom({
 
     const userHasScrolledRef = useRef(false);
 
-    // Unread separator anchor for the current open session.
+    
     const [unreadAnchorId, setUnreadAnchorId] = useState<string | null>(null);
 
-    // Keep unread count used for UI stable, even if App "consumes" initialUnreadCount afterwards.
+    
     const [displayUnreadCount, setDisplayUnreadCount] = useState<number>(initialUnreadCount);
     const [openedImage, setOpenedImage] = useState<{ url: string; file: FileMetadata | null } | null>(null);
     const [openedVideo, setOpenedVideo] = useState<{ url: string; file: FileMetadata | null } | null>(null);
@@ -613,7 +613,7 @@ export function ChatRoom({
 const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId: string; fileName: string } | null>(null);
     const openedGroupAvatarObjectUrlRef = useRef<string | null>(null);
 
-    // Auto-jump bookkeeping to avoid saving an automatic scroll position as user's scroll memory.
+    
     const autoJumpedToUnreadRef = useRef(false);
     const userScrolledAfterAutoJumpRef = useRef(false);
     const programmaticScrollEventsRef = useRef(0);
@@ -692,9 +692,9 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             .filter((m) => {
                 const mt = (m.file?.mimeType || '').toLowerCase();
                 if (!m.file || (!mt.startsWith('image/') && !mt.startsWith('video/'))) return false;
-                // Don't block loading on self-sent media that stays manual-download.
+                
                 if (m.senderId === currentUserId) return false;
-                // Only wait for media that has fast visual source (preview) on open.
+                
                 const hasPreview = Boolean(
                     (m.file as any).previewUrl
                     || (m.file as any).thumbUrl
@@ -708,7 +708,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     const collectInitialMediaPendingIds = () => collectMediaIds(messages);
 
     const handleInitialMediaReady = (messageId: string) => {
-        // Prevent auto-scrolling to bottom if user has scrolled up to see history
+        
         if (!shouldPreserveExactScroll() && isAtBottomRef.current && !userHasScrolledRef.current) {
             requestAnimationFrame(() => scrollToBottom(true));
         }
@@ -725,7 +725,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             restoringFromInfoRef.current = false;
         }
 
-        // Handle range media (older/newer load)
+        
         if (rangeMediaPendingIdsRef.current.has(messageId)) {
             rangeMediaPendingIdsRef.current.delete(messageId);
             if (rangeMediaPendingIdsRef.current.size === 0) {
@@ -846,8 +846,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     };
 
     const maybeSaveScroll = (id: string) => {
-        // If we auto-jumped to unread and user didn't scroll after that,
-        // do NOT persist this position as the user's scroll memory.
+        
+        
         if (autoJumpedToUnreadRef.current && !userScrolledAfterAutoJumpRef.current) return;
         saveScroll(id);
     };
@@ -888,19 +888,19 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const incoming = messages.filter((m: any) => m.senderId !== currentUserId);
         if (incoming.length === 0) return null;
 
-        // 1. Hard priority: first message that is explicitly marked seen=false
+        
         const firstUnseenByFlag = incoming.find((m: any) => m.seen === false);
         if (firstUnseenByFlag) return firstUnseenByFlag.id;
 
-        // 2. Fallback to unreadCount if provided by the parent/server
+        
         const cnt = Number(unreadCount || 0);
         if (Number.isFinite(cnt) && cnt > 0) {
-            // Take the last 'cnt' messages from incoming
+            
             const clamped = Math.min(incoming.length, Math.max(1, Math.floor(cnt)));
             const byCount = incoming[incoming.length - clamped];
             
-            // If we have no 'seen' flags at all in our data (all might be null/undefined), 
-            // or if we trust the count more than the lack of 'false' flags.
+            
+            
             if (byCount?.id) return byCount.id;
         }
 
@@ -918,7 +918,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     const applyInitialScroll = () => {
         const mem = scrollMemoryRef.current[chatId];
 
-        // If opened with unread, jump to first unread (Telegram-like).
+        
         const unreadAnchor = unreadAnchorId || computeUnreadAnchorId(displayUnreadCount);
         if (unreadAnchor) {
             autoJumpedToUnreadRef.current = true;
@@ -928,27 +928,27 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
 
             if (!consumedInitialUnreadRef.current) {
                 consumedInitialUnreadRef.current = true;
-                // Consume in App so next time you open this chat, it doesn't auto-jump again.
+                
                 window.setTimeout(() => onConsumeInitialUnread?.(chatId), 0);
             }
 
             return;
         }
 
-        // Only restore exact scrollTop if user actually scrolled in this chat
-        // and there is no unread jump candidate.
+        
+        
         if (mem && mem.userInteracted && !mem.atBottom) {
             restoreScroll(chatId);
             return;
         }
 
-        // If we have memory and it was at bottom, keep bottom.
+        
         if (mem && mem.atBottom) {
             restoreScroll(chatId);
             return;
         }
 
-        // Default: always open at bottom.
+        
         scrollToBottom(false);
         [70, 180, 360].forEach((delay) => {
             window.setTimeout(() => {
@@ -969,14 +969,14 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         if (!c) return;
         if (userHasScrolledRef.current) return;
         if (shouldPreserveExactScroll()) return;
-        // If chat has unread, initial logic will jump to unread.
+        
         if (unreadAnchorId) return;
 
         const hasOverflow = (c.scrollHeight - c.clientHeight) > 300;
         if (!hasOverflow) return;
         if (computeNearBottom()) return;
 
-        // Only force if we're still at the top.
+        
         if (c.scrollTop < 20) scrollToBottom(false);
     };
 
@@ -1119,13 +1119,13 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     });
                     setGroupMembers(map);
                 }
-            } catch { /* ignore */ }
+            } catch {  }
             finally {
                 if (!cancelled) setMembersLoading(false);
             }
         };
         loadMembers();
-        // به روز کردن وضعیت آنلاین هر 15 ثانیه یکبار
+        
         const timer = window.setInterval(loadMembers, 15000);
         return () => { cancelled = true; window.clearInterval(timer); };
     }, [chatId, isGroupChat]);
@@ -1182,7 +1182,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             if (raf) cancelAnimationFrame(raf);
             room.style.removeProperty('--keyboard-offset');
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId]);
 
     const resetDrag = (messageId: string) => {
@@ -1279,26 +1279,26 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 document.execCommand('copy');
                 document.body.removeChild(ta);
             }
-        } catch { /* ignore */ }
+        } catch {  }
         setMsgMenu(null);
     };
 
-    // ── FIX: Optimistic reaction update ──────────────────────────────────────
+    
     const handleReact = async (messageId: string, emoji: string) => {
         setReactionMenu(null); setMsgMenu(null);
-        // find current reactions for this message
+        
         const msg = messages.find((m) => m.id === messageId);
         const currentReactions = optimisticReactions[messageId] ?? (msg?.reactions as ReactionEntry[] | undefined);
-        // check if user already has this reaction (toggle off scenario → no haptic)
+        
         const alreadyReacted = (currentReactions || []).some(
             (r) => r.emoji === emoji && r.userIds.includes(currentUserId)
         );
-        // apply optimistic update immediately
+        
         setOptimisticReactions((prev) => ({
             ...prev,
             [messageId]: applyOptimisticReact(currentReactions, currentUserId, emoji),
         }));
-        // ویبره فقط هنگام ثبت ری‌اکشن جدید (نه toggle off)
+        
         if (!alreadyReacted) triggerHaptic();
         try {
             if (onReactMessage) {
@@ -1308,7 +1308,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             }
         } catch (e) {
             console.error('Failed to react:', e);
-            // rollback on error
+            
             setOptimisticReactions((prev) => {
                 const next = { ...prev };
                 delete next[messageId];
@@ -1321,7 +1321,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         setReactionMenu(null); setMsgMenu(null);
         const msg = messages.find((m) => m.id === messageId);
         const currentReactions = optimisticReactions[messageId] ?? (msg?.reactions as ReactionEntry[] | undefined);
-        // apply optimistic delete immediately
+        
         setOptimisticReactions((prev) => ({
             ...prev,
             [messageId]: applyOptimisticDeleteReaction(currentReactions, currentUserId),
@@ -1334,7 +1334,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             }
         } catch (e) {
             console.error('Failed to delete reaction:', e);
-            // rollback on error
+            
             setOptimisticReactions((prev) => {
                 const next = { ...prev };
                 delete next[messageId];
@@ -1342,9 +1342,9 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             });
         }
     };
-    // ─────────────────────────────────────────────────────────────────────────
+    
 
-    // Keep optimistic entries only until that specific message is synced from server.
+    
     useEffect(() => {
         setOptimisticReactions((prev) => {
             if (!Object.keys(prev).length) return prev;
@@ -1436,7 +1436,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 await apiFetch(`/files/${encodeURIComponent(file.previewFileId)}`, { method: 'DELETE' });
             }
         } catch {
-            // ignore cleanup failures
+            
         }
     };
 
@@ -1497,12 +1497,12 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         };
     }, []);
 
-    // Save scroll when leaving current chatId (unmount or switching to another chat).
+    
     useEffect(() => {
         return () => {
             maybeSaveScroll(chatId);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId]);
 
     useEffect(() => {
@@ -1578,17 +1578,17 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 initialMediaReadyTimeoutRef.current = null;
             }
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId]);
 
     useEffect(() => {
         return () => {
             stopTyping();
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId]);
 
-    // If initialUnreadCount arrives late (edge cases), capture it once for UI.
+    
     useEffect(() => {
         if (initialUnreadCount > 0 && displayUnreadCount === 0) {
             setDisplayUnreadCount(initialUnreadCount);
@@ -1606,22 +1606,22 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         prevLastMessageIdRef.current = messages[messages.length - 1]?.id || null;
     }, [chatId]);
 
-    // Keep unread anchor in sync with actual unseen incoming messages for this session,
-    // even when unread count was already consumed/reset in upper layers.
+    
+    
     useEffect(() => {
         if (isUnreadAnchorValid(unreadAnchorId)) return;
         const id = computeUnreadAnchorId(displayUnreadCount);
         setUnreadAnchorId(id && isUnreadAnchorValid(id) ? id : null);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [displayUnreadCount, messages.length, chatId]);
 
-    // Back→open can mount while layout is still settling (mobile show/hide); retry a few times to avoid sticking at top.
+    
     useLayoutEffect(() => {
         if (loading) return;
         if (!chatContentReady) return;
         if (messages.length === 0) return;
         settleToBottomIfNeeded();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId, loading, messages.length, displayUnreadCount, chatContentReady]);
 
     useEffect(() => {
@@ -1646,10 +1646,10 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             window.clearTimeout(t1);
             window.clearTimeout(t2);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [chatId, chatContentReady, loading, messages.length, displayUnreadCount, unreadAnchorId]);
 
-    // Restore scroll after coming back from ContactInfo / forward-source info / member info / members list.
+    
     useEffect(() => {
         if (!restoringFromInfoRef.current) return;
         if (showContactInfo || forwardSourceUser || viewingMemberId || showMembersList) return;
@@ -1685,7 +1685,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             window.clearTimeout(finalizeRestore);
             timers.forEach((t) => window.clearTimeout(t));
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [showContactInfo, forwardSourceUser, viewingMemberId, showMembersList, chatId]);
 
     useEffect(() => {
@@ -1725,8 +1725,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
 
         if (!initialScrollDoneRef.current) {
             if (messages.length > 0 && !loading) {
-                // فقط در سناریوی لود اولیه‌ای که قبلاً لیست پیام‌ها خالی بوده بود،
-                // pendingها را دوباره همگام‌سازی کن تا اسکرول follow-up از دست نرود.
+                
+                
                 if (initialMediaFollowupDoneRef.current && initialMediaPendingIdsRef.current.size === 0) {
                     const pendingIds = collectInitialMediaPendingIds();
                     if (pendingIds.size > 0) {
@@ -1737,7 +1737,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 const raf = requestAnimationFrame(() => {
                     applyInitialScroll();
 
-                    // Safety net: if initial open ended up at top (common when layout not ready), force bottom once.
+                    
                     window.setTimeout(() => {
                         const c = messagesContainerRef.current;
                         if (!c) return;
@@ -1806,7 +1806,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             const mediaIds = collectMediaIds(newMessages);
             if (mediaIds.size > 0) {
                 mediaIds.forEach(id => rangeMediaPendingIdsRef.current.add(id));
-                // We stay in localLoadingOlder state until handleInitialMediaReady clears them
+                
             } else {
                 setLocalLoadingOlder(false);
             }
@@ -1860,7 +1860,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         prevLenRef.current = messages.length;
         prevFirstMessageIdRef.current = nextFirstId;
         prevLastMessageIdRef.current = nextLastId;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [messages, messages.length, currentUserId, loadingOlderMessages, loadingNewerMessages, chatContentReady]);
 
     const onMessagesScroll = () => {
@@ -1885,8 +1885,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             setSeenByMenu(null);
         }
 
-        // Ignore programmatic scroll events first (initial unread jump / restore / auto-scroll).
-        // These events should not consume unread state.
+        
+        
         if (programmaticScrollEventsRef.current > 0) {
             programmaticScrollEventsRef.current -= 1;
             return;
@@ -1916,7 +1916,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             userScrolledAfterAutoJumpRef.current = true;
         }
 
-        // keep memory fresh (in-memory only)
+        
         saveScroll(chatId);
 
         if (container.scrollTop <= 56 && hasOlderMessages && !loadingOlderMessages && !localLoadingOlder) {
@@ -1936,8 +1936,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             pendingOlderAnchorRef.current = anchor;
             setLocalLoadingOlder(true);
             Promise.resolve(onLoadOlderMessages?.(chatId)).finally(() => {
-                // Fallback: if no messages were added or no media found,
-                // the messages effect will clear this. We add a safety timeout.
+                
+                
                 window.setTimeout(() => {
                     if (rangeMediaPendingIdsRef.current.size === 0) {
                         setLocalLoadingOlder(false);
@@ -1945,9 +1945,9 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 }, 1000);
             });
         }
-        // IMPORTANT: avoid triggering "newer" load when user is already at absolute bottom
-        // and just does an overscroll/pull gesture. Only load newer while actively scrolling down
-        // from inside the list (not at bottom-most end).
+        
+        
+        
         if (
             distanceToBottom > 12
             && distanceToBottom <= 96
@@ -2117,7 +2117,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const room = roomRef.current;
         if (!room) return;
 
-        // Toggle: clicking the same message while menu is open closes it.
+        
         if (msgMenu?.id === messageId || reactionMenu?.id === messageId || seenByMenu?.id === messageId) {
             setMsgMenu(null);
             setReactionMenu(null);
@@ -2131,7 +2131,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const x = typeof clientX === 'number' && Number.isFinite(clientX) ? clientX : (r.left + 12);
         const y = typeof clientY === 'number' && Number.isFinite(clientY) ? clientY : r.bottom;
 
-        // Position near the actual click/touch point (relative to room).
+        
         const relX = x - roomRect.left;
         const relY = y - roomRect.top;
 
@@ -2151,7 +2151,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         }
     };
 
-    // Clamp msg menu inside the visible room (especially important on mobile).
+    
     useLayoutEffect(() => {
         if (!msgMenu) return;
         const room = roomRef.current;
@@ -2173,7 +2173,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         if (clampedLeft !== msgMenu.left || clampedTop !== msgMenu.top) {
             setMsgMenu((s) => (s ? { ...s, left: clampedLeft, top: clampedTop } : s));
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [msgMenu?.id, msgMenu?.top, msgMenu?.left, msgMenu?.isFileDownloaded]);
 
     useLayoutEffect(() => {
@@ -2344,7 +2344,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const filtered = memberSearch.trim()
             ? membersList.filter(m => m.name.toLowerCase().includes(memberSearch.toLowerCase()) || m.username.toLowerCase().includes(memberSearch.toLowerCase()))
             : membersList;
-        // آنلاین‌ها اول نمایش داده شون
+        
         const sortedFiltered = [...filtered].sort((a, b) => {
             if (a.chatId === currentUserId && b.chatId !== currentUserId) return -1;
             if (a.chatId !== currentUserId && b.chatId === currentUserId) return 1;
@@ -2455,7 +2455,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                         onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
                                         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                                     >
-                                        {/* آواتار با dot آنلاین — فقط در همین لیست */}
+                                        {}
                                         <Avatar name={member.name} size="md" src={member.avatar} online={member.online} />
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>
@@ -2556,10 +2556,10 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     onClick={() => {
                         if (isSavedMessages || isOfficialChannel) return;
                         maybeSaveScroll(chatId);
-                        // For unsent direct chats opened from NewChatModal we use a temporary
-                        // chatId = "pending". Navigating to /chat/pending breaks the pending
-                        // chat context and results in an empty/blank screen.
-                        // So in this case we only open ContactInfo locally.
+                        
+                        
+                        
+                        
                         if (onOpenContactInfo && chatId !== 'pending') {
                             onOpenContactInfo(chatId);
                         }
@@ -2618,7 +2618,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                             <div className="popover popover--mini popover--right">
                                 {isGroupChat ? (
                                     <>
-                                        {/* خروج از گروه — همه کاربران */}
+                                        {}
                                         <button
                                             className="popover__item popover__item--danger"
                                             onClick={openLeaveGroupConfirm}
@@ -2627,7 +2627,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                             <LogOut size={16} />
                                             خروج از گروه
                                         </button>
-                                        {/* حذف گروه — فقط verified (هر نوع truthy value) */}
+                                        {}
                                         {isVerifiedUser && (
                                             <button
                                                 className="popover__item popover__item--danger"
@@ -2702,7 +2702,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                     const messageSeenCountRaw = Number((m as any).seenCount || 0);
                                     const messageSeenCount = Math.max(1, seenByCountForMessage, messageSeenByRaw, messageSeenCountRaw);
 
-                                    // FIX: use optimistic reactions if available, fallback to server data
+                                    
                                     const effectiveReactions = (optimisticReactions[m.id] ?? m.reactions ?? []).slice().sort((a: any, b: any) => Number(b?.count || 0) - Number(a?.count || 0));
 
                                     return (
@@ -2736,11 +2736,11 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                                     const dx = e.clientX - swipeRef.current.startX;
                                                     const dy = e.clientY - swipeRef.current.startY;
                                                     if (!swipeRef.current.captured) {
-                                                        // چپ به راست: dx باید مثبت باشد
+                                                        
                                                         if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
                                                         swipeRef.current.captured = true;
                                                         setReplySwipeLocked(true);
-                                                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+                                                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {  }
                                                     }
                                                     e.preventDefault();
                                                     setDragState({ id: m.id, x: Math.max(0, Math.min(72, dx)), active: true });
@@ -2773,7 +2773,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                                     const dx = t.clientX - swipeRef.current.startX;
                                                     const dy = t.clientY - swipeRef.current.startY;
                                                     if (!swipeRef.current.captured) {
-                                                        // چپ به راست: dx باید مثبت باشد
+                                                        
                                                         if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
                                                         swipeRef.current.captured = true;
                                                         setReplySwipeLocked(true);

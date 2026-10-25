@@ -108,7 +108,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
     const startUploadFromFile = (file: File | null | undefined) => {
         if (!file) return;
 
-        // Validate file size
+        
         if (!validateFileSize(file.size)) {
             alert('حجم فایل نباید بیشتر از ۲۰ مگابایت باشد');
             onUploadStateChange?.({ isUploading: false, progress: 0, fileName: null });
@@ -245,7 +245,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             xhrRef.current = xhr;
             task.phase = 'upload';
 
-            // Track upload progress
+            
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const progress = Math.round((e.loaded / e.total) * 100);
@@ -254,7 +254,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 }
             });
 
-            // Handle completion
+            
             xhr.addEventListener('load', () => {
                 if (xhr.status === 200) {
                     const response = JSON.parse(xhr.responseText);
@@ -293,7 +293,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 }
             });
 
-            // Handle errors
+            
             xhr.addEventListener('error', () => {
                 console.error('Upload error');
                 alert('خطا در آپلود فایل');
@@ -303,7 +303,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 resetUpload();
             });
 
-            // Handle abort
+            
             xhr.addEventListener('abort', () => {
                 console.log('Upload cancelled');
                 task.status = 'error';
@@ -312,7 +312,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 resetUpload();
             });
 
-            // Start upload
+            
             xhr.open('POST', `${API_BASE_URL}/files/upload`);
             xhr.setRequestHeader('Authorization', `Bearer ${token}`);
             xhr.send(formData);
@@ -479,7 +479,7 @@ async function createBlurredPreview(file: File): Promise<Blob | null> {
     try {
         const bitmap = await createImageBitmap(file);
         const maxWidth = 480;
-        const minAspect = 0.62; // aligns with chat message height limit
+        const minAspect = 0.62; 
         const maxAspect = 1.8;
         const srcAspect = bitmap.width / bitmap.height;
         const targetAspect = Math.min(maxAspect, Math.max(minAspect, srcAspect));

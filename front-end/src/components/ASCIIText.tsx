@@ -1,4 +1,4 @@
-// Component ported and enhanced from https://codepen.io/JuanFuentes/pen/eYEeoyE
+
 
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
@@ -514,7 +514,7 @@ export default function ASCIIText({
     };
 
     const setup = async () => {
-      // Small delay to ensure container is ready and has dimensions
+      
       await new Promise(resolve => setTimeout(resolve, 50));
       if (cancelled || !containerRef.current) return;
 

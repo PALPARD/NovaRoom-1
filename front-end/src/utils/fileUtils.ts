@@ -1,6 +1,6 @@
-/**
- * Format file size in bytes to human readable string
- */
+
+
+
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 Bytes';
   
@@ -11,9 +11,9 @@ export function formatFileSize(bytes: number): string {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
 
-/**
- * Get file icon based on MIME type
- */
+
+
+
 export function getFileIcon(mimeType: string): string {
   if (mimeType.startsWith('image/')) return '🖼️';
   if (mimeType.startsWith('video/')) return '🎥';
@@ -25,17 +25,17 @@ export function getFileIcon(mimeType: string): string {
   if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '📽️';
   if (mimeType.includes('text/')) return '📃';
   
-  return '📎'; // Default file icon
+  return '📎'; 
 }
 
-/**
- * Check if file is an image
- */
+
+
+
 export function isImageFile(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
 export function validateFileSize(size: number): boolean {
-  const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+  const MAX_SIZE = 20 * 1024 * 1024; 
   return size <= MAX_SIZE;
 }

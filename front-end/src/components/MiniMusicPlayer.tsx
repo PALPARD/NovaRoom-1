@@ -54,7 +54,7 @@ export const MiniMusicPlayer: React.FC = () => {
       fontFamily: 'Vazir, sans-serif',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {/* Music icon */}
+        {}
         <div style={{
           width: 40, height: 40,
           borderRadius: 10,
@@ -71,7 +71,7 @@ export const MiniMusicPlayer: React.FC = () => {
           )}
         </div>
 
-        {/* Track name */}
+        {}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontSize: 13,
@@ -89,7 +89,7 @@ export const MiniMusicPlayer: React.FC = () => {
           </div>
         </div>
 
-        {/* Controls */}
+        {}
         <button onClick={handleSkipBack} style={btnStyle} title="-10s">
           <SkipBack size={16} />
         </button>
@@ -104,7 +104,7 @@ export const MiniMusicPlayer: React.FC = () => {
         </button>
       </div>
 
-      {/* Progress bar */}
+      {}
       <div
         ref={progressRef}
         onClick={handleProgressClick}

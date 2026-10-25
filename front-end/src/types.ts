@@ -68,7 +68,7 @@ export interface ChatLastMessage {
     id?: string;
     text: string;
     senderId: string;
-    /** epoch ms */
+    
     timestamp: number;
     file?: FileMetadata;
 }

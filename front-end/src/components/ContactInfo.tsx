@@ -62,7 +62,7 @@ export function ContactInfo({
     const [canEditGroup, setCanEditGroup] = useState(false);
     const [editingGroup, setEditingGroup] = useState(false);
     const [groupName, setGroupName] = useState('');
-    const [groupAvatar, setGroupAvatar] = useState(''); // stores fileId (draft)
+    const [groupAvatar, setGroupAvatar] = useState(''); 
     const [avatarTouched, setAvatarTouched] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -91,7 +91,7 @@ export function ContactInfo({
     const displayBio = bio === 'گروه' ? '' : bio;
 
     useEffect(() => {
-        // Reset group edit state when user changes
+        
         setEditingGroup(isGroup ? startInEditMode : false);
         setSaving(false);
         setError(null);
@@ -258,7 +258,7 @@ export function ContactInfo({
             navigate({ pathname: location.pathname, search: `?${params.toString()}` });
         } catch (e) {
             console.error(e);
-            // اگر تصویر پروفایل معتبر نبود یا قابل دریافت نبود، سکوت کن.
+            
         }
     };
 
@@ -283,7 +283,7 @@ export function ContactInfo({
                 }),
             });
 
-            // Ask App to refresh /chats so sidebar + header get updated.
+            
             window.dispatchEvent(new Event('novaroom:refresh_chats'));
             setEditingGroup(false);
         } catch (e) {
@@ -504,7 +504,7 @@ export function ContactInfo({
                                         const f = e.target.files?.[0];
                                         if (!f) return;
                                         await uploadGroupAvatar(f);
-                                        // اجازه انتخاب دوباره همان فایل
+                                        
                                         e.currentTarget.value = '';
                                     }}
                                 />
@@ -611,7 +611,7 @@ export function ContactInfo({
                     </div>
                 )}
 
-                {/* لینک دعوت برای گروه / نام کاربری برای پرسونال */}
+                {}
                 {user.username && (
                     <div className="contact-info__card">
                         <div className="contact-info__label">

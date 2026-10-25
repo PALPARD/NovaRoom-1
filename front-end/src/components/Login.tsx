@@ -25,11 +25,11 @@ export function Login({ onLoginSuccess, onRegisterClick, onForgotPasswordClick }
         );
     };
 
-    // Farsi error messages
+    
     const getErrorMessage = (err: any): string => {
         const message = err.message || '';
 
-        // Authentication errors
+        
         if (message.includes('401') || message.includes('Unauthorized') ||
             message.includes('Invalid credentials') || message.includes('incorrect')) {
             return 'ایمیل یا رمز عبور نامعتبر است';
@@ -41,12 +41,12 @@ export function Login({ onLoginSuccess, onRegisterClick, onForgotPasswordClick }
             return 'فرمت ایمیل نامعتبر است';
         }
 
-        // Network errors
+        
         if (message.includes('Network') || message.includes('fetch')) {
             return 'خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید';
         }
 
-        // Generic errors
+        
         if (message.includes('400')) {
             return 'درخواست نامعتبر است';
         }
@@ -61,7 +61,7 @@ export function Login({ onLoginSuccess, onRegisterClick, onForgotPasswordClick }
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!email) {
             setError('لطفاً ایمیل خود را وارد کنید');
             return;

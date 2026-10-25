@@ -26,7 +26,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         );
     };
 
-    // Determine step from URL path
+    
     const getStepFromPath = (): Step => {
         if (location.pathname.includes('/verify')) return 'code';
         if (location.pathname.includes('/complete')) return 'details';
@@ -47,19 +47,19 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
     const [usernameHint, setUsernameHint] = useState<string>('');
     const checkTimerRef = useRef<number | null>(null);
 
-    // Sync step with URL on mount and location change
+    
     useEffect(() => {
         const newStep = getStepFromPath();
         setStepState(newStep);
 
-        // Restore email from sessionStorage if on code or details step
+        
         const savedEmail = sessionStorage.getItem('register_email');
         if (savedEmail && (newStep === 'code' || newStep === 'details')) {
             setEmail(savedEmail);
         }
     }, [location.pathname]);
 
-    // Username checking using PUBLIC endpoint
+    
     useEffect(() => {
         if (step !== 'details' || !username) {
             setUsernameStatus('idle');
@@ -134,7 +134,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         };
     }, [username, step]);
 
-    // Update step and navigate
+    
     const setStep = (newStep: Step) => {
         setStepState(newStep);
         if (newStep === 'email') {
@@ -146,7 +146,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         }
     };
 
-    // Farsi error messages
+    
     const getErrorMessage = (err: any): string => {
         const message = err.message || '';
 
@@ -182,7 +182,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!email) {
             setError('لطفاً ایمیل خود را وارد کنید');
             return;
@@ -200,7 +200,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                 body: JSON.stringify({ email }),
             });
 
-            // Save email and move to next step WITHOUT showing success here
+            
             sessionStorage.setItem('register_email', email);
             setStep('code');
         } catch (err: any) {
@@ -214,7 +214,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!code || code.length !== 6) {
             setError('لطفاً کد 6 رقمی را وارد کنید');
             return;
@@ -240,7 +240,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         e.preventDefault();
         setError('');
 
-        // Manual validation
+        
         if (!name) {
             setError('لطفاً نام خود را وارد کنید');
             return;
@@ -274,7 +274,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                 body: JSON.stringify({ email, name, username: username.trim(), password, deviceName: detectDeviceName() }),
             });
 
-            // Clear sessionStorage
+            
             sessionStorage.removeItem('register_email');
 
             localStorage.setItem('token', data.token);
@@ -296,7 +296,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                 body: JSON.stringify({ email }),
             });
 
-            // Show temporary success
+            
             const originalError = error;
             setError('');
             setTimeout(() => setError(originalError), 3000);
@@ -329,7 +329,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                     </p>
                 </div>
 
-                {/* Step 1: Email */}
+                {}
                 {step === 'email' && (
                     <form onSubmit={handleEmailSubmit}>
                         <div className="form-group">
@@ -367,7 +367,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                     </form>
                 )}
 
-                {/* Step 2: Verification Code */}
+                {}
                 {step === 'code' && (
                     <form onSubmit={handleCodeSubmit}>
                         <div className="form-group">
@@ -428,7 +428,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
                     </form>
                 )}
 
-                {/* Step 3: User Details */}
+                {}
                 {step === 'details' && (
                     <form onSubmit={handleDetailsSubmit}>
                         <div className="form-group">

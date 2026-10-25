@@ -1,9 +1,9 @@
 const ENC_PREFIX = 'enc:v1:';
 const ENC_NONCE_SIZE = 16;
 const ENC_TAG_SIZE = 16;
-const FILE_MAGIC = new Uint8Array([0x4e, 0x43, 0x46, 0x31]); // NCF1
+const FILE_MAGIC = new Uint8Array([0x4e, 0x43, 0x46, 0x31]); 
 const FILE_TEXT_PREFIX = 'ncf:v1:';
-const AVATAR_MAGIC = new Uint8Array([0x4e, 0x43, 0x41, 0x31]); // NCA1
+const AVATAR_MAGIC = new Uint8Array([0x4e, 0x43, 0x41, 0x31]); 
 const AVATAR_TEXT_PREFIX = 'nca:v1:';
 
 const textEncoder = new TextEncoder();
@@ -117,7 +117,7 @@ const toUtf8 = (value: string) => textEncoder.encode(value);
 const toBase64Url = (bytes: Uint8Array): string => {
     let binary = '';
     for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    return btoa(binary).replace(/\+/g, '-').replace(/\
 };
 
 const fromBase64Url = (value: string): Uint8Array => {
@@ -156,7 +156,7 @@ const xorStream = async (data: Uint8Array, key: Uint8Array, nonce: Uint8Array): 
     const out = new Uint8Array(data.length);
     let counter = 0;
     let idx = 0;
-    const BATCH_SIZE = 2048; // Process 64KB per batch
+    const BATCH_SIZE = 2048; 
     let batchCount = 0;
 
     while (idx < data.length) {
@@ -186,7 +186,7 @@ const xorStream = async (data: Uint8Array, key: Uint8Array, nonce: Uint8Array): 
         counter += numBlocks;
         batchCount += 1;
 
-        // Yield to main thread every 1MB (approx 16 batches of 64KB)
+        
         if (batchCount % 16 === 0) {
             await new Promise<void>((resolve) => {
                 window.setTimeout(resolve, 0);
@@ -237,7 +237,7 @@ export const encryptClientText = async (plain: string, token: string, scope: str
 
         return `${ENC_PREFIX}${toBase64Url(full)}`;
     } catch {
-        // Never block message/profile flows if browser crypto is unavailable.
+        
         return text;
     }
 };
@@ -260,8 +260,8 @@ export const decryptClientText = async (cipher: string, token: string, scope: st
         nonceAndBody.set(body, nonce.length);
 
         const candidateMaterials = [
-            buildSharedMaterial(scope),       // current (shared per chat/bio scope)
-            buildLegacyMaterial(token, scope), // previous broken rollout compatibility
+            buildSharedMaterial(scope),       
+            buildLegacyMaterial(token, scope), 
         ];
 
         for (const material of candidateMaterials) {

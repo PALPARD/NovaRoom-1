@@ -67,7 +67,7 @@ export function useAIWebSocket({
                 });
             }
 
-            // Send ping every 30 seconds to keep connection alive
+            
             const pingInterval = setInterval(() => {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: 'ping' }));
@@ -103,7 +103,7 @@ export function useAIWebSocket({
                 } else if (data.type === 'ai_error') {
                     onErrorRef.current?.(String(data.message || 'خطا در سرویس هوش مصنوعی'));
                 } else if (data.type === 'pong') {
-                    // Keep-alive response
+                    
                 }
             } catch (error) {
                 console.error('Failed to parse AI WebSocket message:', error);
@@ -118,7 +118,7 @@ export function useAIWebSocket({
             console.log('AI WebSocket disconnected');
             wsRef.current = null;
 
-            // Attempt to reconnect
+            
             if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
                 reconnectAttemptsRef.current++;
                 reconnectTimeoutRef.current = window.setTimeout(() => {

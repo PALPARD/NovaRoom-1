@@ -64,11 +64,11 @@ const mergeMessages = (base: Message[], incoming: Message[], mode: 'replace' | '
             const isPending = m.deliveryStatus === 'sending';
             
             if (isPending && mClientId && incomingClientIds.has(mClientId)) {
-                // This is a pending message that is already represented by a server message in 'incoming'
+                
                 continue;
             }
             
-            // If we already have this ID, server message takes precedence over pending
+            
             if (byId.has(m.id)) {
                 const existing = byId.get(m.id)!;
                 if (existing.deliveryStatus === 'sending' && m.deliveryStatus !== 'sending') {
@@ -151,10 +151,10 @@ export function App() {
         setBlockedChatIds(next);
     }, [blockedChatIds]);
 
-    // When opening a chat from the list, capture its unreadCount BEFORE clearing it,
-    // so ChatRoom can scroll to the first unread message and render an unread separator.
-    // IMPORTANT: this should be consumed (cleared) after first use, otherwise reopening the chat
-    // will keep triggering the unread-jump logic.
+    
+    
+    
+    
     const [openChatUnread, setOpenChatUnread] = useState<{ chatId: string; count: number } | null>(null);
     const [desktopSidebarWidth, setDesktopSidebarWidth] = useState<number | null>(() => {
         try {
@@ -178,7 +178,7 @@ export function App() {
         });
     }, [authToken, currentUser?.chatId]);
 
-    // AI Chat state
+    
     const [showAIChat, setShowAIChat] = useState(false);
     const [aiChats, setAIChats] = useState<AIChatSummary[]>([]);
     const [activeAIChatId, setActiveAIChatId] = useState<string | null>(null);
@@ -193,7 +193,7 @@ export function App() {
     const [aiProRemaining, setAIProRemaining] = useState<number>(10);
     const [aiFlashRemaining, setAIFlashRemaining] = useState<number>(50);
 
-    // Track if this is the initial load (show skeleton only once)
+    
     const [isInitialChatsLoad, setIsInitialChatsLoad] = useState(true);
     const [messagesLoadedOnce, setMessagesLoadedOnce] = useState<Record<string, boolean>>({});
     const [messagesLoading, setMessagesLoading] = useState<Record<string, boolean>>({});
@@ -201,8 +201,8 @@ export function App() {
     const sendSoundRef = useRef<HTMLAudioElement | null>(null);
     const receiveSoundRef = useRef<HTMLAudioElement | null>(null);
 
-    // When user is selected from search, we open the room but do NOT create the chat
-    // until the first message is sent.
+    
+    
     const [pendingUser, setPendingUser] = useState<User | null>(null);
     const [pendingForwardDrafts, setPendingForwardDrafts] = useState<Record<string, { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }>>({});
     const aiStreamStartedRef = useRef<Record<string, boolean>>({});
@@ -215,8 +215,8 @@ export function App() {
         chatsRef.current = chats;
     }, [chats]);
 
-    // Keep a ref to activeChatId and view so WebSocket callbacks always read the latest values
-    // without needing to be re-created (avoids stale closure bug on unread badge).
+    
+    
     const activeChatIdRef = useRef<string | null>(null);
     const viewRef = useRef<View>('chatList');
     const lastSeenAckMessageIdRef = useRef<Record<string, string>>({});
@@ -249,7 +249,7 @@ export function App() {
         try {
             localStorage.setItem(DESKTOP_SIDEBAR_KEY, String(Math.round(desktopSidebarWidth)));
         } catch {
-            // ignore storage failures
+            
         }
     }, [desktopSidebarWidth]);
 
@@ -346,23 +346,23 @@ export function App() {
                     try {
                         const fallback = audio.cloneNode(true) as HTMLAudioElement;
                         fallback.volume = audio.volume;
-                        void fallback.play().catch(() => { /* ignore */ });
+                        void fallback.play().catch(() => {  });
                     } catch {
-                        // Ignore blocked autoplay errors.
+                        
                     }
                 });
             }
         } catch {
-            // Ignore blocked autoplay errors.
+            
         }
     }, []);
 
-    // Track which group chats were freshly created this session so we can
-    // keep them pinned at the top until they receive their first real message.
-    // Key = chatId, Value = the epoch ms when the user created it.
+    
+    
+    
     const newGroupTimestamps = useRef<Record<string, number>>({});
 
-    // Mobile keyboard/viewport fix: keep app sized to VisualViewport when available.
+    
     useEffect(() => {
         const apply = () => {
             const vv = window.visualViewport;
@@ -386,7 +386,7 @@ export function App() {
         };
     }, []);
 
-    // Load AI chat list
+    
     useEffect(() => {
         if (!isAuthenticated) return;
 
@@ -462,7 +462,7 @@ export function App() {
         if (!isAuthenticated) return;
 
         if (showLoading && isInitialChatsLoad) {
-            // skeleton shown via isInitialChatsLoad flag
+            
         }
 
         try {
@@ -485,10 +485,10 @@ export function App() {
                     ? presenceMatch.online
                     : Boolean(c?.otherUser?.online);
                 if (!c?.lastMessage) {
-                    // No real message yet. Use the creation timestamp recorded when the
-                    // user created this group in the current session, so it stays at the
-                    // top. Once it falls out of newGroupTimestamps (i.e. the user didn't
-                    // just create it) use 0 so it sorts below real conversations.
+                    
+                    
+                    
+                    
                     const pinnedTs = newGroupTimestamps.current[c.id] ?? 0;
                     return {
                         ...c,
@@ -506,7 +506,7 @@ export function App() {
                 } as Chat;
             }));
 
-            // Keep active chat unread badge cleared even if server data is briefly stale.
+            
             const currentActiveChatId = activeChatIdRef.current;
             const currentView = viewRef.current;
             const merged = normalized.map((c) => {
@@ -636,7 +636,7 @@ export function App() {
         });
     }, [currentUser?.chatId]);
 
-    // WebSocket handlers wrapped in useCallback to prevent infinite reconnection loops
+    
     const handleNewMessage = useCallback((chatId: string, newMsg: Message) => {
         const currentMessages = messagesRef.current[chatId] || [];
         
@@ -674,7 +674,7 @@ export function App() {
         setMessages(prev => {
             const list = prev[chatId] || [];
             
-            // Re-check inside functional update to be absolutely safe
+            
             if (newMsg.clientId) {
                 const idx = list.findIndex((m) => m.id === newMsg.clientId && m.deliveryStatus === 'sending');
                 if (idx !== -1) {
@@ -711,7 +711,7 @@ export function App() {
             const sendSoundKey = String(newMsg.clientId || newMsg.id || '');
             if (sendSoundKey && !playedSendSoundIdsRef.current.has(sendSoundKey)) {
                 playedSendSoundIdsRef.current.add(sendSoundKey);
-                // Keep dedupe set bounded in long sessions.
+                
                 if (playedSendSoundIdsRef.current.size > 500) {
                     const iterator = playedSendSoundIdsRef.current.values();
                     const oldestKey = iterator.next().value;
@@ -832,8 +832,8 @@ export function App() {
             window.clearTimeout(presenceOfflineGraceTimersRef.current[normalizedUserId]);
             delete presenceOfflineGraceTimersRef.current[normalizedUserId];
         }
-        // Prevent rapid online/offline flapping by delaying "offline" if user was
-        // seen online recently. This keeps UI stable while transient reconnects happen.
+        
+        
         if (!online && prevOnline && (now - (prevPresence?.updatedAt || 0)) < 12000) {
             presenceOfflineGraceTimersRef.current[normalizedUserId] = window.setTimeout(() => {
                 setPresence(false);
@@ -934,7 +934,7 @@ export function App() {
         });
     }, []);
 
-    // AI WebSocket handlers
+    
     const handleNewAIMessage = useCallback((message: any) => {
         const aiChatId = String(message.aiChatId || activeAIChatId || '');
         if (!aiChatId) return;
@@ -1100,7 +1100,7 @@ export function App() {
         setAIRespondingChatId(null);
     }, []);
 
-    // WebSocket initialization
+    
     const { sendMessage: sendViaWS, editMessage: editViaWS, deleteMessage: deleteViaWS, sendSeen, sendTyping, sendUploadStatus, reconnectExhausted, reconnectNow, sendAIMessage, stopAIGeneration } = useWebSocket({
         token: authToken,
         onNewMessage: handleNewMessage,
@@ -1125,7 +1125,7 @@ export function App() {
         setWsReconnectExhausted(reconnectExhausted);
     }, [reconnectExhausted]);
 
-    // Check auth on mount (without bouncing user to /login first)
+    
     useEffect(() => {
         if (!authToken) {
             setIsAuthChecking(false);
@@ -1310,7 +1310,7 @@ export function App() {
         };
     }, []);
 
-    // Allow child components (e.g., ContactInfo group edit) to request a chat-list refresh.
+    
     useEffect(() => {
         if (!isAuthenticated) return;
         const handler = () => {
@@ -1330,7 +1330,7 @@ export function App() {
         setPendingUser(null);
         setShowAIChat(false);
 
-        // Capture unreadCount BEFORE clearing so ChatRoom can use it.
+        
         const openingUnread = chatsRef.current.find(c => c.id === chatId)?.unreadCount || 0;
         setOpenChatUnread({ chatId, count: openingUnread });
 
@@ -1369,7 +1369,7 @@ export function App() {
 
             let loadedCount = await fetchPagedMessages(chatId, { direction: 'latest', mode: 'replace' });
             if (loadedCount === 0 && chatLoadRequestRef.current === requestId) {
-                // Retry once for occasional race/network hiccups when rapidly switching chats.
+                
                 await new Promise((resolve) => window.setTimeout(resolve, 180));
                 loadedCount = await fetchPagedMessages(chatId, { direction: 'latest', mode: 'replace' });
             }
@@ -1830,7 +1830,7 @@ export function App() {
             }
         } catch (e) {
             console.error('Failed to refresh forwarded target chat messages', e);
-            // If it failed, we should probably remove the optimistic message
+            
             setMessages((prev) => ({
                 ...prev,
                 [targetChatId]: (prev[targetChatId] || []).filter((m) => m.id !== forwardClientId),
@@ -1874,7 +1874,7 @@ export function App() {
         const myId = currentUser?.chatId;
         if (myId) {
             const existing = chatsRef.current.find((c) => {
-                // اگر گروه بود، به عنوان چت خصوصی حساب نشه
+                
                 if ((c as any)?.chatType === 'group') return false;
 
                 const hasParticipants = Array.isArray(c.participantIds) && c.participantIds.includes(myId) && c.participantIds.includes(user.chatId);
@@ -1914,8 +1914,8 @@ export function App() {
             });
 
             if (res?.chatId) {
-                // Record the creation time for this group so loadChats can
-                // keep it pinned at the top until a real message arrives.
+                
+                
                 const createdAt = Date.now();
                 newGroupTimestamps.current[res.chatId] = createdAt;
 
@@ -1940,12 +1940,12 @@ export function App() {
                     },
                     unreadCount: 0,
                 };
-                // Prepend and remove any stale duplicate with the same id
+                
                 setChats(prev => [newGroupChat, ...prev.filter(c => c.id !== res.chatId)]);
             }
 
-            // Sync from server — loadChats will use newGroupTimestamps to keep
-            // the group pinned even though the server returns no lastMessage.
+            
+            
             await loadChats(false);
             return res;
         } catch (error) {
@@ -2000,7 +2000,7 @@ export function App() {
         try {
             await apiFetch(`/ai/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
         } catch {
-            // ignore cleanup errors for temporary chats
+            
         }
         setAIChats((prev) => prev.filter((c) => c.id !== chatId));
         setAIMessagesByChat((prev) => {
@@ -2370,7 +2370,7 @@ export function App() {
         return null;
     }
 
-    // --- Unauthenticated routes ---
+    
     if (!isAuthenticated) {
         return (
             <Routes>
@@ -2398,7 +2398,7 @@ export function App() {
         );
     }
 
-    // --- Authenticated: redirect away from auth pages ---
+    
     const authPages = ['/login', '/register', '/forgot-password'];
     const isOnAuthPage = authPages.some(p => location.pathname.startsWith(p));
     if (isOnAuthPage) {

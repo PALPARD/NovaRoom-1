@@ -92,7 +92,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
             return;
         }
 
-        // If user keeps their current username, it is always allowed.
+        
         if (trimmed.toLowerCase() === user.username.toLowerCase()) {
             setUsernameStatus('available');
             setUsernameHint('');
@@ -240,7 +240,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
             animate="visible"
             exit="exit"
         >
-            {/* Header */}
+            {}
             <div className="profile__header">
                 <button onClick={onBack} className="profile__header-back">
                     <ArrowLeft size={22} />
@@ -267,7 +267,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
             </div>
 
             <div className="profile__content">
-                {/* Avatar & Name Section */}
+                {}
                 <div className="profile__avatar-section">
                     <button type="button" onClick={openAvatarViewer} style={{ background: 'none', border: 'none', padding: 0, cursor: user.avatar ? 'zoom-in' : 'default' }}>
                         <Avatar name={user.name} size="xl" src={user.avatar || ''} />
@@ -311,7 +311,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                 </div>
 
                 <div className="profile__fields">
-                    {/* Chat ID */}
+                    {}
                     <div className="profile__chat-id-card">
                         <div className="profile__chat-id-row">
                             <div>
@@ -330,7 +330,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                         </div>
                     </div>
 
-                    {/* Registration Date */}
+                    {}
                     {user.registrationDate && (
                         <div className="profile__chat-id-card" style={{ marginTop: 12 }}>
                             <div className="profile__chat-id-row">
@@ -345,8 +345,8 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                         </div>
                     )}
 
-                    {/* Editable Fields */}
-                    {/* Name */}
+                    {}
+                    {}
                     <div className="profile__field-group">
                         <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>نام</label>
                         {isEditing ? (
@@ -369,7 +369,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                         )}
                     </div>
 
-                    {/* Username */}
+                    {}
                     <div className="profile__field-group">
                         <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>نام کاربری</label>
                         {isEditing ? (
@@ -420,7 +420,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                         )}
                     </div>
 
-                    {/* Bio */}
+                    {}
                     <div className="profile__field-group">
                         <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>بیوگرافی</label>
                         {isEditing ? (
@@ -446,7 +446,7 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                         )}
                     </div>
 
-                    {/* Info Note */}
+                    {}
                     <div className="profile__info-note">
                         <p>
                             شناسه چت شما یکتا بوده و قابل تغییر نیست. نام کاربری خود را با دیگران به اشتراک بگذارید تا بتوانند شما را پیدا کرده و پیام بدهند.

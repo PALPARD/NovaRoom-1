@@ -43,7 +43,7 @@ interface AIChatRoomProps {
     currentUserVerified?: boolean;
 }
 
-const IRAN_OFFSET_MS = 210 * 60 * 1000; // +03:30
+const IRAN_OFFSET_MS = 210 * 60 * 1000; 
 
 function normalizeTs(ts: unknown): number {
     if (ts == null) return Date.now();
@@ -90,7 +90,7 @@ function deleteCookie(name: string) {
     document.cookie = `${encodeURIComponent(name)}=; path=/; max-age=0; samesite=lax`;
 }
 
-// ─── CodeBlock with copy button ───────────────────────────────────────────────
+
 function CodeBlock({ className, children }: { className?: string; children?: React.ReactNode }) {
     const [copied, setCopied] = useState(false);
 
@@ -114,11 +114,11 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch {
-            // ignore
+            
         }
     };
 
-    // extract language label e.g. "language-python" → "python"
+    
     const lang = className?.replace('language-', '') ?? '';
 
     return (
@@ -140,7 +140,7 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
         </div>
     );
 }
-// ──────────────────────────────────────────────────────────────────────────────
+
 
 
 const AI_EMPTY_STATE_PROMPTS = [
@@ -187,10 +187,10 @@ const markdownComponents: Components = {
 
 function normalizeMessageTextForRender(text: string): string {
     let t = String(text || '').replace(/\\n/g, '\n');
-    // Convert \[ \] to $$ $$
+    
     t = t.replace(/\\\[/g, '$$$$');
     t = t.replace(/\\\]/g, '$$$$');
-    // Convert \( \) to $ $
+    
     t = t.replace(/\\\(/g, '$$');
     t = t.replace(/\\\)/g, '$$');
     return t;
@@ -375,7 +375,7 @@ export function AIChatRoom({
         if (!audio) return;
         audio.currentTime = 0;
         audio.play().catch(() => {
-            // Ignore blocked autoplay errors.
+            
         });
     };
 
@@ -398,7 +398,7 @@ export function AIChatRoom({
         return distanceFromBottom < 120;
     };
 
-    // Keyboard offset handling
+    
     useEffect(() => {
         const room = roomRef.current;
         if (!room) return;
@@ -439,7 +439,7 @@ export function AIChatRoom({
         };
     }, []);
 
-    // Close menu when clicking outside
+    
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
             if (msgMenuRef.current && msgMenuRef.current.contains(e.target as Node)) return;
@@ -449,13 +449,13 @@ export function AIChatRoom({
         return () => document.removeEventListener('mousedown', onDocClick);
     }, []);
 
-    // Initial scroll to bottom
+    
     useEffect(() => {
         const raf = requestAnimationFrame(() => scrollToBottom(false));
         return () => cancelAnimationFrame(raf);
     }, []);
 
-    // Handle new messages
+    
     useEffect(() => {
         const container = messagesContainerRef.current;
         if (!container) {
@@ -498,7 +498,7 @@ export function AIChatRoom({
         prevLastMessageRef.current = messages[messages.length - 1] ?? null;
     }, [messages, currentUserId]);
 
-    // Handle typing indicator
+    
     useEffect(() => {
         if (isTyping && isAtBottomRef.current) {
             requestAnimationFrame(() => scrollToBottom(true));
@@ -751,7 +751,7 @@ export function AIChatRoom({
                 document.body.removeChild(ta);
             }
         } catch {
-            // ignore
+            
         }
         setMsgMenu(null);
     };

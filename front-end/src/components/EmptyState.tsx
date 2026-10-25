@@ -10,12 +10,12 @@ export function EmptyState() {
     const [isFooterHovered, setIsFooterHovered] = useState(false);
 
     useEffect(() => {
-        // We need to get the computed values of the CSS variables 
-        // because the DotGrid canvas drawing needs actual hex/rgb values.
+        
+        
         const root = document.documentElement;
         const computed = getComputedStyle(root);
 
-        // Using a more subtle color for the base dots
+        
         const base = computed.getPropertyValue('--text-tertiary').trim() || '#9ca3af';
         const active = computed.getPropertyValue('--accent-primary').trim() || '#2563eb';
 

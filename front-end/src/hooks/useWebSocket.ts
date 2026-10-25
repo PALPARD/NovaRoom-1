@@ -1,4 +1,4 @@
-// useWebSocket.ts
+
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { API_BASE_URL, API_WS_URL } from '../config/api';
 import type { FileMetadata } from '../types';
@@ -519,7 +519,7 @@ export function useWebSocket({
                     try {
                         socketRef.current.close();
                     } catch {
-                        // noop
+                        
                     }
                 }
             }
@@ -540,7 +540,7 @@ export function useWebSocket({
                     keepalive: true,
                 });
             } catch {
-                // noop
+                
             }
         };
 

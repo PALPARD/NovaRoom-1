@@ -55,7 +55,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
     if (!cached) return false;
     const object = URL.createObjectURL(cached);
     setMediaUrl(object); setDownloadState('done');
-    // Also clear preview cache if we have the full image
+    
     void deleteCachedBlob(`chat:${chatId}:preview:${file.fileId}`);
     return true;
   };
@@ -88,7 +88,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
           const blob = await decodeResponseBlob(res);
           task!.blob = blob;
           await getOrCacheBlob({ cacheKey, loadBlob: async () => blob });
-          // Clear preview cache since we now have the full image
+          
           void deleteCachedBlob(`chat:${chatId}:preview:${file.fileId}`);
           task!.state = 'done'; notify(task!);
         } catch {
@@ -211,7 +211,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
   const fallbackRatio = isVideo ? (16 / 9) : 0.75;
   const rawAspectRatio = actualAspectRatio || previewAspectRatio || metadataAspectRatio || fallbackRatio;
   
-  // Clamping aspect ratio to keep message bubbles reasonable but allow more variety
+  
   const effectiveAspectRatio = isImage
     ? Math.max(0.5, Math.min(2.0, rawAspectRatio))
     : Math.max(0.45, Math.min(2.2, rawAspectRatio));
@@ -268,7 +268,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
       }
       if (w > 0 && h > 0) {
         const nextRatio = w / h;
-        // Only update if it's the first time or the change is significant (> 1%)
+        
         const currentRatio = rawAspectRatio;
         if (!actualAspectRatio || Math.abs(nextRatio - currentRatio) > currentRatio * 0.01) {
           setActualAspectRatio(nextRatio);
@@ -278,7 +278,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
     onMediaLoad?.();
   };
 
-  // Calculate container width to respect aspect ratio within max bounds (280x440)
+  
   const maxWidth = 280;
   const maxHeight = 440;
   const containerStyle: React.CSSProperties = {
@@ -288,11 +288,11 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
   };
 
   if (effectiveAspectRatio < maxWidth / maxHeight) {
-    // Very tall media: limit by height
+    
     containerStyle.height = `${maxHeight}px`;
     containerStyle.width = `${Math.round(maxHeight * effectiveAspectRatio)}px`;
   } else {
-    // Wide or moderately tall media: limit by width
+    
     containerStyle.width = `${maxWidth}px`;
     containerStyle.height = `${Math.round(maxWidth / effectiveAspectRatio)}px`;
   }

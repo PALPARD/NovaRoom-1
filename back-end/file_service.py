@@ -9,14 +9,11 @@ import hashlib
 import hmac
 import secrets
 
-# Base directory for file uploads
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Maximum file size 20MB
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
-# Allowed MIME types (blacklist dangerous executables)
 DANGEROUS_EXTENSIONS = {
     ".exe",
     ".bat",
@@ -91,11 +88,9 @@ def is_allowed_file(filename: str) -> bool:
 
 
 def sanitize_filename(filename: str) -> str:
-    # Get only the filename, remove any directory components
     safe_name = Path(filename).name
-    # Remove any potentially dangerous characters
     safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
-    return safe_name[:255]  # Limit length
+    return safe_name[:255]
 
 
 def generate_unique_filename(original_filename: str) -> Tuple[str, str]:
@@ -107,36 +102,29 @@ def generate_unique_filename(original_filename: str) -> Tuple[str, str]:
 
 def get_file_path(file_id: str) -> Path:
     """Get full path for a file ID"""
-    # Prevent path traversal
     safe_id = Path(file_id).name
     return UPLOAD_DIR / safe_id
 
 
 async def save_uploaded_file(file_content: bytes, original_filename: str) -> dict:
-    # Validate file size
     if len(file_content) > MAX_FILE_SIZE:
         raise ValueError(
             f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / (1024*1024)}MB"
         )
 
-    # Validate file type
     if not is_allowed_file(original_filename):
         raise ValueError("File type not allowed")
 
-    # Generate unique filename
     file_id, sanitized_name = generate_unique_filename(original_filename)
     file_path = get_file_path(file_id)
 
-    # Save file
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(file_content)
 
-    # Detect MIME type
     mime_type, _ = mimetypes.guess_type(sanitized_name)
     if not mime_type:
         mime_type = "application/octet-stream"
 
-    # Return metadata
     return {
         "fileId": file_id,
         "fileName": sanitized_name,
@@ -171,15 +159,12 @@ async def read_file_content(file_id: str) -> Optional[bytes]:
         return None
     async with aiofiles.open(file_path, "rb") as f:
         raw = await f.read()
-    # Legacy compatibility: old files were encrypted server-side with NRF1.
     if raw.startswith(FILE_MAGIC):
         return decrypt_file_bytes(raw)
     return raw
 
 
 async def encrypt_existing_uploads() -> int:
-    # Deprecated: new uploads are encrypted client-side.
-    # Keep as a no-op to avoid mutating existing client-encrypted files.
     return 0
 
 

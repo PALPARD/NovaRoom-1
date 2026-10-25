@@ -4,9 +4,9 @@ export const API_BASE_URL = isDev
     ? import.meta.env.VITE_DEV_API_URL
     : import.meta.env.VITE_PROD_API_URL;
 
-// WebSocket URL (strictly map protocol: http -> ws, https -> wss)
+
 export const API_WS_URL = API_BASE_URL
-    ? API_BASE_URL.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://')
+    ? API_BASE_URL.replace(/^https:\/\
     : '';
 
 export const getHeaders = (includeAuth = true) => {
@@ -27,7 +27,7 @@ export const getHeaders = (includeAuth = true) => {
         if (token) headers.Authorization = `Bearer ${token}`;
     }
 
-    // ngrok warning skip
+    
     if (isDev) {
         headers['ngrok-skip-browser-warning'] = 'true';
     }
@@ -56,7 +56,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
     return response.json();
 };
 
-// Add reaction to message
+
 export const toggleReaction = async (messageId: string, emoji: string) => {
     return apiFetch(`/messages/${encodeURIComponent(messageId)}/react`, {
         method: 'POST',
