@@ -8,3 +8,6 @@ GEMINI.md
 Page
 DB Backup/
 .env
+.venv/
+venv/
+node_modules/

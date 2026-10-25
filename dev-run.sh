@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
@@ -16,12 +15,7 @@ echo -e "${BLUE}==============================================${NC}"
 
 if [ ! -f "$PROJECT_ROOT/.env" ]; then
     echo -e "${RED}[!] Error: .env file not found in root directory.${NC}"
-    if [ -f "$PROJECT_ROOT/.env.example" ]; then
-        echo -e "${YELLOW}[*] Creating .env from .env.example...${NC}"
-        cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
-    else
-        exit 1
-    fi
+    exit 1
 fi
 
 cleanup() {
@@ -38,17 +32,18 @@ cleanup() {
     exit 0
 }
 
-trap cleanup SIGINT SIGTERM EXIT
+trap cleanup INT TERM
 
 echo -e "\n${GREEN}[1/2] Starting Backend (FastAPI)...${NC}"
 cd "$PROJECT_ROOT/back-end"
 
-python3 -c "import fastapi, uvicorn, motor, pymongo, bcrypt, jwt" 2>/dev/null || {
-    echo -e "${YELLOW}[*] Installing backend dependencies...${NC}"
-    pip install -r requirements.txt
-}
+if [ ! -d ".venv" ]; then
+    echo -e "${YELLOW}[*] Creating Python virtual environment in back-end/.venv...${NC}"
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+fi
 
-python3 -m uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
+.venv/bin/python3 -m uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 echo -e "${GREEN}[✓] Backend running at http://localhost:8000 (PID: $BACKEND_PID)${NC}"
 
