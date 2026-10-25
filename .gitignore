@@ -1,7 +1,8 @@
 .vscode
 .kilo
 changes.patch
-graphify-out/cache
+graphify-out/
+.graphifyignore
 .gemini
 GEMINI.md
 Page
