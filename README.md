@@ -14,54 +14,55 @@ Create a `.env` file in the project root:
 cp .env.example .env
 ```
 
-Open `.env` and fill in your configuration values (MongoDB connection string, secrets, SMTP credentials, etc.).
+Open `.env` and fill in your configuration values (MongoDB connection string, secrets, SMTP credentials, DeepSeek API key, etc.).
 
 ---
 
-## Running the Project
+## Development Mode (Local)
 
-### Option A: Running with Docker (Production Mode)
-
-Runs both the frontend (served via Nginx) and the backend (FastAPI) inside Docker containers.
-
-1. **Start all services:**
-   ```bash
-   docker compose up --build -d
-   ```
-
-2. **Access the application:**
-   - **Frontend:** http://localhost
-   - **Backend API:** http://localhost/api
-
-3. **View logs:**
-   ```bash
-   docker compose logs -f
-   ```
-
-4. **Stop the containers:**
-   ```bash
-   docker compose down
-   ```
-
-5. **Apply code updates:**
-   ```bash
-   docker compose up --build -d
-   ```
-
----
-
-### Option B: Running Locally (Development Mode / Instant Hot-Reload)
-
-Runs the project directly on your machine without Docker. Any code change to frontend or backend is applied in real-time.
+Runs the project directly on your machine with instant hot-reload. Any code change to frontend or backend is applied in real-time.
 
 1. **Start both Backend and Frontend with a single command:**
    ```bash
    ./dev-run.sh
    ```
+   *(Automatically manages Python virtual environment, synchronizes backend dependencies, verifies backend readiness, and starts Vite).*
 
 2. **Access the application:**
    - **Frontend (Vite HMR):** http://localhost:5173
    - **Backend API:** http://localhost:8000
+   - **API Docs (Swagger):** http://localhost:8000/docs
 
 3. **Stop development servers:**
    Press `Ctrl + C` in the terminal to cleanly terminate both processes.
+
+---
+
+## Production Deployment (Runflare / Single Docker Service)
+
+NovaRoom uses a unified single-container architecture where Nginx serves the React SPA at `/` and reverse-proxies API & WebSocket traffic to FastAPI at `/api` on Port 80.
+
+### 1. Automated Packaging Script
+
+A dedicated packaging utility is provided in the `deploy/` directory to compile the frontend, prepare backend files, inject deployment-specific `.env`, and produce an optimized zip file:
+
+```bash
+./deploy/pack.sh
+```
+
+*(You can also run `./deploy/build.sh`)*
+
+- The script uses `deploy/.env` for deployment-specific environment variables.
+- The output zip file is generated at:
+  ```text
+  deploy/output/novaroom-deploy.zip
+  ```
+
+### 2. Deploying on Runflare
+
+1. Create a **Docker Service** in the Runflare dashboard.
+2. Upload `deploy/output/novaroom-deploy.zip` (or connect your Git repository).
+3. **Configure Service Settings:**
+   - **Target Port:** `80`
+   - **Persistent Disk:** Mount a disk at `/app/back-end/uploads` to preserve user uploads across redeployments.
+   - **Environment Variables:** Set or customize variables as needed (MongoDB URI, JWT secret, DeepSeek API key).

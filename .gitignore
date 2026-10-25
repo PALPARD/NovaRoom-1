@@ -7,8 +7,11 @@ graphify-out/
 GEMINI.md
 Page
 DB Backup/
-.env
+.env*
+!.env.example
+!deploy/.env.example
 .venv/
 venv/
 node_modules/
 *.zip
+deploy/output/
