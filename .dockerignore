@@ -1,5 +1,6 @@
 .git
 .gitignore
+.env*
 .vscode
 .idea
 DB Backup
@@ -8,5 +9,6 @@ graphify-out
 node_modules
 back-end/uploads
 back-end/__pycache__
+back-end/.venv
 front-end/dist
 front-end/node_modules
