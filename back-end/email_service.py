@@ -8,10 +8,20 @@ import asyncio
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
-SMTP_SERVER = "smtp-ir-01.runflare.com"
-SMTP_PORT = 465
-EMAIL_SENDER = "auth@novaroom.org"
-APP_PASSWORD = "NO5L%@Q#4yAEj9B"
+import os
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
+
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
+
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp-ir-01.runflare.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "auth@novaroom.org")
+APP_PASSWORD = os.getenv("APP_PASSWORD", "NO5L%@Q#4yAEj9B")
 
 verification_codes = {}
 password_reset_codes = {}

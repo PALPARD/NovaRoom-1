@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { apiFetch } from '../config/api';
+import { apiFetch, API_BASE_URL } from '../config/api';
 import { type User } from '../types';
 import { UserPlus, ArrowLeft, Mail, Key, User as UserIcon, CheckCircle, AlertCircle } from 'lucide-react';
 import { DarkModeToggle } from './DarkModeToggle';
@@ -100,7 +100,7 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         checkTimerRef.current = window.setTimeout(async () => {
             try {
                 const response = await fetch(
-                    `${import.meta.env.VITE_IS_DEV_ENVIRONMENT === 'true' ? import.meta.env.VITE_DEV_API_URL : import.meta.env.VITE_PROD_API_URL}/auth/username-available?username=${encodeURIComponent(trimmed)}`,
+                    `${API_BASE_URL}/auth/username-available?username=${encodeURIComponent(trimmed)}`,
                     {
                         headers: {
                             'Content-Type': 'application/json',

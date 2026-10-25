@@ -3,9 +3,14 @@ import re
 import json
 from openai import AsyncOpenAI
 from typing import List, Dict, AsyncIterator, Any
-from dotenv import load_dotenv
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
 
 client = AsyncOpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),

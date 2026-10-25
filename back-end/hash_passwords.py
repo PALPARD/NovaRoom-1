@@ -1,13 +1,19 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 import bcrypt
 import os
-from dotenv import load_dotenv
 import asyncio
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
 
+DB_NAME = os.getenv("MONGO_DB_NAME") or os.getenv("DB_NAME", "novaroom")
 client = AsyncIOMotorClient(os.getenv("MONGO_DB"))
-db = client["Messenger"]
+db = client[DB_NAME]
 cl_users = db["users"]
 
 

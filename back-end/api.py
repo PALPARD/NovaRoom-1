@@ -25,7 +25,8 @@ import bcrypt
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 import os
-from dotenv import load_dotenv
+from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 from typing import List, Dict, Optional, Any, Iterable
 import traceback
 import asyncio
@@ -61,12 +62,36 @@ from file_service import (
     MAX_FILE_SIZE,
 )
 
-load_dotenv()
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 app = FastAPI(title="NovaRoom API")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+class ApiPrefixMiddleware:
+    """Allows endpoints to be called with or without the /api prefix"""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path == "/api":
+                scope["path"] = "/"
+            elif path.startswith("/api/"):
+                scope["path"] = path[4:]
+            if "raw_path" in scope:
+                raw = scope["raw_path"]
+                if raw == b"/api":
+                    scope["raw_path"] = b"/"
+                elif raw.startswith(b"/api/"):
+                    scope["raw_path"] = raw[4:]
+        await self.app(scope, receive, send)
 
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
@@ -76,6 +101,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ApiPrefixMiddleware)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "NovaRoom API"}
 
 _raw_secret = os.getenv("SECRET_KEY", "")
 if not _raw_secret:
@@ -91,8 +121,11 @@ SESSION_INACTIVITY_EXPIRE_DAYS = 10
 MAX_ACTIVE_SESSIONS = 20
 MAX_LOGIN_EVENTS = 10
 
-client = AsyncIOMotorClient(os.getenv("MONGO_DB"))
-db = client["Messenger2"]
+MONGO_URI = os.getenv("MONGO_DB")
+DB_NAME = os.getenv("MONGO_DB_NAME") or os.getenv("DB_NAME", "novaroom")
+
+client = AsyncIOMotorClient(MONGO_URI)
+db = client[DB_NAME]
 cl_users = db["users"]
 cl_chats = db["chats"]
 cl_messages = db["messages"]
@@ -5147,4 +5180,5 @@ async def delete_ai_message(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)

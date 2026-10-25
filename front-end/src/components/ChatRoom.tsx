@@ -174,6 +174,8 @@ function resolveAvatarUrl(rawAvatar: string): string {
     if (!avatar) return '';
     if (avatar.startsWith('blob:') || avatar.startsWith('data:')) return avatar;
     if (avatar.startsWith('http://') || avatar.startsWith('https://')) return avatar;
+    if (avatar.startsWith('/avatars/') || avatar === '/favicon.png') return avatar;
+    if (API_BASE_URL && avatar.startsWith(API_BASE_URL)) return avatar;
     if (avatar.startsWith('/')) return `${API_BASE_URL}${avatar}`;
     return `${API_BASE_URL}/files/${avatar}`;
 }

@@ -1,13 +1,19 @@
-const isDev = import.meta.env.VITE_IS_DEV_ENVIRONMENT === 'true';
+const configuredApiUrl = import.meta.env.VITE_API_URL || '/api';
 
-export const API_BASE_URL = isDev
-    ? import.meta.env.VITE_DEV_API_URL
-    : import.meta.env.VITE_PROD_API_URL;
+export const API_BASE_URL = configuredApiUrl.replace(/\/+$/, '');
 
-
-export const API_WS_URL = API_BASE_URL
-    ? API_BASE_URL.replace(/^https:\/\
-    : '';
+export const API_WS_URL = (() => {
+    if (!API_BASE_URL) return '';
+    if (API_BASE_URL.startsWith('http://') || API_BASE_URL.startsWith('https://')) {
+        return API_BASE_URL.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+    }
+    if (typeof window !== 'undefined' && window.location) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const prefix = API_BASE_URL.startsWith('/') ? API_BASE_URL : `/${API_BASE_URL}`;
+        return `${protocol}//${window.location.host}${prefix}`;
+    }
+    return API_BASE_URL;
+})();
 
 export const getHeaders = (includeAuth = true) => {
     const headers: Record<string, string> = {
@@ -28,10 +34,6 @@ export const getHeaders = (includeAuth = true) => {
     }
 
     
-    if (isDev) {
-        headers['ngrok-skip-browser-warning'] = 'true';
-    }
-
     return headers;
 };
 

@@ -1,0 +1,12 @@
+.git
+.gitignore
+.vscode
+.idea
+DB Backup
+graphify-out
+.graphifyignore
+node_modules
+back-end/uploads
+back-end/__pycache__
+front-end/dist
+front-end/node_modules

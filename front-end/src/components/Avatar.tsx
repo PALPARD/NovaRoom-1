@@ -52,7 +52,7 @@ function resolveAvatarUrl(src: string): string {
       !src.includes('/files/') &&
       !src.includes('/avatars/')
     ) {
-      const fileId = src.slice(API_BASE_URL.length).replace(/^\
+      const fileId = src.slice(API_BASE_URL.length).replace(/^\//, '');
       if (fileId) return `${API_BASE_URL}/files/${fileId}`;
     }
     return src;
@@ -60,6 +60,7 @@ function resolveAvatarUrl(src: string): string {
 
   if (src.startsWith('/')) {
     if (src === '/favicon.png' || src.startsWith('/avatars/')) return src;
+    if (API_BASE_URL && src.startsWith(API_BASE_URL)) return src;
     return `${API_BASE_URL}${src}`;
   }
 

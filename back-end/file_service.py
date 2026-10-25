@@ -8,9 +8,16 @@ import mimetypes
 import hashlib
 import hmac
 import secrets
+from dotenv import load_dotenv, find_dotenv
 
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
+
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
