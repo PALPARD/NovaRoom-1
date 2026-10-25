@@ -110,7 +110,7 @@ async def generate_ai_response_stream(
     chat_id: str = "",
     bio: str = "",
     conversation_summary: str = "",
-    model: str = "deepseek-v4-flash",
+    model: str = "deepseek-chat",
     reasoning_mode: bool = False,
 ) -> AsyncIterator[Dict[str, Any]]:
     try:
@@ -146,12 +146,9 @@ async def generate_ai_response_stream(
         request_kwargs: Dict[str, Any] = {
             "model": model,
             "messages": full_messages,
-            "max_tokens": 2000,
+            "max_tokens": 4000 if model == "deepseek-reasoner" else 2000,
             "stream": True,
         }
-        if reasoning_mode:
-            request_kwargs["reasoning_effort"] = "high"
-            request_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
 
         stream = await client.chat.completions.create(**request_kwargs)
 
@@ -231,7 +228,7 @@ async def generate_conversation_summary(
         ]
 
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model="deepseek-chat",
             messages=summary_messages,
             response_format={"type": "json_object"},
             max_tokens=250,
@@ -302,7 +299,7 @@ async def generate_chat_title(first_user_message: str) -> str:
             },
         ]
 
-        for model_name in ("deepseek-chat", "deepseek-v4-flash"):
+        for model_name in ("deepseek-chat",):
             try:
                 response = await client.chat.completions.create(
                     model=model_name,

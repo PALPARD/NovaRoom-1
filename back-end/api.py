@@ -191,12 +191,10 @@ def normalize_ai_model_key(value: str) -> str:
     return "nova-pro" if key == "nova-pro" else "nova-flash"
 
 
-def ai_model_name_from_key(model_key: str) -> str:
-    return (
-        "deepseek-v4-pro"
-        if normalize_ai_model_key(model_key) == "nova-pro"
-        else "deepseek-v4-flash"
-    )
+def ai_model_name_from_key(model_key: str, use_reasoner: bool = False) -> str:
+    if normalize_ai_model_key(model_key) == "nova-pro" or use_reasoner:
+        return "deepseek-reasoner"
+    return "deepseek-chat"
 
 
 def ai_model_label_from_key(model_key: str) -> str:
@@ -4288,7 +4286,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 ai_chat_id = str(data.get("aiChatId") or "").strip()
                 use_reasoner = bool(data.get("useReasoner"))
                 model_key = normalize_ai_model_key(data.get("modelKey") or "nova-flash")
-                model_name = ai_model_name_from_key(model_key)
+                model_name = ai_model_name_from_key(model_key, use_reasoner)
 
                 if not isinstance(text, str) or not text.strip():
                     continue
@@ -4939,7 +4937,7 @@ async def websocket_ai_endpoint(websocket: WebSocket, token: str = Query(...)):
                 ai_chat_id = str(data.get("aiChatId") or "").strip()
                 use_reasoner = bool(data.get("useReasoner"))
                 model_key = normalize_ai_model_key(data.get("modelKey") or "nova-flash")
-                model_name = ai_model_name_from_key(model_key)
+                model_name = ai_model_name_from_key(model_key, use_reasoner)
 
                 if not isinstance(text, str) or not text.strip():
                     continue
