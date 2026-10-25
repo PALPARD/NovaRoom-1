@@ -40,7 +40,12 @@ cd "$PROJECT_ROOT/back-end"
 if [ ! -d ".venv" ]; then
     echo -e "${YELLOW}[*] Creating Python virtual environment in back-end/.venv...${NC}"
     python3 -m venv .venv
+fi
+
+if [ ! -f ".venv/.installed_requirements" ] || [ "requirements.txt" -nt ".venv/.installed_requirements" ]; then
+    echo -e "${YELLOW}[*] Installing/updating backend dependencies...${NC}"
     .venv/bin/pip install -r requirements.txt
+    touch .venv/.installed_requirements
 fi
 
 .venv/bin/python3 -m uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
@@ -50,9 +55,10 @@ echo -e "${GREEN}[✓] Backend running at http://localhost:8000 (PID: $BACKEND_P
 echo -e "\n${GREEN}[2/2] Starting Frontend (Vite)...${NC}"
 cd "$PROJECT_ROOT/front-end"
 
-if [ ! -d "node_modules" ]; then
-    echo -e "${YELLOW}[*] node_modules not found. Running npm install...${NC}"
+if [ ! -d "node_modules" ] || [ ! -f "node_modules/.installed_packages" ] || [ "package.json" -nt "node_modules/.installed_packages" ]; then
+    echo -e "${YELLOW}[*] Installing/updating frontend npm dependencies...${NC}"
     npm install
+    touch node_modules/.installed_packages
 fi
 
 npm run dev &
