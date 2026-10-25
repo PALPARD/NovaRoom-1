@@ -13,7 +13,7 @@ else:
     load_dotenv(find_dotenv(usecwd=True))
 
 client = AsyncOpenAI(
-    api_key=os.environ.get("DEEPSEEK_API_KEY"),
+    api_key=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or "missing-key",
     base_url="https://api.deepseek.com",
 )
 
