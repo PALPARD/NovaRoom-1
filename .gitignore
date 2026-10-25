@@ -6,10 +6,7 @@ graphify-out/
 .gemini
 GEMINI.md
 Page
-DB Backup/*
-!DB Backup/run.sh
-!DB Backup/server.py
-!DB Backup/README.md
+DB Backup/
 .env*
 !.env.example
 !deploy/.env.example
