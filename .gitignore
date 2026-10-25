@@ -11,3 +11,4 @@ DB Backup/
 .venv/
 venv/
 node_modules/
+*.zip
