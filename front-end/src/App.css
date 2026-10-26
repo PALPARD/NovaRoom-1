@@ -1459,6 +1459,49 @@ body,
     overflow-wrap: anywhere;
     direction: rtl;
     text-align: right;
+    width: fit-content;
+    max-width: 100%;
+}
+
+.message-text:not(.message-text--emoji-only),
+.message-text:not(.message-text--emoji-only) * {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+    cursor: text;
+}
+
+.message-text .md-code-copy-btn,
+.message-text .md-code-copy-btn * {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+    cursor: pointer !important;
+}
+
+.message-text a,
+.message-text .md-link {
+    cursor: pointer !important;
+}
+
+.message-text::selection,
+.message-text *::selection {
+    background: rgba(33, 150, 243, 0.35);
+    color: inherit;
+}
+
+.message-bubble--mine .message-text::selection,
+.message-bubble--mine .message-text *::selection {
+    background: rgba(255, 255, 255, 0.35);
+    color: #ffffff;
+}
+
+.dark-mode .message-bubble--theirs .message-text::selection,
+.dark-mode .message-bubble--theirs .message-text *::selection {
+    background: rgba(59, 130, 246, 0.4);
+    color: #ffffff;
 }
 
 

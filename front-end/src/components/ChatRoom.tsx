@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, Copy, Eye, AlignJustify, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
 import { AnimatePresence, motion, type Variants } from "framer-motion";
@@ -2405,6 +2405,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     onPointerDown={(e) => {
                         if (!canSwipeToReply) return;
                         if (e.pointerType !== 'mouse' || e.button !== 0) return;
+                        if ((e.target as HTMLElement)?.closest('.message-text')) return;
                         swipeRef.current = { id: m.id, startX: e.clientX, startY: e.clientY, active: true, captured: false, pointerId: e.pointerId, blockClickUntil: swipeRef.current.blockClickUntil };
                     }}
                     onPointerMove={(e) => {
@@ -2493,8 +2494,20 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                         onClick={(e) => {
                             e.stopPropagation();
                             if (Date.now() < swipeRef.current.blockClickUntil) return;
+                            const selection = window.getSelection();
+                            if (selection && selection.toString().trim().length > 0) return;
+                            const isTextClick = Boolean((e.target as HTMLElement)?.closest('.message-text'));
+                            const isTouchDevice = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+                            if (isTextClick && !isTouchDevice && !isBigEmojiOnly) return;
                             const ne = e.nativeEvent as MouseEvent;
                             openMessageMenu(m.id, e.currentTarget, ne.clientX, ne.clientY);
+                        }}
+                        onContextMenu={(e: ReactMouseEvent) => {
+                            const selection = window.getSelection();
+                            if (selection && selection.toString().trim().length > 0) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openMessageMenu(m.id, e.currentTarget as HTMLElement, e.clientX, e.clientY);
                         }}
                         role="button" tabIndex={0}
                         onKeyDown={(e) => { if (e.key === 'Enter') openMessageMenu(m.id, e.currentTarget as any); }}
