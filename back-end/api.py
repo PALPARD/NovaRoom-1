@@ -207,24 +207,31 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _derive_enc_key(token: str, scope: str) -> bytes:
-    material = f"{SECRET_KEY}|{scope}".encode("utf-8")
+DEFAULT_DEV_SECRET_KEY = hashlib.sha256(b"dev-secret-change-me").hexdigest()
+
+
+def _derive_enc_key(token: str, scope: str, secret: str = SECRET_KEY) -> bytes:
+    material = f"{secret}|{scope}".encode("utf-8")
     return hashlib.sha256(material).digest()
 
 
-def _derive_enc_key_legacy_shared(scope: str) -> bytes:
-    material = f"{SECRET_KEY}|shared|{scope}".encode("utf-8")
+def _derive_enc_key_legacy_shared(scope: str, secret: str = SECRET_KEY) -> bytes:
+    material = f"{secret}|shared|{scope}".encode("utf-8")
     return hashlib.sha256(material).digest()
 
 
-def _derive_enc_key_legacy_scoped_tokenhash(token: str, scope: str) -> bytes:
+def _derive_enc_key_legacy_scoped_tokenhash(
+    token: str, scope: str, secret: str = SECRET_KEY
+) -> bytes:
     token_hint = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()[:16]
-    material = f"{SECRET_KEY}|{scope}|{token_hint}".encode("utf-8")
+    material = f"{secret}|{scope}|{token_hint}".encode("utf-8")
     return hashlib.sha256(material).digest()
 
 
-def _derive_enc_key_legacy_token_raw(token: str, scope: str) -> bytes:
-    material = f"{SECRET_KEY}|{token}|{scope}".encode("utf-8")
+def _derive_enc_key_legacy_token_raw(
+    token: str, scope: str, secret: str = SECRET_KEY
+) -> bytes:
+    material = f"{secret}|{token}|{scope}".encode("utf-8")
     return hashlib.sha256(material).digest()
 
 
@@ -290,6 +297,10 @@ def _decrypt_scoped_text_raw(value: str, token: str, scope: str) -> str:
             _derive_enc_key_legacy_shared(scope),
             _derive_enc_key_legacy_scoped_tokenhash(token, scope),
             _derive_enc_key_legacy_token_raw(token, scope),
+            _derive_enc_key(token, scope, DEFAULT_DEV_SECRET_KEY),
+            _derive_enc_key_legacy_shared(scope, DEFAULT_DEV_SECRET_KEY),
+            _derive_enc_key_legacy_scoped_tokenhash(token, scope, DEFAULT_DEV_SECRET_KEY),
+            _derive_enc_key_legacy_token_raw(token, scope, DEFAULT_DEV_SECRET_KEY),
         ]
         for key in candidate_keys:
             expected = hmac.new(key, nonce + body, hashlib.sha256).digest()[
