@@ -14,6 +14,8 @@ interface UseWebSocketProps {
     onReactionUpdated?: (chatId: string, messageId: string, reactions: any[]) => void;
     onTypingStatus?: (chatId: string, userId: string, isTyping: boolean) => void;
     onUploadStatus?: (chatId: string, userId: string, isUploading: boolean) => void;
+    onMessagePinned?: (chatId: string, pinnedMessage: any) => void;
+    onMessageUnpinned?: (chatId: string) => void;
     onConnectionChange?: (isConnected: boolean) => void;
     onReconnectExhausted?: () => void;
     onAINewMessage?: (message: any) => void;
@@ -51,6 +53,8 @@ const eventTypeAliases: Record<string, string> = {
     messagesSeen: 'messages_seen',
     reactionUpdate: 'reaction_updated',
     reactionChanged: 'reaction_updated',
+    messagePinned: 'message_pinned',
+    messageUnpinned: 'message_unpinned',
 };
 
 export function useWebSocket({
@@ -63,6 +67,8 @@ export function useWebSocket({
     onReactionUpdated,
     onTypingStatus,
     onUploadStatus,
+    onMessagePinned,
+    onMessageUnpinned,
     onConnectionChange,
     onReconnectExhausted,
     onAINewMessage,
@@ -94,6 +100,8 @@ export function useWebSocket({
     const onReactionUpdatedRef = useRef(onReactionUpdated);
     const onTypingStatusRef = useRef(onTypingStatus);
     const onUploadStatusRef = useRef(onUploadStatus);
+    const onMessagePinnedRef = useRef(onMessagePinned);
+    const onMessageUnpinnedRef = useRef(onMessageUnpinned);
     const onConnectionChangeRef = useRef(onConnectionChange);
     const onReconnectExhaustedRef = useRef(onReconnectExhausted);
     const onAINewMessageRef = useRef(onAINewMessage);
@@ -111,6 +119,8 @@ export function useWebSocket({
     useEffect(() => { onReactionUpdatedRef.current = onReactionUpdated; }, [onReactionUpdated]);
     useEffect(() => { onTypingStatusRef.current = onTypingStatus; }, [onTypingStatus]);
     useEffect(() => { onUploadStatusRef.current = onUploadStatus; }, [onUploadStatus]);
+    useEffect(() => { onMessagePinnedRef.current = onMessagePinned; }, [onMessagePinned]);
+    useEffect(() => { onMessageUnpinnedRef.current = onMessageUnpinned; }, [onMessageUnpinned]);
     useEffect(() => { onConnectionChangeRef.current = onConnectionChange; }, [onConnectionChange]);
     useEffect(() => { onReconnectExhaustedRef.current = onReconnectExhausted; }, [onReconnectExhausted]);
     useEffect(() => { onAINewMessageRef.current = onAINewMessage; }, [onAINewMessage]);
@@ -266,6 +276,16 @@ export function useWebSocket({
                     const uploadFlag = Boolean(data?.isUploading ?? data?.is_uploading ?? data?.uploading);
                     if (resolvedChatId && resolvedUserId) {
                         onUploadStatusRef.current?.(resolvedChatId, resolvedUserId, uploadFlag);
+                    }
+                } else if (dataType === 'message_pinned') {
+                    const resolvedChatId = String(resolvedChatIdFromPayload || data.chatId || '').trim();
+                    if (resolvedChatId && data.pinnedMessage) {
+                        onMessagePinnedRef.current?.(resolvedChatId, data.pinnedMessage);
+                    }
+                } else if (dataType === 'message_unpinned') {
+                    const resolvedChatId = String(resolvedChatIdFromPayload || data.chatId || '').trim();
+                    if (resolvedChatId) {
+                        onMessageUnpinnedRef.current?.(resolvedChatId);
                     }
                 } else if (data.type === 'ai_response') {
                     onAINewMessageRef.current?.(data.message);

@@ -2201,6 +2201,18 @@ async def get_chat_list(
                 "timestamp": dt_to_epoch_ms(last_msg.get("timestamp")),
             }
 
+        pinned_msg = chat.get("pinnedMessage")
+        if isinstance(pinned_msg, dict) and pinned_msg.get("id"):
+            chat_scope = f"chat:{chat.get('_id', '')}"
+            pinned_msg = {
+                **pinned_msg,
+                "text": decrypt_with_fallback(
+                    pinned_msg.get("text", ""), session_token, chat_scope
+                ),
+            }
+        else:
+            pinned_msg = None
+
         result.append(
             {
                 "id": chat["_id"],
@@ -2282,6 +2294,7 @@ async def get_chat_list(
                     "isGroup": is_group,
                 },
                 "lastMessage": last_msg,
+                "pinnedMessage": pinned_msg,
                 "unreadCount": unread_map.get(chat["_id"], 0),
             }
         )
@@ -2529,6 +2542,7 @@ async def get_messages(
     direction: str = Query("latest", pattern="^(latest|older|newer)$"),
     cursor_ts: Optional[int] = None,
     cursor_id: Optional[str] = None,
+    around_id: Optional[str] = None,
     include_meta: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
@@ -2690,19 +2704,61 @@ async def get_messages(
         {"$addToSet": {"seenBy": current_user_id}},
     )
 
-    query: Dict[str, Any] = {"chatId": chat_id}
-    extra = _cursor_filter()
-    if extra:
-        query = {"$and": [query, extra]}
-    order = -1 if direction in ("latest", "older") else 1
-    msgs = (
-        await cl_messages.find(query)
-        .sort([("timestamp", order), ("_id", order)])
-        .limit(safe_limit)
-        .to_list(safe_limit)
-    )
-    if direction in ("latest", "older"):
-        msgs.reverse()
+    if around_id:
+        target_oid = await try_object_id(around_id)
+        if not target_oid:
+            raise HTTPException(status_code=400, detail="Invalid around_id")
+        target_msg = await cl_messages.find_one({"_id": target_oid, "chatId": chat_id})
+        if not target_msg:
+            raise HTTPException(status_code=404, detail="Target message not found")
+
+        target_dt = target_msg.get("timestamp")
+        half = max(1, (safe_limit - 1) // 2)
+
+        older_query = {
+            "chatId": chat_id,
+            "$or": [
+                {"timestamp": {"$lt": target_dt}},
+                {"timestamp": target_dt, "_id": {"$lt": target_oid}},
+            ],
+        }
+        older_msgs = (
+            await cl_messages.find(older_query)
+            .sort([("timestamp", -1), ("_id", -1)])
+            .limit(half)
+            .to_list(half)
+        )
+        older_msgs.reverse()
+
+        newer_query = {
+            "chatId": chat_id,
+            "$or": [
+                {"timestamp": {"$gt": target_dt}},
+                {"timestamp": target_dt, "_id": {"$gt": target_oid}},
+            ],
+        }
+        newer_msgs = (
+            await cl_messages.find(newer_query)
+            .sort([("timestamp", 1), ("_id", 1)])
+            .limit(half)
+            .to_list(half)
+        )
+
+        msgs = older_msgs + [target_msg] + newer_msgs
+    else:
+        query: Dict[str, Any] = {"chatId": chat_id}
+        extra = _cursor_filter()
+        if extra:
+            query = {"$and": [query, extra]}
+        order = -1 if direction in ("latest", "older") else 1
+        msgs = (
+            await cl_messages.find(query)
+            .sort([("timestamp", order), ("_id", order)])
+            .limit(safe_limit)
+            .to_list(safe_limit)
+        )
+        if direction in ("latest", "older"):
+            msgs.reverse()
 
     def compute_seen(m: dict) -> bool:
         seen_by = m.get("seenBy", []) or []
@@ -3087,6 +3143,141 @@ async def remove_reaction(
         )
 
     return {"reactions": aggregated_reactions}
+
+
+@app.post("/chats/{chat_id}/pin/{message_id}")
+@limiter.limit("30/minute;300/hour")
+async def pin_message(
+    request: Request,
+    chat_id: str,
+    message_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    session_token = str(current_user.get("_session_token") or "")
+    chat_scope = f"chat:{chat_id}"
+
+    saved_chat_id = get_saved_messages_id(user_id)
+    is_saved = chat_id == saved_chat_id
+    is_official = is_official_channel_chat(chat_id)
+
+    if is_official and not bool(current_user.get("verified", False)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    chat_doc = None
+    if not is_saved and not is_official:
+        chat_doc = await cl_chats.find_one({"_id": chat_id})
+        if not chat_doc:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        if user_id not in (chat_doc.get("participants", []) or []):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    oid = await try_object_id(message_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="Invalid message ID")
+
+    msg = await cl_messages.find_one({"_id": oid, "chatId": chat_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    sender_doc = await cl_users.find_one({"chatId": msg.get("senderId")}, {"profile.name": 1})
+    sender_name = (sender_doc or {}).get("profile", {}).get("name") or "کاربر"
+
+    pinned_doc = {
+        "id": str(msg["_id"]),
+        "senderId": msg.get("senderId"),
+        "senderName": sender_name,
+        "text": msg.get("text", ""),
+        "timestamp": dt_to_epoch_ms(msg.get("timestamp")),
+        "file": msg.get("file"),
+        "pinnedBy": user_id,
+        "pinnedAt": dt_to_epoch_ms(utc_now()),
+    }
+
+    if not is_saved and not is_official:
+        await cl_chats.update_one(
+            {"_id": chat_id},
+            {"$set": {"pinnedMessage": pinned_doc, "updatedAt": utc_now()}},
+        )
+    elif is_saved:
+        await cl_users.update_one(
+            {"chatId": user_id},
+            {"$set": {"settings.savedPinnedMessage": pinned_doc}},
+        )
+
+    participants = [user_id] if is_saved else []
+    if is_official:
+        participants = await cl_users.distinct("chatId", {})
+    elif not is_saved:
+        participants = chat_doc.get("participants", []) if chat_doc else []
+
+    if participants:
+        await broadcast(
+            participants,
+            {
+                "type": "message_pinned",
+                "chatId": chat_id,
+                "pinnedMessage": pinned_doc,
+            },
+        )
+
+    ret_pinned = {
+        **pinned_doc,
+        "text": decrypt_with_fallback(pinned_doc.get("text", ""), session_token, chat_scope),
+    }
+    return {"ok": True, "pinnedMessage": ret_pinned}
+
+
+@app.delete("/chats/{chat_id}/pin")
+@limiter.limit("30/minute;300/hour")
+async def unpin_message(
+    request: Request,
+    chat_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    saved_chat_id = get_saved_messages_id(user_id)
+    is_saved = chat_id == saved_chat_id
+    is_official = is_official_channel_chat(chat_id)
+
+    if is_official and not bool(current_user.get("verified", False)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    chat_doc = None
+    if not is_saved and not is_official:
+        chat_doc = await cl_chats.find_one({"_id": chat_id})
+        if not chat_doc:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        if user_id not in (chat_doc.get("participants", []) or []):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not is_saved and not is_official:
+        await cl_chats.update_one(
+            {"_id": chat_id},
+            {"$set": {"pinnedMessage": None, "updatedAt": utc_now()}},
+        )
+    elif is_saved:
+        await cl_users.update_one(
+            {"chatId": user_id},
+            {"$set": {"settings.savedPinnedMessage": None}},
+        )
+
+    participants = [user_id] if is_saved else []
+    if is_official:
+        participants = await cl_users.distinct("chatId", {})
+    elif not is_saved:
+        participants = chat_doc.get("participants", []) if chat_doc else []
+
+    if participants:
+        await broadcast(
+            participants,
+            {
+                "type": "message_unpinned",
+                "chatId": chat_id,
+            },
+        )
+
+    return {"ok": True}
 
 
 @app.post("/messages/forward")
@@ -3916,6 +4107,29 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                             }
                         },
                     )
+                    curr_chat = await cl_chats.find_one({"_id": chat_id_target}, {"pinnedMessage": 1})
+                    if curr_chat and (curr_chat.get("pinnedMessage") or {}).get("id") == message_id:
+                        await cl_chats.update_one(
+                            {"_id": chat_id_target},
+                            {
+                                "$set": {
+                                    "pinnedMessage.text": encrypt_scoped_text(
+                                        new_text, token, f"chat:{chat_id_target}"
+                                    ),
+                                    "updatedAt": utc_now(),
+                                }
+                            },
+                        )
+                        updated_chat = await cl_chats.find_one({"_id": chat_id_target}, {"pinnedMessage": 1})
+                        if participants:
+                            await broadcast(
+                                participants,
+                                {
+                                    "type": "message_pinned",
+                                    "chatId": chat_id_target,
+                                    "pinnedMessage": updated_chat.get("pinnedMessage"),
+                                },
+                            )
 
                 participants = [chat_id] if is_saved else []
                 if is_official:
@@ -4006,6 +4220,20 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                         {"_id": chat_id_target},
                         {"$set": {"lastMessage": last_msg, "updatedAt": utc_now()}},
                     )
+                    curr_chat = await cl_chats.find_one({"_id": chat_id_target}, {"pinnedMessage": 1})
+                    if curr_chat and (curr_chat.get("pinnedMessage") or {}).get("id") == message_id:
+                        await cl_chats.update_one(
+                            {"_id": chat_id_target},
+                            {"$set": {"pinnedMessage": None, "updatedAt": utc_now()}},
+                        )
+                        if participants:
+                            await broadcast(
+                                participants,
+                                {
+                                    "type": "message_unpinned",
+                                    "chatId": chat_id_target,
+                                },
+                            )
 
                 participants = [chat_id] if is_saved else []
                 if is_official:

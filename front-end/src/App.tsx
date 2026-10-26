@@ -480,6 +480,9 @@ export function App() {
                 const decryptedLastMessage = c?.lastMessage
                     ? await decryptMessageClientSide(c.lastMessage, authToken || '', String(c.id || ''))
                     : null;
+                const decryptedPinnedMessage = c?.pinnedMessage
+                    ? await decryptMessageClientSide(c.pinnedMessage, authToken || '', String(c.id || ''))
+                    : null;
                 const decryptedOtherBio = c?.otherUser?.chatId
                     ? await decryptBioClientSide(String(c.otherUser.bio || ''), authToken || '', String(c.otherUser.chatId || ''))
                     : c?.otherUser?.bio;
@@ -493,15 +496,12 @@ export function App() {
                     ? presenceMatch.online
                     : Boolean(c?.otherUser?.online);
                 if (!c?.lastMessage) {
-                    
-                    
-                    
-                    
                     const pinnedTs = newGroupTimestamps.current[c.id] ?? 0;
                     return {
                         ...c,
                         otherUser: c?.otherUser ? { ...c.otherUser, bio: decryptedOtherBio || '', online: resolvedOnline } : c?.otherUser,
                         lastMessage: { id: '', text: '', senderId: '', timestamp: pinnedTs },
+                        pinnedMessage: decryptedPinnedMessage,
                     } as Chat;
                 }
                 return {
@@ -511,6 +511,7 @@ export function App() {
                         ...decryptedLastMessage,
                         timestamp: normalizeTimestamp(c.lastMessage.timestamp),
                     },
+                    pinnedMessage: decryptedPinnedMessage,
                 } as Chat;
             }));
 
@@ -863,6 +864,90 @@ export function App() {
         }
     }, []);
 
+    const handleMessagePinned = useCallback(async (chatId: string, pinnedMessage: any) => {
+        const decPinned = await decryptMessageClientSide(pinnedMessage, authToken || '', chatId);
+        setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, pinnedMessage: decPinned } : c)));
+    }, [authToken]);
+
+    const handleMessageUnpinned = useCallback((chatId: string) => {
+        setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, pinnedMessage: null } : c)));
+    }, []);
+
+    const handlePinMessage = useCallback(async (chatId: string, messageId: string) => {
+        try {
+            const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/pin/${encodeURIComponent(messageId)}`, {
+                method: 'POST',
+            });
+            if (res?.pinnedMessage) {
+                const decPinned = await decryptMessageClientSide(res.pinnedMessage, authToken || '', chatId);
+                setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, pinnedMessage: decPinned } : c)));
+            }
+        } catch (e) {
+            console.error('Failed to pin message:', e);
+        }
+    }, [authToken]);
+
+    const handleUnpinMessage = useCallback(async (chatId: string) => {
+        try {
+            await apiFetch(`/chats/${encodeURIComponent(chatId)}/pin`, {
+                method: 'DELETE',
+            });
+            setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, pinnedMessage: null } : c)));
+        } catch (e) {
+            console.error('Failed to unpin message:', e);
+        }
+    }, []);
+
+    const [targetScrollMessage, setTargetScrollMessage] = useState<{ chatId: string; messageId: string; timestamp: number } | null>(null);
+
+    const handleJumpToMessage = useCallback(async (chatId: string, messageId: string) => {
+        if (!chatId || !messageId) return;
+
+        const currentMessages = messages[chatId] || [];
+        const isAlreadyLoaded = currentMessages.some((m) => m.id === messageId);
+
+        if (isAlreadyLoaded) {
+            setTargetScrollMessage({ chatId, messageId, timestamp: Date.now() });
+            return;
+        }
+
+        try {
+            const qs = new URLSearchParams({
+                around_id: messageId,
+                limit: String(MESSAGE_PAGE_SIZE),
+                include_meta: 'true',
+            });
+            const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/messages?${qs.toString()}`);
+            const rawChunk: Message[] = Array.isArray(res?.messages) ? res.messages : [];
+            const chunk: Message[] = await Promise.all(
+                rawChunk.map((message) => decryptMessageClientSide(message, authToken || '', chatId))
+            );
+
+            if (chunk.length > 0) {
+                setMessages((prev) => ({
+                    ...prev,
+                    [chatId]: chunk,
+                }));
+
+                setMessageRangeState((prev) => ({
+                    ...prev,
+                    [chatId]: {
+                        hasOlder: Boolean(res?.hasOlder),
+                        hasNewer: Boolean(res?.hasNewer),
+                        oldestCursor: res?.oldestCursor || null,
+                        newestCursor: res?.newestCursor || null,
+                        loadingOlder: false,
+                        loadingNewer: false,
+                    },
+                }));
+
+                setTargetScrollMessage({ chatId, messageId, timestamp: Date.now() });
+            }
+        } catch (err) {
+            console.error('Failed to jump to message around_id:', err);
+        }
+    }, [messages, authToken]);
+
     const handleUserStatusChange = useCallback((userId: string, online: boolean) => {
         const normalizedUserId = String(userId || '').trim();
         if (!normalizedUserId) return;
@@ -1155,6 +1240,8 @@ export function App() {
         onReactionUpdated: handleReactionUpdated,
         onTypingStatus: handleTypingStatus,
         onUploadStatus: handleUploadStatus,
+        onMessagePinned: handleMessagePinned,
+        onMessageUnpinned: handleMessageUnpinned,
         onConnectionChange: setWsConnected,
         onReconnectExhausted: handleWsReconnectExhausted,
         onAINewMessage: handleNewAIMessage,
@@ -2625,6 +2712,11 @@ export function App() {
                                 onLoadOlderMessages={loadOlderMessages}
                                 onLoadNewerMessages={loadNewerMessages}
                                 onJumpToLatestMessages={jumpToLatestMessages}
+                                pinnedMessage={activeChat?.pinnedMessage}
+                                onPinMessage={handlePinMessage}
+                                onUnpinMessage={handleUnpinMessage}
+                                onJumpToMessage={handleJumpToMessage}
+                                targetScrollMessage={targetScrollMessage}
                             />
                         ) : (
                             <EmptyState />

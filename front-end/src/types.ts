@@ -15,6 +15,17 @@ export interface MessageReply {
     text: string;
 }
 
+export interface PinnedMessage {
+    id: string;
+    senderId: string;
+    senderName?: string;
+    text: string;
+    timestamp: number;
+    file?: FileMetadata;
+    pinnedBy?: string;
+    pinnedAt?: number;
+}
+
 export interface MessageReaction {
     userId: string;
     emoji: string;
@@ -79,6 +90,7 @@ export interface Chat {
     participantIds: string[];
     chatType?: 'direct' | 'group';
     lastMessage?: ChatLastMessage | null;
+    pinnedMessage?: PinnedMessage | null;
     unreadCount: number;
 }
 
