@@ -148,8 +148,16 @@ const sha256 = async (bytes: Uint8Array): Promise<Uint8Array> => {
     return sha256Fallback(bytes);
 };
 
-const deriveKey = async (material: string): Promise<Uint8Array> => {
-    return sha256(toUtf8(material));
+const deriveKeyCache = new Map<string, Promise<Uint8Array>>();
+const hmacKeyCache = new Map<string, Promise<CryptoKey>>();
+const decryptedTextCache = new Map<string, string>();
+
+const deriveKey = (material: string): Promise<Uint8Array> => {
+    const cached = deriveKeyCache.get(material);
+    if (cached) return cached;
+    const promise = sha256(toUtf8(material));
+    deriveKeyCache.set(material, promise);
+    return promise;
 };
 
 const xorStream = async (data: Uint8Array, key: Uint8Array, nonce: Uint8Array): Promise<Uint8Array> => {
@@ -199,7 +207,13 @@ const xorStream = async (data: Uint8Array, key: Uint8Array, nonce: Uint8Array): 
 
 const hmacTag = async (keyBytes: Uint8Array, payload: Uint8Array): Promise<Uint8Array> => {
     if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const key = await crypto.subtle.importKey('raw', toArrayBuffer(keyBytes), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const cacheKey = toBase64Url(keyBytes);
+        let keyPromise = hmacKeyCache.get(cacheKey);
+        if (!keyPromise) {
+            keyPromise = crypto.subtle.importKey('raw', toArrayBuffer(keyBytes), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+            hmacKeyCache.set(cacheKey, keyPromise);
+        }
+        const key = await keyPromise;
         const mac = await crypto.subtle.sign('HMAC', key, toArrayBuffer(payload));
         return new Uint8Array(mac).slice(0, ENC_TAG_SIZE);
     }
@@ -247,6 +261,10 @@ export const decryptClientText = async (cipher: string, token: string, scope: st
     if (!value) return '';
     if (!value.startsWith(ENC_PREFIX)) return value;
 
+    const cacheKey = `${scope}|${value}`;
+    const cachedPlain = decryptedTextCache.get(cacheKey);
+    if (cachedPlain !== undefined) return cachedPlain;
+
     try {
         const raw = fromBase64Url(value.slice(ENC_PREFIX.length));
         if (raw.length < ENC_NONCE_SIZE + ENC_TAG_SIZE) return '';
@@ -270,7 +288,13 @@ export const decryptClientText = async (cipher: string, token: string, scope: st
             const sameTag = tag.length === expectedTag.length && tag.every((b, i) => b === expectedTag[i]);
             if (!sameTag) continue;
             const plainBytes = await xorStream(body, key, nonce);
-            return textDecoder.decode(plainBytes);
+            const decoded = textDecoder.decode(plainBytes);
+            if (decryptedTextCache.size > 4000) {
+                const firstKey = decryptedTextCache.keys().next().value;
+                if (firstKey) decryptedTextCache.delete(firstKey);
+            }
+            decryptedTextCache.set(cacheKey, decoded);
+            return decoded;
         }
         return value;
     } catch {

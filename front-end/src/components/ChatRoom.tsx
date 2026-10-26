@@ -1,4 +1,4 @@
-import { memo, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, Copy, Eye, AlignJustify, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download } from 'lucide-react';
 import { AnimatePresence, motion, type Variants } from "framer-motion";
@@ -22,6 +22,7 @@ import { cacheTextValue, deleteCachedBlob, deleteCachedText, getCachedBlob, getC
 import './FileComponents.css';
 
 const pendingUploadedFileByChat: Record<string, FileMetadata | null> = {};
+const persistedTextKeys = new Set<string>();
 
 interface ChatRoomProps {
     chatId: string;
@@ -382,6 +383,33 @@ function renderTextWithLinks(text: string): React.ReactNode {
     });
 }
 
+
+const MemoMessageTextContent = memo(function MemoMessageTextContent({
+    rawText,
+    isBigEmojiOnly,
+    emojiOnlyClass,
+}: {
+    rawText: string;
+    isBigEmojiOnly: boolean;
+    emojiOnlyClass: string;
+}) {
+    const normalized = useMemo(() => normalizeMessageTextForRender(rawText), [rawText]);
+    const isMarkdown = useMemo(() => hasMarkdownSyntax(normalized), [normalized]);
+    const linkedNodes = useMemo(() => (isMarkdown ? null : renderTextWithLinks(normalized)), [isMarkdown, normalized]);
+
+    if (isMarkdown) {
+        return (
+            <div className="message-text message-text--markdown">
+                <MemoMarkdown text={normalized} components={markdownComponents} />
+            </div>
+        );
+    }
+    return (
+        <div className={isBigEmojiOnly ? `message-text message-text--emoji-only ${emojiOnlyClass}` : 'message-text'}>
+            {linkedNodes}
+        </div>
+    );
+});
 
 function triggerHaptic() {
     try { navigator.vibrate?.(10); } catch {  }
@@ -982,9 +1010,11 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         if (c.scrollTop < 20) scrollToBottom(false);
     };
 
+    const messagesById = useMemo(() => new Map(messages.map((msg) => [msg.id, msg])), [messages]);
+
     const getReplySenderName = (reply: MessageReplyType | null | undefined) => {
         if (!reply) return 'کاربر';
-        const repliedMessage = messages.find((msg) => msg.id === reply.id);
+        const repliedMessage = messagesById.get(reply.id);
         const senderId = String(repliedMessage?.senderId || reply.senderId || '').trim();
 
         if (!senderId) return 'کاربر';
@@ -999,7 +1029,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
 
     const getReplyPreviewText = (reply: MessageReplyType | null | undefined) => {
         if (!reply) return '';
-        const repliedMessage = messages.find((msg) => msg.id === reply.id);
+        const repliedMessage = messagesById.get(reply.id);
         const repliedFile = repliedMessage?.file;
         const fileMime = (repliedFile?.mimeType || '').toLowerCase();
         const fallbackText = (reply.text || '').trim();
@@ -1076,7 +1106,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
 
     useEffect(() => {
         if (!isGroupChat) {
-            setChatStats(null);
+            setChatStats((prev) => (prev === null ? prev : null));
             return;
         }
         let cancelled = false;
@@ -1084,13 +1114,16 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             try {
                 const stats = await apiFetch(`/chats/${encodeURIComponent(chatId)}/stats`);
                 if (!cancelled) {
-                    setChatStats({
-                        totalMembers: Number(stats?.totalMembers || 0),
-                        onlineMembers: Number(stats?.onlineMembers || 0),
-                    });
+                    const totalMembers = Number(stats?.totalMembers || 0);
+                    const onlineMembers = Number(stats?.onlineMembers || 0);
+                    setChatStats((prev) => (
+                        prev && prev.totalMembers === totalMembers && prev.onlineMembers === onlineMembers
+                            ? prev
+                            : { totalMembers, onlineMembers }
+                    ));
                 }
             } catch {
-                if (!cancelled) setChatStats(null);
+                if (!cancelled) setChatStats((prev) => (prev === null ? prev : null));
             }
         };
         loadStats();
@@ -1099,10 +1132,15 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     }, [chatId, isGroupChat]);
 
     useEffect(() => {
-        if (!isGroupChat) { setGroupMembers({}); setMembersLoading(false); return; }
+        if (!isGroupChat) {
+            setGroupMembers((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+            setMembersLoading((prev) => (prev ? false : prev));
+            return;
+        }
         let cancelled = false;
+        let initialLoad = true;
         const loadMembers = async () => {
-            setMembersLoading(true);
+            if (initialLoad) setMembersLoading(true);
             try {
                 const members = await apiFetch(`/chats/${encodeURIComponent(chatId)}/members`);
                 if (!cancelled && Array.isArray(members)) {
@@ -1121,13 +1159,14 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     });
                     setGroupMembers(map);
                 }
-            } catch {  }
+            } catch { }
             finally {
-                if (!cancelled) setMembersLoading(false);
+                initialLoad = false;
+                if (!cancelled) setMembersLoading((prev) => (prev ? false : prev));
             }
         };
         loadMembers();
-        
+
         const timer = window.setInterval(loadMembers, 15000);
         return () => { cancelled = true; window.clearInterval(timer); };
     }, [chatId, isGroupChat]);
@@ -1144,6 +1183,10 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     const resizeTextarea = () => {
         const textarea = textareaRef.current;
         if (!textarea) return;
+        if (!text) {
+            if (textarea.style.height !== '44px') textarea.style.height = '44px';
+            return;
+        }
         textarea.style.height = 'auto';
         textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 44), 200)}px`;
     };
@@ -1425,10 +1468,25 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         }
     };
 
-    const handleFileUploaded = (file: FileMetadata) => {
+    const handleFileUploaded = useCallback((file: FileMetadata) => {
         pendingUploadedFileByChat[chatId] = file;
         setUploadedFile(file);
-    };
+    }, [chatId]);
+
+    const handleUploadStateChange = useCallback(({ isUploading, progress, fileName, cancelUpload, phase }: { isUploading: boolean; progress: number; fileName: string | null; cancelUpload?: () => void; phase?: 'preview' | 'upload' | 'encrypt' }) => {
+        setUploadComposerState((prev) => {
+            const nextPhase = phase || 'upload';
+            if (prev.isUploading === isUploading && prev.progress === progress && prev.fileName === fileName && prev.phase === nextPhase) {
+                return prev;
+            }
+            return { isUploading, progress, fileName, phase: nextPhase };
+        });
+        uploadCancelRef.current = cancelUpload ?? null;
+    }, []);
+
+    const handleRegisterUploadFile = useCallback((handler: ((file: File) => void) | null) => {
+        setExternalFileUploadHandler(() => handler);
+    }, []);
 
     const cleanupUploadedFile = async (file: FileMetadata | null) => {
         if (!file?.fileId) return;
@@ -1446,18 +1504,35 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     useEffect(() => {
         let cancelled = false;
         const hydrateAndStore = async () => {
-            const next: Record<string, string> = {};
+            const updates: Record<string, string> = {};
+            let hasUpdates = false;
             for (const m of messages) {
                 const cacheKey = `chat:${chatId}:message:${m.id}:text`;
                 if (typeof m.text === 'string' && m.text.length > 0) {
-                    next[m.id] = m.text;
-                    void cacheTextValue(cacheKey, m.text);
+                    if (!persistedTextKeys.has(cacheKey)) {
+                        persistedTextKeys.add(cacheKey);
+                        void cacheTextValue(cacheKey, m.text);
+                    }
                 } else {
                     const cached = await getCachedTextValue(cacheKey);
-                    if (cached != null) next[m.id] = cached;
+                    if (cached != null) {
+                        updates[m.id] = cached;
+                        hasUpdates = true;
+                    }
                 }
             }
-            if (!cancelled) setCachedTextByMessageId(next);
+            if (!cancelled && hasUpdates) {
+                setCachedTextByMessageId((prev) => {
+                    let changed = false;
+                    for (const k of Object.keys(updates)) {
+                        if (prev[k] !== updates[k]) {
+                            changed = true;
+                            break;
+                        }
+                    }
+                    return changed ? { ...prev, ...updates } : prev;
+                });
+            }
         };
         void hydrateAndStore();
         return () => { cancelled = true; };
@@ -1508,27 +1583,43 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     }, [chatId]);
 
     useEffect(() => {
-        setChatContentReady(false);
         if (initialMediaReadyTimeoutRef.current != null) {
             window.clearTimeout(initialMediaReadyTimeoutRef.current);
             initialMediaReadyTimeoutRef.current = null;
         }
-        let secondRaf = 0;
-        const firstRaf = requestAnimationFrame(() => {
-            secondRaf = requestAnimationFrame(() => {
-                if (initialMediaPendingIdsRef.current.size === 0) {
-                    setChatContentReady(true);
-                } else {
-                    initialMediaReadyTimeoutRef.current = window.setTimeout(() => {
-                        initialMediaFollowupDoneRef.current = true;
-                        initialMediaPendingIdsRef.current.clear();
-                        setChatContentReady(true);
-                        initialMediaReadyTimeoutRef.current = null;
-                    }, 1400);
-                }
-            });
-        });
         const mem = scrollMemoryRef.current[chatId];
+        const preserveExactScroll = Boolean(mem?.userInteracted && !mem?.atBottom);
+        if (preserveExactScroll) {
+            initialMediaFollowupDoneRef.current = true;
+            initialMediaPendingIdsRef.current = new Set();
+        } else {
+            initialMediaFollowupDoneRef.current = false;
+            initialMediaPendingIdsRef.current = collectInitialMediaPendingIds();
+            if (initialMediaPendingIdsRef.current.size === 0) {
+                initialMediaFollowupDoneRef.current = true;
+            }
+        }
+        let firstRaf = 0;
+        let secondRaf = 0;
+        if (initialMediaPendingIdsRef.current.size > 0) {
+            setChatContentReady(false);
+            firstRaf = requestAnimationFrame(() => {
+                secondRaf = requestAnimationFrame(() => {
+                    if (initialMediaPendingIdsRef.current.size === 0) {
+                        setChatContentReady(true);
+                    } else {
+                        initialMediaReadyTimeoutRef.current = window.setTimeout(() => {
+                            initialMediaFollowupDoneRef.current = true;
+                            initialMediaPendingIdsRef.current.clear();
+                            setChatContentReady(true);
+                            initialMediaReadyTimeoutRef.current = null;
+                        }, 1400);
+                    }
+                });
+            });
+        } else {
+            setChatContentReady((prev) => (prev ? prev : true));
+        }
         openedAtRef.current = Date.now();
         initialScrollDoneRef.current = false;
         prevLenRef.current = messages.length;
@@ -1546,8 +1637,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             setText('');
             setUploadedFile(pendingUploadedFileByChat[chatId] || null);
             setUnreadAnchorId(null);
-            setOptimisticReactions({});
-            setReasoningPanelByMessage({});
+            setOptimisticReactions((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+            setReasoningPanelByMessage((prev) => (Object.keys(prev).length === 0 ? prev : {}));
             setSeenByLoadingMessageId(null);
             setDisplayUnreadCount(initialUnreadCount);
         });
@@ -1561,26 +1652,14 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         restoringFromInfoRef.current = false;
         restoreTopAfterInfoRef.current = null;
         restoreBottomAfterInfoRef.current = false;
-        const preserveExactScroll = Boolean(mem?.userInteracted && !mem?.atBottom);
-        if (preserveExactScroll) {
-            initialMediaFollowupDoneRef.current = true;
-            initialMediaPendingIdsRef.current = new Set();
-        } else {
-            initialMediaFollowupDoneRef.current = false;
-            initialMediaPendingIdsRef.current = collectInitialMediaPendingIds();
-            if (initialMediaPendingIdsRef.current.size === 0) {
-                initialMediaFollowupDoneRef.current = true;
-            }
-        }
         return () => {
-            cancelAnimationFrame(firstRaf);
+            if (firstRaf) cancelAnimationFrame(firstRaf);
             if (secondRaf) cancelAnimationFrame(secondRaf);
             if (initialMediaReadyTimeoutRef.current != null) {
                 window.clearTimeout(initialMediaReadyTimeoutRef.current);
                 initialMediaReadyTimeoutRef.current = null;
             }
         };
-        
     }, [chatId]);
 
     useEffect(() => {
@@ -1982,9 +2061,21 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             const prevSameSender = prev ? prev.senderId === m.senderId : false;
             const nextSameSender = next ? next.senderId === m.senderId : false;
             const dayBreak = !prev || !sameDay(prev.timestamp, m.timestamp);
-            return { m, isMine, dayBreak, shape: bubbleShape(prevSameSender, nextSameSender), isBigEmojiOnly: hasEmojiOnlyStickerStyle, emojiOnlyClass };
+            const dayLabel = dayBreak ? formatDayLabel(m.timestamp) : '';
+            const formattedTime = formatMessageTime(m.timestamp);
+            return { m, isMine, dayBreak, dayLabel, formattedTime, shape: bubbleShape(prevSameSender, nextSameSender), isBigEmojiOnly: hasEmojiOnlyStickerStyle, emojiOnlyClass };
         });
     }, [messages, currentUserId]);
+
+    const unreadAnchorForUi = useMemo(
+        () => unreadAnchorId || computeUnreadAnchorId(displayUnreadCount),
+        [unreadAnchorId, displayUnreadCount, messages, currentUserId]
+    );
+
+    const unreadCountForUi = useMemo(
+        () => Math.max(getUnseenIncomingMessages().length, displayUnreadCount),
+        [messages, currentUserId, displayUnreadCount]
+    );
 
     const otherTypingUserIds = useMemo(
         () => (typingUserIds || []).filter((uid) => uid && uid !== currentUserId),
@@ -2254,6 +2345,330 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
     const confirmDeleteMessage = () => {
         if (confirmDeleteMsg) { const msg = messages.find((m) => m.id === confirmDeleteMsg); onDeleteMessage(confirmDeleteMsg); void deleteCachedText(`chat:${chatId}:message:${confirmDeleteMsg}:text`); if (msg?.file?.fileId) void deleteCachedBlob(`chat:${chatId}:file:${msg.file.fileId}`); setConfirmDeleteMsg(null); }
     };
+
+    const renderedMessageItems = useMemo(() => items.map(({ m, isMine, dayBreak, dayLabel, formattedTime, shape, isBigEmojiOnly, emojiOnlyClass }) => {
+        const isHighlighted = highlightId === m.id;
+        const dragX = dragState.id === m.id ? dragState.x : 0;
+        const dragActive = dragState.id === m.id ? dragState.active : false;
+        const showUnreadSeparator = Boolean(unreadAnchorForUi && unreadAnchorForUi === m.id && m.senderId !== currentUserId);
+
+        const isMenuActive = Boolean(msgMenu && msgMenu.id === m.id);
+        const seenByCountForMessage = seenByUsersByMessage[m.id]?.length ?? 0;
+        const isSeenForUi = Boolean(
+            m.seen || (isGroupChat && isMine && seenByCountForMessage > 0) || (isOfficialChannel && isMine)
+        );
+        const messageSeenByRaw = Array.isArray((m as any).seenBy) ? (m as any).seenBy.length : 0;
+        const messageSeenCountRaw = Number((m as any).seenCount || 0);
+        const messageSeenCount = Math.max(1, seenByCountForMessage, messageSeenByRaw, messageSeenCountRaw);
+
+        const effectiveReactions = (optimisticReactions[m.id] ?? m.reactions ?? []).slice().sort((a: any, b: any) => Number(b?.count || 0) - Number(a?.count || 0));
+
+        return (
+            <div key={m.id}>
+                {dayBreak && (
+                    <div className="chat-room__date-separator">
+                        <div className="chat-room__date-label">{dayLabel}</div>
+                    </div>
+                )}
+
+                {showUnreadSeparator && (
+                    <div ref={unreadSeparatorRef} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', justifyContent: 'center' }}>
+                        <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 999, padding: '6px 10px', fontFamily: 'Vazir, sans-serif' }}>
+                            پیام‌های خوانده نشده{unreadCountForUi > 0 ? ` (${toPersianDigits(unreadCountForUi)})` : ''}
+                        </div>
+                        <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
+                    </div>
+                )}
+
+                <div
+                    className={isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`}
+                    onPointerDown={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (e.pointerType !== 'mouse' || e.button !== 0) return;
+                        swipeRef.current = { id: m.id, startX: e.clientX, startY: e.clientY, active: true, captured: false, pointerId: e.pointerId, blockClickUntil: swipeRef.current.blockClickUntil };
+                    }}
+                    onPointerMove={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (e.pointerType !== 'mouse' || !swipeRef.current.active || swipeRef.current.id !== m.id) return;
+                        const dx = e.clientX - swipeRef.current.startX;
+                        const dy = e.clientY - swipeRef.current.startY;
+                        if (!swipeRef.current.captured) {
+                            if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
+                            swipeRef.current.captured = true;
+                            setReplySwipeLocked(true);
+                            try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { }
+                        }
+                        e.preventDefault();
+                        setDragState({ id: m.id, x: Math.max(0, Math.min(72, dx)), active: true });
+                    }}
+                    onPointerUp={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (e.pointerType !== 'mouse' || !swipeRef.current.active || swipeRef.current.id !== m.id) return;
+                        const dx = e.clientX - swipeRef.current.startX;
+                        const dy = e.clientY - swipeRef.current.startY;
+                        if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
+                        if (dx > 60 && Math.abs(dx) > Math.abs(dy)) beginReply(m, true);
+                        resetDrag(m.id);
+                        swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                    }}
+                    onPointerCancel={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (e.pointerType !== 'mouse' || swipeRef.current.id !== m.id) return;
+                        resetDrag(m.id);
+                        swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                    }}
+                    onTouchStart={(e) => {
+                        if (!canSwipeToReply) return;
+                        const t = e.touches[0];
+                        swipeRef.current = { id: m.id, startX: t.clientX, startY: t.clientY, active: true, captured: false, pointerId: null, blockClickUntil: swipeRef.current.blockClickUntil };
+                    }}
+                    onTouchMove={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (!swipeRef.current.active || swipeRef.current.id !== m.id) return;
+                        const t = e.touches[0];
+                        const dx = t.clientX - swipeRef.current.startX;
+                        const dy = t.clientY - swipeRef.current.startY;
+                        if (!swipeRef.current.captured) {
+                            if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
+                            swipeRef.current.captured = true;
+                            setReplySwipeLocked(true);
+                        }
+                        e.preventDefault();
+                        setDragState({ id: m.id, x: Math.max(0, Math.min(72, dx)), active: true });
+                    }}
+                    onTouchEnd={(e) => {
+                        if (!canSwipeToReply) return;
+                        if (!swipeRef.current.active || swipeRef.current.id !== m.id) return;
+                        const t = e.changedTouches[0];
+                        const dx = t.clientX - swipeRef.current.startX;
+                        const dy = t.clientY - swipeRef.current.startY;
+                        if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
+                        if (dx > 60 && Math.abs(dx) > Math.abs(dy)) beginReply(m, true);
+                        resetDrag(m.id);
+                        swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                    }}
+                    onTouchCancel={() => {
+                        if (!canSwipeToReply) return;
+                        if (swipeRef.current.id !== m.id) return;
+                        resetDrag(m.id);
+                        swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                    }}
+                >
+                    {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (() => {
+                        const sender = groupMembers[m.senderId];
+                        const senderName = sender?.name || m.senderId || 'ناشناس';
+                        return (
+                            <div style={{ position: 'absolute', left: 0, bottom: 0, cursor: 'pointer', zIndex: 1 }}
+                                onClick={(e) => { e.stopPropagation(); openMember(m.senderId); }}>
+                                <Avatar name={senderName} size="sm" src={sender?.avatar || ''} />
+                            </div>
+                        );
+                    })()}
+
+                    <div
+                        ref={(el) => { if (!el) { messageElsRef.current.delete(m.id); return; } messageElsRef.current.set(m.id, el); }}
+                        className={isMine
+                            ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`
+                            : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (Date.now() < swipeRef.current.blockClickUntil) return;
+                            const ne = e.nativeEvent as MouseEvent;
+                            openMessageMenu(m.id, e.currentTarget, ne.clientX, ne.clientY);
+                        }}
+                        role="button" tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter') openMessageMenu(m.id, e.currentTarget as any); }}
+                        style={{
+                            cursor: 'pointer',
+                            transform: `translateX(${dragX}px)`,
+                            transition: dragActive ? 'none' : 'transform 140ms ease-out, box-shadow 220ms ease',
+                            touchAction: dragActive ? 'none' : 'auto',
+                            boxShadow: isMenuActive
+                                ? 'inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 36%, transparent)'
+                                : 'inset 0 0 0 2px rgba(0,0,0,0)',
+                        }}
+                    >
+                        {isGroupChat && !isMine && !isBigEmojiOnly && (shape === 'msg-shape--single' || shape === 'msg-shape--first') && (() => {
+                            const sender = groupMembers[m.senderId];
+                            const senderName = sender?.name || m.senderId || 'ناشناس';
+                            const colors = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50', '#FF5722', '#FF9800'];
+                            const colorIdx = m.senderId ? Math.abs(m.senderId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % colors.length : 0;
+                            return (
+                                <div onClick={(e) => { e.stopPropagation(); openMember(m.senderId); }}
+                                    style={{ fontSize: 13, fontWeight: 700, color: colors[colorIdx], marginBottom: 3, cursor: 'pointer', fontFamily: "'Vazir', 'AppleEmoji', sans-serif", lineHeight: '1.2' }}>
+                                    {senderName}
+                                </div>
+                            );
+                        })()}
+
+                        {m.forwardedFrom && (
+                            <button
+                                type="button"
+                                className="message-forwarded-label"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openForwardSource(m);
+                                }}
+                            >
+                                فوروارد شده از: {m.forwardedFrom.name || m.forwardedFrom.username || 'ناشناس'}
+                            </button>
+                        )}
+
+                        {m.replyTo && (
+                            <div onClick={(e) => { e.stopPropagation(); scrollToMessage(m.replyTo!.id); }}
+                                role="button" tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter') scrollToMessage(m.replyTo!.id); }}
+                                className="message-reply-box"
+                                style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 12, cursor: 'pointer' }}>
+                                <div className="message-reply-box__label">{isGroupChat ? getReplySenderName(m.replyTo) : 'پاسخ'}</div>
+                                <div className="message-reply-box__text">{getReplyPreviewText(m.replyTo)}</div>
+                            </div>
+                        )}
+
+                        {m.file && (
+                            <FileMessage
+                                file={m.file}
+                                token={token}
+                                chatId={chatId}
+                                onMediaLoad={() => handleInitialMediaReady(m.id)}
+                                onImageClick={(imageUrl, file) => openImageViewer(imageUrl, file)}
+                                onVideoClick={(videoUrl, file) => openVideoViewer(videoUrl, file)}
+                            />
+                        )}
+                        {Boolean(m.reasoningEnabled && m.reasoningContent) && (
+                            <div className="ai-reasoning-message-stack" style={{ width: '100%' }}>
+                                <button
+                                    type="button"
+                                    className="ai-reasoning-header"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setReasoningPanelByMessage((prev) => ({ ...prev, [m.id]: !Boolean(prev[m.id]) }));
+                                    }}
+                                >
+                                    <span className="ai-reasoning-header-main">
+                                        <span className="ai-reasoning-static-title">روند استدلال</span>
+                                        <span className='ai-reasoning-timer'>
+                                            {`${toPersianDigits(Math.floor(Number(m.reasoningDurationSec || 0) / 60))}:${toPersianDigits(String(Number(m.reasoningDurationSec || 0) % 60).padStart(2, '0'))}`}
+                                        </span>
+                                    </span>
+                                    <ChevronDown size={15} className={reasoningPanelByMessage[m.id] ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
+                                </button>
+                                <AnimatePresence initial={false}>
+                                    {Boolean(reasoningPanelByMessage[m.id]) && (
+                                        <motion.div
+                                            className="ai-reasoning-body"
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ duration: 0.2, ease: 'easeOut' }}
+                                        >
+                                            <div className="ai-reasoning-content">{m.reasoningContent}</div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+                        )}
+                        {m.text && !Boolean(m.reasoningEnabled && m.reasoningContent) && (
+                            <MemoMessageTextContent
+                                rawText={cachedTextByMessageId[m.id] ?? m.text}
+                                isBigEmojiOnly={isBigEmojiOnly}
+                                emojiOnlyClass={emojiOnlyClass}
+                            />
+                        )}
+                        {m.text && Boolean(m.reasoningEnabled && m.reasoningContent) && (
+                            <div className="ai-reasoning-answer" style={{ marginTop: 0 }}>
+                                <MemoMessageTextContent
+                                    rawText={cachedTextByMessageId[m.id] ?? m.text}
+                                    isBigEmojiOnly={isBigEmojiOnly}
+                                    emojiOnlyClass={emojiOnlyClass}
+                                />
+                            </div>
+                        )}
+
+                        {effectiveReactions && effectiveReactions.length > 0 && (
+                            <div className="message-reactions">
+                                {effectiveReactions.map((reaction: any, idx: number) => {
+                                    const userIds = reaction.userIds || [];
+                                    const isMyReaction = userIds.includes(currentUserId);
+                                    return (
+                                        <button key={idx}
+                                            className={isMyReaction ? 'message-reaction message-reaction--active' : 'message-reaction'}
+                                            onClick={(e) => { e.stopPropagation(); if (isMyReaction) handleDeleteReaction(m.id); else handleReact(m.id, reaction.emoji); }}
+                                            onMouseEnter={(e) => {
+                                                if (!window.matchMedia?.('(pointer:fine)').matches) return;
+                                                e.stopPropagation();
+                                                openReactionMenu(m.id, e.currentTarget);
+                                            }}
+                                            type="button"
+                                        >
+                                            <span className="message-reaction__emoji">{reaction.emoji}</span>
+                                            {reaction.count > 1 && (
+                                                <span className="message-reaction__count" style={{ fontFamily: 'Vazir, sans-serif' }}>
+                                                    {toPersianDigits(reaction.count)}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <div className={isMine ? 'message-meta message-meta--mine' : 'message-meta message-meta--theirs'}>
+                            <span className="message-time">{formattedTime}</span>
+                            {m.edited && <span className="message-edited-label">ویرایش شده</span>}
+                            {m.aiModelName && <span className="message-ai-model-label">{m.aiModelName}</span>}
+                            {isOfficialChannel && (
+                                <span className="message-edited-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                                    <span>{toPersianDigits(messageSeenCount)}</span>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
+                                        <path
+                                            fillRule="evenodd"
+                                            clipRule="evenodd"
+                                            d="M12 5.5C5.3 5.5 1.5 12 1.5 12s3.8 6.5 10.5 6.5S22.5 12 22.5 12 18.7 5.5 12 5.5Zm0 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+                                            fill="currentColor"
+                                        />
+                                    </svg>
+                                </span>
+                            )}
+                            {isMine && (
+                                m.deliveryStatus === 'sending'
+                                    ? <span className="message-pending-indicator" aria-label="در حال ارسال">◷</span>
+                                    : (
+                                        <span className={isSeenForUi ? 'message-seen message-seen--double' : 'message-seen message-seen--single'} aria-label={isSeenForUi ? 'seen' : 'sent'}>
+                                            <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--first" />
+                                            {isSeenForUi && <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--second" />}
+                                        </span>
+                                    )
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }), [
+        items,
+        highlightId,
+        dragState,
+        unreadAnchorForUi,
+        unreadCountForUi,
+        currentUserId,
+        msgMenu?.id,
+        seenByUsersByMessage,
+        isGroupChat,
+        isOfficialChannel,
+        optimisticReactions,
+        canSwipeToReply,
+        groupMembers,
+        cachedTextByMessageId,
+        token,
+        chatId,
+        reasoningPanelByMessage,
+        contact.chatId,
+        contact.name,
+        contact.username,
+        messagesById,
+    ]);
 
     if (showContactInfo) {
         const infoUser: any = isGroupChat ? { ...contact, chatId, isGroup: true } : contact;
@@ -2687,316 +3102,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                         <span className="chat-range-loader chat-range-loader--active" />
                                     </div>
                                 )}
-                                {items.map(({ m, isMine, dayBreak, shape, isBigEmojiOnly, emojiOnlyClass }) => {
-                                    const isHighlighted = highlightId === m.id;
-                                    const dragX = dragState.id === m.id ? dragState.x : 0;
-                                    const dragActive = dragState.id === m.id ? dragState.active : false;
-                                    const unreadAnchorForUi = unreadAnchorId || computeUnreadAnchorId(displayUnreadCount);
-                                    const showUnreadSeparator = Boolean(unreadAnchorForUi && unreadAnchorForUi === m.id && m.senderId !== currentUserId);
-                                    const unreadCountForUi = Math.max(getUnseenIncomingMessages().length, displayUnreadCount);
-
-                                    const isMenuActive = Boolean(msgMenu && msgMenu.id === m.id);
-                                    const seenByCountForMessage = seenByUsersByMessage[m.id]?.length ?? 0;
-                                    const isSeenForUi = Boolean(
-                                        m.seen || (isGroupChat && isMine && seenByCountForMessage > 0) || (isOfficialChannel && isMine)
-                                    );
-                                    const messageSeenByRaw = Array.isArray((m as any).seenBy) ? (m as any).seenBy.length : 0;
-                                    const messageSeenCountRaw = Number((m as any).seenCount || 0);
-                                    const messageSeenCount = Math.max(1, seenByCountForMessage, messageSeenByRaw, messageSeenCountRaw);
-
-                                    
-                                    const effectiveReactions = (optimisticReactions[m.id] ?? m.reactions ?? []).slice().sort((a: any, b: any) => Number(b?.count || 0) - Number(a?.count || 0));
-
-                                    return (
-                                        <div key={m.id}>
-                                            {dayBreak && (
-                                                <div className="chat-room__date-separator">
-                                                    <div className="chat-room__date-label">{formatDayLabel(m.timestamp)}</div>
-                                                </div>
-                                            )}
-
-                                            {showUnreadSeparator && (
-                                                <div ref={unreadSeparatorRef} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', justifyContent: 'center' }}>
-                                                    <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
-                                                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 999, padding: '6px 10px', fontFamily: 'Vazir, sans-serif' }}>
-                                                        پیام‌های خوانده نشده{unreadCountForUi > 0 ? ` (${toPersianDigits(unreadCountForUi)})` : ''}
-                                                    </div>
-                                                    <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
-                                                </div>
-                                            )}
-
-                                            <div
-                                                className={isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`}
-                                                onPointerDown={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (e.pointerType !== 'mouse' || e.button !== 0) return;
-                                                    swipeRef.current = { id: m.id, startX: e.clientX, startY: e.clientY, active: true, captured: false, pointerId: e.pointerId, blockClickUntil: swipeRef.current.blockClickUntil };
-                                                }}
-                                                onPointerMove={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (e.pointerType !== 'mouse' || !swipeRef.current.active || swipeRef.current.id !== m.id) return;
-                                                    const dx = e.clientX - swipeRef.current.startX;
-                                                    const dy = e.clientY - swipeRef.current.startY;
-                                                    if (!swipeRef.current.captured) {
-                                                        
-                                                        if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
-                                                        swipeRef.current.captured = true;
-                                                        setReplySwipeLocked(true);
-                                                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {  }
-                                                    }
-                                                    e.preventDefault();
-                                                    setDragState({ id: m.id, x: Math.max(0, Math.min(72, dx)), active: true });
-                                                }}
-                                                onPointerUp={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (e.pointerType !== 'mouse' || !swipeRef.current.active || swipeRef.current.id !== m.id) return;
-                                                    const dx = e.clientX - swipeRef.current.startX;
-                                                    const dy = e.clientY - swipeRef.current.startY;
-                                                    if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
-                                                    if (dx > 60 && Math.abs(dx) > Math.abs(dy)) beginReply(m, true);
-                                                    resetDrag(m.id);
-                                                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
-                                                }}
-                                                onPointerCancel={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (e.pointerType !== 'mouse' || swipeRef.current.id !== m.id) return;
-                                                    resetDrag(m.id);
-                                                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
-                                                }}
-                                                onTouchStart={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    const t = e.touches[0];
-                                                    swipeRef.current = { id: m.id, startX: t.clientX, startY: t.clientY, active: true, captured: false, pointerId: null, blockClickUntil: swipeRef.current.blockClickUntil };
-                                                }}
-                                                onTouchMove={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (!swipeRef.current.active || swipeRef.current.id !== m.id) return;
-                                                    const t = e.touches[0];
-                                                    const dx = t.clientX - swipeRef.current.startX;
-                                                    const dy = t.clientY - swipeRef.current.startY;
-                                                    if (!swipeRef.current.captured) {
-                                                        
-                                                        if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
-                                                        swipeRef.current.captured = true;
-                                                        setReplySwipeLocked(true);
-                                                    }
-                                                    e.preventDefault();
-                                                    setDragState({ id: m.id, x: Math.max(0, Math.min(72, dx)), active: true });
-                                                }}
-                                                onTouchEnd={(e) => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (!swipeRef.current.active || swipeRef.current.id !== m.id) return;
-                                                    const t = e.changedTouches[0];
-                                                    const dx = t.clientX - swipeRef.current.startX;
-                                                    const dy = t.clientY - swipeRef.current.startY;
-                                                    if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
-                                                    if (dx > 60 && Math.abs(dx) > Math.abs(dy)) beginReply(m, true);
-                                                    resetDrag(m.id);
-                                                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
-                                                }}
-                                                onTouchCancel={() => {
-                                                    if (!canSwipeToReply) return;
-                                                    if (swipeRef.current.id !== m.id) return;
-                                                    resetDrag(m.id);
-                                                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
-                                                }}
-                                            >
-                                                {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (() => {
-                                                    const sender = groupMembers[m.senderId];
-                                                    const senderName = sender?.name || m.senderId || 'ناشناس';
-                                                    return (
-                                                        <div style={{ position: 'absolute', left: 0, bottom: 0, cursor: 'pointer', zIndex: 1 }}
-                                                            onClick={(e) => { e.stopPropagation(); openMember(m.senderId); }}>
-                                                            <Avatar name={senderName} size="sm" src={sender?.avatar || ''} />
-                                                        </div>
-                                                    );
-                                                })()}
-
-                                                <div
-                                                    ref={(el) => { if (!el) { messageElsRef.current.delete(m.id); return; } messageElsRef.current.set(m.id, el); }}
-                                                    className={isMine
-                                                        ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`
-                                                        : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (Date.now() < swipeRef.current.blockClickUntil) return;
-                                                        const ne = e.nativeEvent as MouseEvent;
-                                                        openMessageMenu(m.id, e.currentTarget, ne.clientX, ne.clientY);
-                                                    }}
-                                                    role="button" tabIndex={0}
-                                                    onKeyDown={(e) => { if (e.key === 'Enter') openMessageMenu(m.id, e.currentTarget as any); }}
-                                                    style={{
-                                                        cursor: 'pointer',
-                                                        transform: `translateX(${dragX}px)`,
-                                                        transition: dragActive ? 'none' : 'transform 140ms ease-out, box-shadow 220ms ease',
-                                                        touchAction: dragActive ? 'none' : 'auto',
-                                                        boxShadow: isMenuActive
-                                                            ? 'inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 36%, transparent)'
-                                                            : 'inset 0 0 0 2px rgba(0,0,0,0)',
-                                                    }}
-                                                >
-                                                    {isGroupChat && !isMine && !isBigEmojiOnly && (shape === 'msg-shape--single' || shape === 'msg-shape--first') && (() => {
-                                                        const sender = groupMembers[m.senderId];
-                                                        const senderName = sender?.name || m.senderId || 'ناشناس';
-                                                        const colors = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50', '#FF5722', '#FF9800'];
-                                                        const colorIdx = m.senderId ? Math.abs(m.senderId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % colors.length : 0;
-                                                        return (
-                                                            <div onClick={(e) => { e.stopPropagation(); openMember(m.senderId); }}
-                                                                style={{ fontSize: 13, fontWeight: 700, color: colors[colorIdx], marginBottom: 3, cursor: 'pointer', fontFamily: "'Vazir', 'AppleEmoji', sans-serif", lineHeight: '1.2' }}>
-                                                                {senderName}
-                                                            </div>
-                                                        );
-                                                    })()}
-
-                                                    {m.forwardedFrom && (
-                                                        <button
-                                                            type="button"
-                                                            className="message-forwarded-label"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                openForwardSource(m);
-                                                            }}
-                                                        >
-                                                            فوروارد شده از: {m.forwardedFrom.name || m.forwardedFrom.username || 'ناشناس'}
-                                                        </button>
-                                                    )}
-
-                                                    {m.replyTo && (
-                                                        <div onClick={(e) => { e.stopPropagation(); scrollToMessage(m.replyTo!.id); }}
-                                                            role="button" tabIndex={0}
-                                                            onKeyDown={(e) => { if (e.key === 'Enter') scrollToMessage(m.replyTo!.id); }}
-                                                            className="message-reply-box"
-                                                            style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 12, cursor: 'pointer' }}>
-                                                            <div className="message-reply-box__label">{isGroupChat ? getReplySenderName(m.replyTo) : 'پاسخ'}</div>
-                                                            <div className="message-reply-box__text">{getReplyPreviewText(m.replyTo)}</div>
-                                                        </div>
-                                                    )}
-
-                                                    {m.file && (
-                                                        <FileMessage
-                                                            file={m.file}
-                                                            token={token}
-                                                            chatId={chatId}
-                                                            onMediaLoad={() => handleInitialMediaReady(m.id)}
-                                                            onImageClick={(imageUrl, file) => openImageViewer(imageUrl, file)}
-                                                            onVideoClick={(videoUrl, file) => openVideoViewer(videoUrl, file)}
-                                                        />
-                                                    )}
-                                                    {Boolean(m.reasoningEnabled && m.reasoningContent) && (
-                                                        <div className="ai-reasoning-message-stack" style={{ width: '100%' }}>
-                                                            <button
-                                                                type="button"
-                                                                className="ai-reasoning-header"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    setReasoningPanelByMessage((prev) => ({ ...prev, [m.id]: !Boolean(prev[m.id]) }));
-                                                                }}
-                                                            >
-                                                                <span className="ai-reasoning-header-main">
-                                                                    <span className="ai-reasoning-static-title">روند استدلال</span>
-                                                                    <span className='ai-reasoning-timer'>
-                                                                        {`${toPersianDigits(Math.floor(Number(m.reasoningDurationSec || 0) / 60))}:${toPersianDigits(String(Number(m.reasoningDurationSec || 0) % 60).padStart(2, '0'))}`}
-                                                                    </span>
-                                                                </span>
-                                                                <ChevronDown size={15} className={reasoningPanelByMessage[m.id] ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
-                                                            </button>
-                                                            <AnimatePresence initial={false}>
-                                                                {Boolean(reasoningPanelByMessage[m.id]) && (
-                                                                    <motion.div
-                                                                        className="ai-reasoning-body"
-                                                                        initial={{ height: 0, opacity: 0 }}
-                                                                        animate={{ height: 'auto', opacity: 1 }}
-                                                                        exit={{ height: 0, opacity: 0 }}
-                                                                        transition={{ duration: 0.2, ease: 'easeOut' }}
-                                                                    >
-                                                                        <div className="ai-reasoning-content">{m.reasoningContent}</div>
-                                                                    </motion.div>
-                                                                )}
-                                                            </AnimatePresence>
-                                                        </div>
-                                                    )}
-                                                    {m.text && !Boolean(m.reasoningEnabled && m.reasoningContent) && (
-                                                        hasMarkdownSyntax(normalizeMessageTextForRender(m.text)) ? (
-                                                            <div className="message-text message-text--markdown">
-                                                                <MemoMarkdown text={normalizeMessageTextForRender(cachedTextByMessageId[m.id] ?? m.text)} components={markdownComponents} />
-                                                            </div>
-                                                        ) : (
-                                                            <div className={isBigEmojiOnly ? `message-text message-text--emoji-only ${emojiOnlyClass}` : 'message-text'}>{renderTextWithLinks(normalizeMessageTextForRender(m.text))}</div>
-                                                        )
-                                                    )}
-                                                    {m.text && Boolean(m.reasoningEnabled && m.reasoningContent) && (
-                                                        <div className="ai-reasoning-answer" style={{ marginTop: 0 }}>
-                                                            {hasMarkdownSyntax(normalizeMessageTextForRender(m.text)) ? (
-                                                                <div className="message-text message-text--markdown">
-                                                                    <MemoMarkdown text={normalizeMessageTextForRender(cachedTextByMessageId[m.id] ?? m.text)} components={markdownComponents} />
-                                                                </div>
-                                                            ) : (
-                                                                <div className={isBigEmojiOnly ? `message-text message-text--emoji-only ${emojiOnlyClass}` : 'message-text'}>{renderTextWithLinks(normalizeMessageTextForRender(m.text))}</div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {effectiveReactions && effectiveReactions.length > 0 && (
-                                                        <div className="message-reactions">
-                                                            {effectiveReactions.map((reaction: any, idx: number) => {
-                                                                const userIds = reaction.userIds || [];
-                                                                const isMyReaction = userIds.includes(currentUserId);
-                                                                return (
-                                                                    <button key={idx}
-                                                                        className={isMyReaction ? 'message-reaction message-reaction--active' : 'message-reaction'}
-                                                                        onClick={(e) => { e.stopPropagation(); if (isMyReaction) handleDeleteReaction(m.id); else handleReact(m.id, reaction.emoji); }}
-                                                                        onMouseEnter={(e) => {
-                                                                            if (!window.matchMedia?.('(pointer:fine)').matches) return;
-                                                                            e.stopPropagation();
-                                                                            openReactionMenu(m.id, e.currentTarget);
-                                                                        }}
-                                                                        type="button"
-                                                                    >
-                                                                        <span className="message-reaction__emoji">{reaction.emoji}</span>
-                                                                        {reaction.count > 1 && (
-                                                                            <span className="message-reaction__count" style={{ fontFamily: 'Vazir, sans-serif' }}>
-                                                                                {toPersianDigits(reaction.count)}
-                                                                            </span>
-                                                                        )}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-
-                                                    <div className={isMine ? 'message-meta message-meta--mine' : 'message-meta message-meta--theirs'}>
-                                                        <span className="message-time">{formatMessageTime(m.timestamp)}</span>
-                                                        {m.edited && <span className="message-edited-label">ویرایش شده</span>}
-                                                        {m.aiModelName && <span className="message-ai-model-label">{m.aiModelName}</span>}
-                                                        {isOfficialChannel && (
-                                                            <span className="message-edited-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                                                                <span>{toPersianDigits(messageSeenCount)}</span>
-                                                                <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
-                                                                    <path
-                                                                        fillRule="evenodd"
-                                                                        clipRule="evenodd"
-                                                                        d="M12 5.5C5.3 5.5 1.5 12 1.5 12s3.8 6.5 10.5 6.5S22.5 12 22.5 12 18.7 5.5 12 5.5Zm0 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
-                                                                        fill="currentColor"
-                                                                    />
-                                                                </svg>
-                                                            </span>
-                                                        )}
-                                                        {isMine && (
-                                                            m.deliveryStatus === 'sending'
-                                                                ? <span className="message-pending-indicator" aria-label="در حال ارسال">◷</span>
-                                                                : (
-                                                                    <span className={isSeenForUi ? 'message-seen message-seen--double' : 'message-seen message-seen--single'} aria-label={isSeenForUi ? 'seen' : 'sent'}>
-                                                                        <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--first" />
-                                                                        {isSeenForUi && <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--second" />}
-                                                                    </span>
-                                                                )
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                {renderedMessageItems}
                                 {(loadingNewerMessages || localLoadingNewer) && (
                                     <div className="chat-range-loader-wrap chat-range-loader-wrap--bottom">
                                         <span className="chat-range-loader chat-range-loader--active" />
@@ -3299,13 +3405,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                 chatId={chatId}
                                 onFileUploaded={handleFileUploaded}
                                 fileAttached={Boolean(uploadedFile)}
-                                onUploadStateChange={({ isUploading, progress, fileName, cancelUpload, phase }) => {
-                                    setUploadComposerState({ isUploading, progress, fileName, phase: phase || 'upload' });
-                                    uploadCancelRef.current = cancelUpload ?? null;
-                                }}
-                                onRegisterUploadFile={(handler) => {
-                                    setExternalFileUploadHandler(() => handler);
-                                }}
+                                onUploadStateChange={handleUploadStateChange}
+                                onRegisterUploadFile={handleRegisterUploadFile}
                             />
                             <textarea ref={textareaRef} className="chat-room__text-input" placeholder="پیام..."
                                 wrap="soft"

@@ -42,6 +42,16 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
     const xhrRef = useRef<XMLHttpRequest | null>(null);
     const encryptCancelRef = useRef(false);
 
+    const onFileUploadedRef = useRef(onFileUploaded);
+    const onUploadStateChangeRef = useRef(onUploadStateChange);
+    const onRegisterUploadFileRef = useRef(onRegisterUploadFile);
+
+    useEffect(() => {
+        onFileUploadedRef.current = onFileUploaded;
+        onUploadStateChangeRef.current = onUploadStateChange;
+        onRegisterUploadFileRef.current = onRegisterUploadFile;
+    });
+
     const clearPickerCloseTimer = () => {
         if (pickerCloseTimerRef.current != null) {
             window.clearTimeout(pickerCloseTimerRef.current);
@@ -56,7 +66,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
 
     const pushTaskUpdate = (task: UploadTask) => {
         task.listeners.forEach((listener) => listener(task));
-        onUploadStateChange?.({
+        onUploadStateChangeRef.current?.({
             isUploading: task.status === 'uploading',
             progress: getCombinedProgress(task),
             fileName: task.fileName,
@@ -80,7 +90,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
 
         const handleTask = (task: UploadTask) => {
             setUploading(task.status === 'uploading');
-            onUploadStateChange?.({
+            onUploadStateChangeRef.current?.({
                 isUploading: task.status === 'uploading',
                 progress: getCombinedProgress(task),
                 fileName: task.fileName,
@@ -89,7 +99,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             });
             if (task.status === 'done' && task.result && !task.delivered) {
                 task.delivered = true;
-                onFileUploaded(task.result);
+                onFileUploadedRef.current(task.result);
             }
             if (task.status === 'done' && fileAttached) {
                 uploadTasksByChat.delete(chatId);
@@ -103,7 +113,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
         return () => {
             existingTask.listeners.delete(handleTask);
         };
-    }, [chatId, onFileUploaded, fileAttached, onUploadStateChange]);
+    }, [chatId, fileAttached]);
 
     const startUploadFromFile = (file: File | null | undefined) => {
         if (!file) return;
@@ -111,7 +121,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
         
         if (!validateFileSize(file.size)) {
             alert('حجم فایل نباید بیشتر از ۲۰ مگابایت باشد');
-            onUploadStateChange?.({ isUploading: false, progress: 0, fileName: null });
+            onUploadStateChangeRef.current?.({ isUploading: false, progress: 0, fileName: null });
             return;
         }
 
@@ -127,14 +137,13 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
     };
 
     useEffect(() => {
-        if (!onRegisterUploadFile) return;
-        onRegisterUploadFile((file: File) => {
+        onRegisterUploadFileRef.current?.((file: File) => {
             startUploadFromFile(file);
         });
         return () => {
-            onRegisterUploadFile(null);
+            onRegisterUploadFileRef.current?.(null);
         };
-    }, [onRegisterUploadFile]);
+    }, [chatId]);
 
     useEffect(() => {
         if (!pickerMenuOpen) return;
@@ -332,7 +341,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
         xhrRef.current = null;
         encryptCancelRef.current = false;
         setUploading(false);
-        onUploadStateChange?.({ isUploading: false, progress: 0, fileName: null });
+        onUploadStateChangeRef.current?.({ isUploading: false, progress: 0, fileName: null });
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
@@ -360,9 +369,9 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
 
     useEffect(() => {
         return () => {
-            onUploadStateChange?.({ isUploading: false, progress: 0, fileName: null });
+            onUploadStateChangeRef.current?.({ isUploading: false, progress: 0, fileName: null });
         };
-    }, [onUploadStateChange]);
+    }, []);
 
     return (
         <>

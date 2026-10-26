@@ -1,5 +1,5 @@
 import { Search, MessageCirclePlus, Menu, User as UserIcon, LogOut, Bookmark, Settings as SettingsIcon, AlignJustify, Trash2, RefreshCw, Pin, PinOff, MessageSquarePlus } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Chat, User } from '../types';
 import { Avatar } from './Avatar';
@@ -145,9 +145,15 @@ function tehranMidnightEpoch(ts: any): number {
     return new Date(`${ymd}T00:00:00+03:30`).getTime();
 }
 
+const formatTimeCache = new Map<string, string>();
+
 function formatTime(timestamp: any): string {
     const normalizedTimestamp = normalizeTs(timestamp);
     const now = Date.now();
+    const cacheKey = `${Math.floor(now / 60000)}:${normalizedTimestamp}`;
+    const cached = formatTimeCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
     const today = tehranMidnightEpoch(now);
     const thatDay = tehranMidnightEpoch(normalizedTimestamp);
     const diffMs = today - thatDay;
@@ -155,24 +161,23 @@ function formatTime(timestamp: any): string {
 
     const d = new Date(normalizedTimestamp);
 
-    
+    let result: string;
     if (diffDays === 0) {
-        return tehranTimeFmt.format(d);
+        result = tehranTimeFmt.format(d);
+    } else if (diffDays === 1) {
+        result = 'دیروز';
+    } else if (diffDays >= 2 && diffDays <= 6) {
+        result = tehranWeekdayFmt.format(d);
+    } else {
+        const currentYear = tehranJalaliYearFmt.format(new Date(now));
+        const messageYear = tehranJalaliYearFmt.format(d);
+        result = currentYear === messageYear
+            ? tehranJalaliDayMonthFmt.format(d)
+            : tehranJalaliFmt.format(d);
     }
-    
-    if (diffDays === 1) {
-        return 'دیروز';
-    }
-    
-    if (diffDays >= 2 && diffDays <= 6) {
-        return tehranWeekdayFmt.format(d);
-    }
-    const currentYear = tehranJalaliYearFmt.format(new Date(now));
-    const messageYear = tehranJalaliYearFmt.format(d);
-    if (currentYear === messageYear) {
-        return tehranJalaliDayMonthFmt.format(d);
-    }
-    return tehranJalaliFmt.format(d);
+    if (formatTimeCache.size > 1000) formatTimeCache.clear();
+    formatTimeCache.set(cacheKey, result);
+    return result;
 }
 
 function getFilePreviewLabel(file: any): string {
@@ -375,7 +380,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 type ConfirmAction = null | { kind: 'delete_chat' | 'delete_group' | 'leave_group' | 'logout'; chatId: string };
 
-export function ChatList({
+export const ChatList = memo(function ChatList({
     chats,
     currentUser,
     activeChatId,
@@ -400,14 +405,17 @@ export function ChatList({
 
     const isMobile = useIsMobile(768);
 
-    
     const [localChats, setLocalChats] = useState<Chat[]>(chats);
     useEffect(() => {
         setLocalChats((prev) => {
             const prevById = new Map(prev.map((c) => [c.id, c]));
-            return chats.map((chat) => {
+            let changed = prev.length !== chats.length;
+            const next = chats.map((chat, idx) => {
                 const prevChat = prevById.get(chat.id);
-                if (!prevChat) return chat;
+                if (!prevChat) {
+                    changed = true;
+                    return chat;
+                }
 
                 const incomingUnread = Number(chat.unreadCount || 0);
                 const previousUnread = Number(prevChat.unreadCount || 0);
@@ -418,15 +426,19 @@ export function ChatList({
                     prevChat.lastMessage.id === chat.lastMessage.id
                 );
 
-                
-                
                 const shouldKeepPreviousUnread = !isActive && sameLastMessageId && incomingUnread === 0 && previousUnread > 0;
+                const resolvedUnread = shouldKeepPreviousUnread ? previousUnread : incomingUnread;
 
-                return {
-                    ...chat,
-                    unreadCount: shouldKeepPreviousUnread ? previousUnread : incomingUnread,
-                };
+                const nextChat = resolvedUnread === chat.unreadCount
+                    ? chat
+                    : { ...chat, unreadCount: resolvedUnread };
+
+                if (nextChat !== prev[idx]) {
+                    changed = true;
+                }
+                return nextChat;
             });
+            return changed ? next : prev;
         });
     }, [chats, activeChatId]);
 
@@ -776,37 +788,37 @@ export function ChatList({
 
     
     
-    const sortedChats = [...localChats].sort((a, b) => {
-        const aPinned = isPinned(a.id) ? 1 : 0;
-        const bPinned = isPinned(b.id) ? 1 : 0;
-        if (aPinned !== bPinned) return bPinned - aPinned;
+    const sortedChats = useMemo(() => {
+        return [...localChats].sort((a, b) => {
+            const aPinned = pinnedIds.includes(a.id) ? 1 : 0;
+            const bPinned = pinnedIds.includes(b.id) ? 1 : 0;
+            if (aPinned !== bPinned) return bPinned - aPinned;
 
-        const aTime = a.lastMessage ? normalizeTs(a.lastMessage.timestamp) : 0;
-        const bTime = b.lastMessage ? normalizeTs(b.lastMessage.timestamp) : 0;
-        return bTime - aTime;
-    });
+            const aTime = a.lastMessage ? normalizeTs(a.lastMessage.timestamp) : 0;
+            const bTime = b.lastMessage ? normalizeTs(b.lastMessage.timestamp) : 0;
+            return bTime - aTime;
+        });
+    }, [localChats, pinnedIds]);
 
-    
-    const filteredChats = sortedChats.filter((chat) => {
-        
-        if (!searchQuery) return true;
+    const filteredChats = useMemo(() => {
+        if (!searchQuery) return sortedChats;
+        const lowerQuery = searchQuery.toLowerCase();
+        return sortedChats.filter((chat) => {
+            if (chat.id === savedMessagesId) {
+                return (
+                    'پیام‌های ذخیره شده'.includes(searchQuery) ||
+                    'saved'.includes(lowerQuery) ||
+                    'ذخیره'.includes(searchQuery)
+                );
+            }
 
-        
-        if (chat.id === savedMessagesId) {
+            const contact = getContact(chat);
             return (
-                'پیام‌های ذخیره شده'.includes(searchQuery) ||
-                'saved'.includes(searchQuery.toLowerCase()) ||
-                'ذخیره'.includes(searchQuery)
+                contact.name.toLowerCase().includes(lowerQuery) ||
+                contact.username.toLowerCase().includes(lowerQuery)
             );
-        }
-
-        
-        const contact = getContact(chat);
-        return (
-            contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            contact.username.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-    });
+        });
+    }, [sortedChats, searchQuery, savedMessagesId, currentUser.chatId]);
 
     const hasActiveChat = Boolean(activeChatId);
 
@@ -1269,4 +1281,4 @@ export function ChatList({
             </AnimatePresence>
         </div>
     );
-}
+});
