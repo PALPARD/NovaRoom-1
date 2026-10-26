@@ -2320,6 +2320,16 @@ async def get_chat_list(
                 "file": doc.get("file"),
             }
 
+        saved_pinned_raw = current_user.get("settings", {}).get("savedPinnedMessage")
+        saved_pinned_msg = None
+        if isinstance(saved_pinned_raw, dict) and saved_pinned_raw.get("id"):
+            saved_pinned_msg = {
+                **saved_pinned_raw,
+                "text": decrypt_with_fallback(
+                    saved_pinned_raw.get("text", ""), session_token, f"chat:{saved_chat_id}"
+                ),
+            }
+
         result.append(
             {
                 "id": saved_chat_id,
@@ -2335,6 +2345,7 @@ async def get_chat_list(
                     "registrationDate": None,
                 },
                 "lastMessage": saved_last_msg,
+                "pinnedMessage": saved_pinned_msg,
                 "unreadCount": 0,
             }
         )
@@ -2594,19 +2605,61 @@ async def get_messages(
 
     saved_chat_id = get_saved_messages_id(current_user_id)
     if chat_id == saved_chat_id:
-        query: Dict[str, Any] = {"chatId": chat_id}
-        extra = _cursor_filter()
-        if extra:
-            query = {"$and": [query, extra]}
-        order = -1 if direction in ("latest", "older") else 1
-        msgs = (
-            await cl_messages.find(query)
-            .sort([("timestamp", order), ("_id", order)])
-            .limit(safe_limit)
-            .to_list(safe_limit)
-        )
-        if direction in ("latest", "older"):
-            msgs.reverse()
+        if around_id:
+            target_oid = await try_object_id(around_id)
+            if not target_oid:
+                raise HTTPException(status_code=400, detail="Invalid around_id")
+            target_msg = await cl_messages.find_one({"_id": target_oid, "chatId": chat_id})
+            if not target_msg:
+                raise HTTPException(status_code=404, detail="Target message not found")
+
+            target_dt = target_msg.get("timestamp")
+            half = max(1, (safe_limit - 1) // 2)
+
+            older_query = {
+                "chatId": chat_id,
+                "$or": [
+                    {"timestamp": {"$lt": target_dt}},
+                    {"timestamp": target_dt, "_id": {"$lt": target_oid}},
+                ],
+            }
+            older_msgs = (
+                await cl_messages.find(older_query)
+                .sort([("timestamp", -1), ("_id", -1)])
+                .limit(half)
+                .to_list(half)
+            )
+            older_msgs.reverse()
+
+            newer_query = {
+                "chatId": chat_id,
+                "$or": [
+                    {"timestamp": {"$gt": target_dt}},
+                    {"timestamp": target_dt, "_id": {"$gt": target_oid}},
+                ],
+            }
+            newer_msgs = (
+                await cl_messages.find(newer_query)
+                .sort([("timestamp", 1), ("_id", 1)])
+                .limit(half)
+                .to_list(half)
+            )
+
+            msgs = older_msgs + [target_msg] + newer_msgs
+        else:
+            query: Dict[str, Any] = {"chatId": chat_id}
+            extra = _cursor_filter()
+            if extra:
+                query = {"$and": [query, extra]}
+            order = -1 if direction in ("latest", "older") else 1
+            msgs = (
+                await cl_messages.find(query)
+                .sort([("timestamp", order), ("_id", order)])
+                .limit(safe_limit)
+                .to_list(safe_limit)
+            )
+            if direction in ("latest", "older"):
+                msgs.reverse()
 
         payload = [
             {
