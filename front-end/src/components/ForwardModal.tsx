@@ -10,13 +10,17 @@ interface ForwardModalProps {
     chats: Chat[];
     currentUserId: string;
     currentUserVerified?: boolean;
+    forwardCount?: number;
     onClose: () => void;
     onForward?: (chatId: string) => void;
     onSelectTargetChat?: (chatId: string) => void;
     onSelectChat?: (chatId: string) => void;
 }
 
-export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified = false, onClose, onForward, onSelectTargetChat, onSelectChat }: ForwardModalProps) {
+const toPersianDigits = (num: number | string) =>
+    String(num).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[parseInt(d, 10)]);
+
+export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified = false, forwardCount, onClose, onForward, onSelectTargetChat, onSelectChat }: ForwardModalProps) {
     const [searchQuery, setSearchQuery] = useState('');
 
     const handlePickChat = (chatId: string) => {
@@ -88,7 +92,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                         transition={{ duration: 0.2, ease: 'easeOut' }}
                     >
                         <div className="modal-header">
-                            <h2>فوروارد پیام</h2>
+                            <h2>{forwardCount && forwardCount > 1 ? `فوروارد ${toPersianDigits(forwardCount)} پیام` : 'فوروارد پیام'}</h2>
                             <button className="icon-btn" onClick={onClose} type="button" aria-label="Close">
                                 <X size={20} />
                             </button>

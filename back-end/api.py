@@ -3334,7 +3334,7 @@ async def unpin_message(
 
 
 @app.post("/messages/forward")
-@limiter.limit("30/minute;500/hour")
+@limiter.limit("60/minute;1000/hour")
 async def forward_message(
     request: Request,
     req: ForwardMessageRequest,
