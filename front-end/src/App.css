@@ -635,53 +635,6 @@ body,
     color: var(--text-primary);
 }
 
-.novaroom-title {
-    --title-accent: var(--accent-primary);
-    --title-shadow: transparent;
-    --title-outline: transparent;
-    color: var(--text-primary);
-    text-shadow: 0 0 0 var(--title-shadow);
-    -webkit-text-stroke: 0 var(--title-outline);
-    text-decoration-color: transparent;
-    transition: color var(--motion-fast) var(--motion-ease-standard);
-}
-
-.novaroom-title[data-title-variant="comic"] {
-    --title-accent: #f97316;
-    --title-shadow: rgba(249, 115, 22, 0.35);
-    --title-outline: rgba(124, 45, 18, 0.45);
-    color: #fb923c;
-    letter-spacing: 0.02em;
-    text-shadow: 1px 1px 0 var(--title-outline), 0 0 14px var(--title-shadow);
-}
-
-.novaroom-title[data-title-variant="cyber"] {
-    --title-accent: #22d3ee;
-    --title-shadow: rgba(34, 211, 238, 0.55);
-    color: #67e8f9;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    text-shadow: 0 0 12px var(--title-shadow), 0 0 24px rgba(6, 182, 212, 0.25);
-}
-
-.novaroom-title[data-title-variant="colorful"] {
-    background: linear-gradient(90deg, #22c55e 0%, #0ea5e9 30%, #8b5cf6 65%, #ec4899 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    font-weight: 800;
-}
-
-.novaroom-title[data-title-variant="glitch"] {
-    color: var(--text-primary);
-    text-shadow: -1px 0 rgba(244, 63, 94, 0.75), 1px 0 rgba(34, 211, 238, 0.75);
-    letter-spacing: 0.05em;
-}
-
-.dark-mode .novaroom-title[data-title-variant="comic"] {
-    color: #fdba74;
-}
-
 .chat-list__title-wrap {
     display: flex;
     align-items: center;

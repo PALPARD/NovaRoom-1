@@ -10,10 +10,6 @@ import { ChatListSkeleton } from './ChatListSkeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { API_BASE_URL } from '../config/api';
 
-const NOVAROOM_TITLE_VARIANTS = ['classic', 'comic', 'cyber', 'colorful', 'glitch'] as const;
-type NovaRoomTitleVariant = (typeof NOVAROOM_TITLE_VARIANTS)[number];
-const NOVAROOM_TITLE_VARIANT_SESSION_KEY = 'novaroom:title-variant:v1';
-
 interface ChatListProps {
     chats: Chat[];
     currentUser: User;
@@ -402,16 +398,6 @@ export const ChatList = memo(function ChatList({
     loading = false,
     hasUnseenLoginLogs = false,
 }: ChatListProps) {
-    const [titleVariant] = useState<NovaRoomTitleVariant>(() => {
-        if (typeof window === 'undefined') return 'classic';
-        const saved = window.sessionStorage.getItem(NOVAROOM_TITLE_VARIANT_SESSION_KEY);
-        if (saved && NOVAROOM_TITLE_VARIANTS.includes(saved as NovaRoomTitleVariant)) {
-            return saved as NovaRoomTitleVariant;
-        }
-        const next = NOVAROOM_TITLE_VARIANTS[Math.floor(Math.random() * NOVAROOM_TITLE_VARIANTS.length)];
-        window.sessionStorage.setItem(NOVAROOM_TITLE_VARIANT_SESSION_KEY, next);
-        return next;
-    });
     const [searchQuery, setSearchQuery] = useState('');
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement | null>(null);
@@ -857,12 +843,7 @@ export const ChatList = memo(function ChatList({
                     </button>
                     <div className="chat-list__title-wrap">
                         <h1 className="chat-list__title">
-                            <span
-                                className="novaroom-title"
-                                data-title-variant={titleVariant}
-                            >
-                                {wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...')}
-                            </span>
+                            {wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...')}
                         </h1>
                         {!wsConnected && wsReconnectExhausted && (
                             <button
