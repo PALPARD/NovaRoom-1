@@ -498,6 +498,10 @@ export function ChatRoom({
     const [showContactInfo, setShowContactInfo] = useState(false);
     const [forwardModalOpen, setForwardModalOpen] = useState(false);
     const [forwardingMessageId, setForwardingMessageId] = useState<string | null>(null);
+    const [forwardingMessageIds, setForwardingMessageIds] = useState<string[]>([]);
+    const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+    const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
+    const [copyToast, setCopyToast] = useState<string | null>(null);
     const [forwardSourceUser, setForwardSourceUser] = useState<User | null>(null);
     const forwardingInFlightRef = useRef(false);
 
@@ -1452,21 +1456,120 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         }
     };
 
-    const handleForwardFromModal = (targetChatId: string) => {
-        if (!forwardingMessageId) return;
-        const sourceMessage = messages.find((m) => m.id === forwardingMessageId);
-        onSetPendingForwardDraft?.(targetChatId, {
-            sourceChatId: chatId,
-            messageId: forwardingMessageId,
-            previewText: sourceMessage?.text || '',
-            previewFile: sourceMessage?.file || null,
-        });
+    const handleForwardFromModal = async (targetChatId: string) => {
+        const idsToForward = forwardingMessageIds.length > 0
+            ? [...forwardingMessageIds]
+            : (forwardingMessageId ? [forwardingMessageId] : []);
+
+        if (idsToForward.length === 0) return;
+
+        setForwardModalOpen(false);
         setForwardingMessageId(null);
+        setForwardingMessageIds([]);
+        setSelectedMessageIds([]);
+
+        if (idsToForward.length === 1 && !forwardingMessageIds.length) {
+            const singleId = idsToForward[0];
+            const sourceMessage = messages.find((m) => m.id === singleId);
+            onSetPendingForwardDraft?.(targetChatId, {
+                sourceChatId: chatId,
+                messageId: singleId,
+                previewText: sourceMessage?.text || '',
+                previewFile: sourceMessage?.file || null,
+            });
+            onSelectChat?.(targetChatId);
+            return;
+        }
+
+        const sortedMsgs = messages
+            .filter((m) => idsToForward.includes(m.id))
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        for (const msg of sortedMsgs) {
+            try {
+                if (onForwardMessage) {
+                    await onForwardMessage(chatId, msg.id, targetChatId);
+                } else {
+                    await apiFetch('/messages/forward', {
+                        method: 'POST',
+                        body: JSON.stringify({ sourceChatId: chatId, messageId: msg.id, targetChatId }),
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to forward msg', msg.id, err);
+            }
+        }
+
         onSelectChat?.(targetChatId);
     };
 
+    const isSelectionModeActive = selectedMessageIds.length > 0;
+
+    const toggleMessageSelection = useCallback((messageId: string) => {
+        setSelectedMessageIds((prev: string[]) => {
+            if (prev.includes(messageId)) {
+                return prev.filter((id: string) => id !== messageId);
+            }
+            return [...prev, messageId];
+        });
+    }, []);
+
+    const handleCopySelected = async () => {
+        if (selectedMessageIds.length === 0) return;
+        const selectedMsgs = messages
+            .filter((m) => selectedMessageIds.includes(m.id))
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        const textLines = selectedMsgs
+            .map((m) => {
+                const raw = cachedTextByMessageId[m.id] ?? m.text ?? '';
+                if (raw.trim()) return raw.trim();
+                if (m.file?.fileName) return `[فایل: ${m.file.fileName}]`;
+                return '';
+            })
+            .filter(Boolean);
+
+        if (textLines.length > 0) {
+            try {
+                await navigator.clipboard.writeText(textLines.join('\n\n'));
+                setCopyToast('متن پیام‌ها کپی شد');
+                window.setTimeout(() => setCopyToast(null), 2000);
+            } catch {
+                alert('کپی با خطا مواجه شد');
+            }
+        }
+        setSelectedMessageIds([]);
+    };
+
+    const handleOpenForwardSelected = () => {
+        if (selectedMessageIds.length === 0) return;
+        setForwardingMessageIds([...selectedMessageIds]);
+        setForwardModalOpen(true);
+    };
+
+    const deletableSelectedIds = useMemo(() => {
+        return selectedMessageIds.filter((id: string) => {
+            const msg = messages.find((m) => m.id === id);
+            if (!msg) return false;
+            return msg.senderId === currentUserId || (isGroupChat && isVerifiedUser);
+        });
+    }, [selectedMessageIds, messages, currentUserId, isGroupChat, isVerifiedUser]);
+
+    const canDeleteAnySelected = deletableSelectedIds.length > 0;
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && selectedMessageIds.length > 0) {
+                setSelectedMessageIds([]);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [selectedMessageIds.length]);
+
     const openForwardModal = (messageId: string) => {
         setForwardingMessageId(messageId);
+        setForwardingMessageIds([]);
         setForwardModalOpen(true);
         setMsgMenu(null);
     };
@@ -2381,6 +2484,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const messageSeenCount = Math.max(1, seenByCountForMessage, messageSeenByRaw, messageSeenCountRaw);
 
         const effectiveReactions = (optimisticReactions[m.id] ?? m.reactions ?? []).slice().sort((a: any, b: any) => Number(b?.count || 0) - Number(a?.count || 0));
+        const isSelected = selectedMessageIds.includes(m.id);
 
         return (
             <div key={m.id}>
@@ -2401,7 +2505,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 )}
 
                 <div
-                    className={isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`}
+                    className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isSelected ? 'message-row--selected' : ''}`}
                     onPointerDown={(e) => {
                         if (!canSwipeToReply) return;
                         if (e.pointerType !== 'mouse' || e.button !== 0) return;
@@ -2475,6 +2579,21 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                         swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
                     }}
                 >
+                    {isSelectionModeActive && (
+                        <div
+                            className={`message-select-indicator ${isSelected ? 'message-select-indicator--selected' : ''}`}
+                            onClick={(e: ReactMouseEvent) => {
+                                e.stopPropagation();
+                                toggleMessageSelection(m.id);
+                            }}
+                            role="checkbox"
+                            aria-checked={isSelected}
+                            title={isSelected ? 'لغو انتخاب' : 'انتخاب پیام'}
+                        >
+                            {isSelected && <Check size={13} strokeWidth={3} />}
+                        </div>
+                    )}
+
                     {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (() => {
                         const sender = groupMembers[m.senderId];
                         const senderName = sender?.name || m.senderId || 'ناشناس';
@@ -2489,11 +2608,15 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     <div
                         ref={(el) => { if (!el) { messageElsRef.current.delete(m.id); return; } messageElsRef.current.set(m.id, el); }}
                         className={isMine
-                            ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`
-                            : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''}`}
+                            ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`
+                            : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`}
                         onClick={(e) => {
                             e.stopPropagation();
                             if (Date.now() < swipeRef.current.blockClickUntil) return;
+                            if (isSelectionModeActive) {
+                                toggleMessageSelection(m.id);
+                                return;
+                            }
                             const selection = window.getSelection();
                             if (selection && selection.toString().trim().length > 0) return;
                             const isTextClick = Boolean((e.target as HTMLElement)?.closest('.message-text'));
@@ -2996,113 +3119,158 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 }
             }}
         >
-            <div className="chat-room__header">
-                <button className="chat-room__back-btn" onClick={() => { maybeSaveScroll(chatId); onBack(); }} aria-label="Back" type="button"><ArrowLeft size={20} /></button>
-                <button className="icon-btn chat-room__close-btn" onClick={() => { maybeSaveScroll(chatId); onCloseChat(); }} aria-label="Back to empty" type="button"><ArrowLeft size={20} /></button>
-
-                <button
-                    className="chat-room__header-clickable chat-room__header-clickable--full"
-                    onClick={() => {
-                        if (isSavedMessages || isOfficialChannel) return;
-                        maybeSaveScroll(chatId);
-                        
-                        
-                        
-                        
-                        if (onOpenContactInfo && chatId !== 'pending') {
-                            onOpenContactInfo(chatId);
-                        }
-                        restoringFromInfoRef.current = true;
-                        setOpenGroupEditorFromMembers(false);
-                        setShowContactInfo(true);
-                    }}
-                    aria-label={isSavedMessages ? '' : 'Open contact info'}
-                    type="button"
-                    style={isSavedMessages ? { cursor: 'default' } : undefined}
-                >
-                    <Avatar
-                        name={contact.name}
-                        size="sm"
-                        online={isGroupChat || isSavedMessages || isContactBlocked ? undefined : contact.online}
-                        savedMessages={isSavedMessages}
-                        src={contact.avatar}
-                    />
-                    <div className="chat-room__header-info">
-                        <div className="chat-room__contact-name" style={{ alignItems: 'center', gap: 6 }}>
-                            <p className='chat-room__contact-name-2 emoji-font'>{contact.name}</p>
-                            {!isSavedMessages && resolveVerified(contact.verified) ? <VerifiedBadge size={14} /> : null}
-                        </div>
-                        {!isSavedMessages && (
-                            <div className={(!isGroupChat && !isContactBlocked && contact.online) ? 'chat-room__contact-status chat-room__contact-status--online' : 'chat-room__contact-status'}>
-                                {isOfficialChannel ? (
-                                    <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? 0)} عضو</span>
-                                ) : headerActivityLabel ? (
-                                    <span className="status-online-text">{headerActivityLabel}</span>
-                                ) : (isGroupChat ? (
-                                    <span style={{ direction: 'rtl', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                        <span className="status-online-text">{toPersianDigits(chatStats?.onlineMembers ?? 0)} آنلاین</span>
-                                        <span style={{ color: 'var(--text-muted)' }}>•</span>
-                                        <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? currentChat?.participantIds?.length ?? 0)} عضو</span>
-                                    </span>
-                                ) : isContactBlocked ? 'آخرین بازدید مدت‌ها پیش' : contact.online ? 'آنلاین' : 'آفلاین')}
-                            </div>
-                        )}
-                    </div>
-                </button>
-
-                {!isSavedMessages && !isOfficialChannel && (
-                    <div className="chat-room__header-actions" ref={menuRef}>
+            {isSelectionModeActive ? (
+                <div className="chat-room__header chat-room__header--selection">
+                    <div className="chat-room__selection-left">
                         <button
-                            className="icon-btn"
-                            onClick={() => setChatMenuOpen((v) => !v)}
-                            aria-label="More"
-                            disabled={!canDeleteChat}
-                            style={!canDeleteChat ? { opacity: 0.4, cursor: 'default' } : undefined}
+                            className="icon-btn chat-room__selection-close-btn"
+                            onClick={() => setSelectedMessageIds([])}
+                            aria-label="Cancel selection"
+                            title="لغو انتخاب"
                             type="button"
                         >
-                            <AlignJustify size={20} />
+                            <X size={20} />
                         </button>
+                        <span className="chat-room__selection-count">
+                            {toPersianDigits(selectedMessageIds.length)} پیام انتخاب شده
+                        </span>
+                    </div>
 
-                        {chatMenuOpen && canDeleteChat && (
-                            <div className="popover popover--mini popover--right">
-                                {isGroupChat ? (
-                                    <>
-                                        {}
-                                        <button
-                                            className="popover__item popover__item--danger"
-                                            onClick={openLeaveGroupConfirm}
-                                            type="button"
-                                        >
-                                            <LogOut size={16} />
-                                            خروج از گروه
-                                        </button>
-                                        {}
-                                        {isVerifiedUser && (
-                                            <button
-                                                className="popover__item popover__item--danger"
-                                                onClick={openDeleteChatConfirm}
-                                                type="button"
-                                            >
-                                                <Trash2 size={16} />
-                                                حذف گروه
-                                            </button>
-                                        )}
-                                    </>
-                                ) : (
-                                    <button
-                                        className="popover__item popover__item--danger"
-                                        onClick={openDeleteChatConfirm}
-                                        type="button"
-                                    >
-                                        <Trash2 size={16} />
-                                        حذف گفتگو
-                                    </button>
-                                )}
-                            </div>
+                    <div className="chat-room__selection-actions">
+                        <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={handleCopySelected}
+                            title="کپی متن پیام‌ها"
+                            aria-label="Copy selected messages"
+                        >
+                            <Copy size={19} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={handleOpenForwardSelected}
+                            title="فوروارد پیام‌های انتخاب‌شده"
+                            aria-label="Forward selected messages"
+                        >
+                            <CornerUpLeft size={19} />
+                        </button>
+                        {canDeleteAnySelected && (
+                            <button
+                                type="button"
+                                className="icon-btn icon-btn--danger"
+                                onClick={() => setConfirmDeleteSelected(true)}
+                                title="حذف پیام‌های انتخاب‌شده"
+                                aria-label="Delete selected messages"
+                            >
+                                <Trash2 size={19} />
+                            </button>
                         )}
                     </div>
-                )}
-            </div>
+                </div>
+            ) : (
+                <div className="chat-room__header">
+                    <button className="chat-room__back-btn" onClick={() => { maybeSaveScroll(chatId); onBack(); }} aria-label="Back" type="button"><ArrowLeft size={20} /></button>
+                    <button className="icon-btn chat-room__close-btn" onClick={() => { maybeSaveScroll(chatId); onCloseChat(); }} aria-label="Back to empty" type="button"><ArrowLeft size={20} /></button>
+
+                    <button
+                        className="chat-room__header-clickable chat-room__header-clickable--full"
+                        onClick={() => {
+                            if (isSavedMessages || isOfficialChannel) return;
+                            maybeSaveScroll(chatId);
+                            if (onOpenContactInfo && chatId !== 'pending') {
+                                onOpenContactInfo(chatId);
+                            }
+                            restoringFromInfoRef.current = true;
+                            setOpenGroupEditorFromMembers(false);
+                            setShowContactInfo(true);
+                        }}
+                        aria-label={isSavedMessages ? '' : 'Open contact info'}
+                        type="button"
+                        style={isSavedMessages ? { cursor: 'default' } : undefined}
+                    >
+                        <Avatar
+                            name={contact.name}
+                            size="sm"
+                            online={isGroupChat || isSavedMessages || isContactBlocked ? undefined : contact.online}
+                            savedMessages={isSavedMessages}
+                            src={contact.avatar}
+                        />
+                        <div className="chat-room__header-info">
+                            <div className="chat-room__contact-name" style={{ alignItems: 'center', gap: 6 }}>
+                                <p className='chat-room__contact-name-2 emoji-font'>{contact.name}</p>
+                                {!isSavedMessages && resolveVerified(contact.verified) ? <VerifiedBadge size={14} /> : null}
+                            </div>
+                            {!isSavedMessages && (
+                                <div className={(!isGroupChat && !isContactBlocked && contact.online) ? 'chat-room__contact-status chat-room__contact-status--online' : 'chat-room__contact-status'}>
+                                    {isOfficialChannel ? (
+                                        <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? 0)} عضو</span>
+                                    ) : headerActivityLabel ? (
+                                        <span className="status-online-text">{headerActivityLabel}</span>
+                                    ) : (isGroupChat ? (
+                                        <span style={{ direction: 'rtl', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                            <span className="status-online-text">{toPersianDigits(chatStats?.onlineMembers ?? 0)} آنلاین</span>
+                                            <span style={{ color: 'var(--text-muted)' }}>•</span>
+                                            <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? currentChat?.participantIds?.length ?? 0)} عضو</span>
+                                        </span>
+                                    ) : isContactBlocked ? 'آخرین بازدید مدت‌ها پیش' : contact.online ? 'آنلاین' : 'آفلاین')}
+                                </div>
+                            )}
+                        </div>
+                    </button>
+
+                    {!isSavedMessages && !isOfficialChannel && (
+                        <div className="chat-room__header-actions" ref={menuRef}>
+                            <button
+                                className="icon-btn"
+                                onClick={() => setChatMenuOpen((v) => !v)}
+                                aria-label="More"
+                                disabled={!canDeleteChat}
+                                style={!canDeleteChat ? { opacity: 0.4, cursor: 'default' } : undefined}
+                                type="button"
+                            >
+                                <AlignJustify size={20} />
+                            </button>
+
+                            {chatMenuOpen && canDeleteChat && (
+                                <div className="popover popover--mini popover--right">
+                                    {isGroupChat ? (
+                                        <>
+                                            <button
+                                                className="popover__item popover__item--danger"
+                                                onClick={openLeaveGroupConfirm}
+                                                type="button"
+                                            >
+                                                <LogOut size={16} />
+                                                خروج از گروه
+                                            </button>
+                                            {isVerifiedUser && (
+                                                <button
+                                                    className="popover__item popover__item--danger"
+                                                    onClick={openDeleteChatConfirm}
+                                                    type="button"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    حذف گروه
+                                                </button>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <button
+                                            className="popover__item popover__item--danger"
+                                            onClick={openDeleteChatConfirm}
+                                            type="button"
+                                        >
+                                            <Trash2 size={16} />
+                                            حذف گفتگو
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {pinnedMessage && (
                 <div
@@ -3225,6 +3393,17 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                             {pinnedMessage?.id === activeMsg.id ? 'برداشتن پین' : 'پین کردن پیام'}
                         </button>
                         <button className="popover__item" onClick={() => openForwardModal(activeMsg.id)} type="button"><CornerUpLeft size={16} />فوروارد</button>
+                        <button
+                            className="popover__item"
+                            onClick={() => {
+                                setMsgMenu(null);
+                                setSelectedMessageIds([activeMsg.id]);
+                            }}
+                            type="button"
+                        >
+                            <Check size={16} />
+                            انتخاب
+                        </button>
                         {activeMsg.senderId === currentUserId && !activeMsg.forwardedFrom && (
                             <button className="popover__item" onClick={() => beginEdit(activeMsg)} type="button"><Pencil size={16} />ویرایش</button>
                         )}
@@ -3525,8 +3704,56 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 </div>
             </div>
 
-            <ForwardModal isOpen={forwardModalOpen} chats={chats} currentUserId={currentUserId} currentUserVerified={isVerifiedUser}
-                onClose={() => setForwardModalOpen(false)} onSelectTargetChat={handleForwardFromModal} onSelectChat={onSelectChat} />
+            <ForwardModal
+                isOpen={forwardModalOpen}
+                chats={chats}
+                currentUserId={currentUserId}
+                currentUserVerified={isVerifiedUser}
+                forwardCount={forwardingMessageIds.length || (forwardingMessageId ? 1 : 0)}
+                onClose={() => {
+                    setForwardModalOpen(false);
+                    setForwardingMessageIds([]);
+                    setForwardingMessageId(null);
+                }}
+                onSelectTargetChat={handleForwardFromModal}
+                onSelectChat={onSelectChat}
+            />
+
+            {copyToast && (
+                <div className="chat-room__toast">
+                    {copyToast}
+                </div>
+            )}
+
+            <AnimatePresence>
+                {confirmDeleteSelected && (
+                    <motion.div className="chat-room-modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
+                        <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
+                            <h3 className="chat-room-confirm-modal__title">حذف {toPersianDigits(deletableSelectedIds.length)} پیام؟</h3>
+                            <p className="chat-room-confirm-modal__text">
+                                آیا از حذف {toPersianDigits(deletableSelectedIds.length)} پیام انتخاب‌شده اطمینان دارید؟ پیام‌ها برای همه حذف خواهند شد.
+                            </p>
+                            <div className="chat-room-confirm-modal__actions">
+                                <button className="chat-room-confirm-modal__btn" onClick={() => setConfirmDeleteSelected(false)} type="button">لغو</button>
+                                <button
+                                    className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger"
+                                    onClick={() => {
+                                        setConfirmDeleteSelected(false);
+                                        const idsToDelete = [...deletableSelectedIds];
+                                        setSelectedMessageIds([]);
+                                        for (const id of idsToDelete) {
+                                            onDeleteMessage(id);
+                                        }
+                                    }}
+                                    type="button"
+                                >
+                                    حذف
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {dragUploadActive && (
                 <div className="chat-room__drag-upload-overlay">
