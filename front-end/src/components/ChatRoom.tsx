@@ -1,11 +1,11 @@
 import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, Copy, Eye, AlignJustify, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Copy, Eye, AlignJustify, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import type { Message, MessageReply as MessageReplyType, User, Chat, FileMetadata } from '../types';
+import type { Message, MessageReply as MessageReplyType, User, Chat, FileMetadata, PinnedMessage } from '../types';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { API_BASE_URL, apiFetch, getMessageSeenBy } from '../config/api';
@@ -65,6 +65,11 @@ interface ChatRoomProps {
     onLoadOlderMessages?: (chatId: string) => void | Promise<void>;
     onLoadNewerMessages?: (chatId: string) => void | Promise<void>;
     onJumpToLatestMessages?: (chatId: string) => void | Promise<void>;
+    pinnedMessage?: PinnedMessage | null;
+    onPinMessage?: (chatId: string, messageId: string) => void | Promise<void>;
+    onUnpinMessage?: (chatId: string) => void | Promise<void>;
+    onJumpToMessage?: (chatId: string, messageId: string) => void | Promise<void>;
+    targetScrollMessage?: { chatId: string; messageId: string; timestamp: number } | null;
 }
 
 const IRAN_OFFSET_MS = 210 * 60 * 1000;
@@ -457,6 +462,11 @@ export function ChatRoom({
     onLoadOlderMessages,
     onLoadNewerMessages,
     onJumpToLatestMessages,
+    pinnedMessage = null,
+    onPinMessage,
+    onUnpinMessage,
+    onJumpToMessage,
+    targetScrollMessage = null,
 }: ChatRoomProps) {
     const MAX_CHAT_MESSAGE_LENGTH = 6000;
     const currentChat = useMemo(
@@ -1267,6 +1277,15 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         };
         highlightRafRef.current = requestAnimationFrame(check);
     };
+
+    useEffect(() => {
+        if (!targetScrollMessage?.messageId) return;
+        if (targetScrollMessage.chatId !== chatId) return;
+        const timer = window.setTimeout(() => {
+            scrollToMessage(targetScrollMessage.messageId);
+        }, 120);
+        return () => window.clearTimeout(timer);
+    }, [targetScrollMessage?.messageId, targetScrollMessage?.timestamp, chatId]);
 
 
 
@@ -3072,6 +3091,38 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 )}
             </div>
 
+            {pinnedMessage && (
+                <div
+                    className="chat-room__pinned-bar"
+                    onClick={() => onJumpToMessage?.(chatId, pinnedMessage.id)}
+                    role="button"
+                    tabIndex={0}
+                >
+                    <div className="chat-room__pinned-bar__indicator" />
+                    <Pin size={16} className="chat-room__pinned-bar__icon" />
+                    <div className="chat-room__pinned-bar__content">
+                        <div className="chat-room__pinned-bar__title">
+                            پیام سنجاق شده{pinnedMessage.senderName ? ` • ${pinnedMessage.senderName}` : ''}
+                        </div>
+                        <div className="chat-room__pinned-bar__text">
+                            {pinnedMessage.text || (pinnedMessage.file ? `[فایل: ${pinnedMessage.file.fileName || 'پیوست'}]` : 'پیام')}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        className="chat-room__pinned-bar__unpin"
+                        title="برداشتن پین"
+                        aria-label="Unpin message"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onUnpinMessage?.(chatId);
+                        }}
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
             <div
                 className="chat-room__messages"
                 ref={messagesContainerRef}
@@ -3144,6 +3195,22 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                         {canReplyInMessageMenu && (
                             <button className="popover__item" onClick={() => beginReply(activeMsg)} type="button"><CornerUpRight size={16} />پاسخ</button>
                         )}
+                        <button
+                            className="popover__item"
+                            onClick={() => {
+                                const targetId = activeMsg.id;
+                                setMsgMenu(null);
+                                if (pinnedMessage?.id === targetId) {
+                                    onUnpinMessage?.(chatId);
+                                } else {
+                                    onPinMessage?.(chatId, targetId);
+                                }
+                            }}
+                            type="button"
+                        >
+                            <Pin size={16} />
+                            {pinnedMessage?.id === activeMsg.id ? 'برداشتن پین' : 'پین کردن پیام'}
+                        </button>
                         <button className="popover__item" onClick={() => openForwardModal(activeMsg.id)} type="button"><CornerUpLeft size={16} />فوروارد</button>
                         {activeMsg.senderId === currentUserId && !activeMsg.forwardedFrom && (
                             <button className="popover__item" onClick={() => beginEdit(activeMsg)} type="button"><Pencil size={16} />ویرایش</button>
