@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { Check, Monitor, Moon, Sun } from 'lucide-react';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 import { useDarkMode, type AccentIntensity, type ThemeMode, type ThemePalette, type ThemeTone } from '../hooks/useDarkMode';
 
 const modeOptions: Array<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
@@ -20,6 +22,7 @@ const toneOptions: Array<{ value: ThemeTone; label: string; description: string 
 ];
 
 export function ThemeSettings() {
+    const { scrolled, handleScroll } = useScrollFade();
     const {
         themeMode,
         setThemeMode,
@@ -44,7 +47,9 @@ export function ThemeSettings() {
     }, [shouldDisableCustomTone, themeTone, setThemeTone]);
 
     return (
-        <div className="profile__content" style={{ gap: 12, paddingInline: 14, paddingTop: 12 }}>
+        <>
+        <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+        <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 68 }}>
             <div className="profile__chat-id-card" style={{ direction: 'rtl', textAlign: 'right' }}>
                 <p className="profile__field-label" style={{ marginBottom: 10 }}>حالت نمایش</p>
                 <div style={{ display: 'grid', gap: 8 }}>
@@ -54,7 +59,7 @@ export function ThemeSettings() {
                             type="button"
                             className="popover__item"
                             onClick={() => setThemeMode(value)}
-                            style={{ borderRadius: 12, justifyContent: 'space-between', border: '1px solid var(--border-primary)' }}
+                            style={{ borderRadius: 14, justifyContent: 'space-between', border: '1px solid var(--glass-border)' }}
                         >
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                                 <Icon size={16} /> {label}
@@ -112,8 +117,8 @@ export function ThemeSettings() {
                             }}
                             disabled={isDisabled}
                             style={{
-                                borderRadius: 12,
-                                border: '1px solid var(--border-primary)',
+                                borderRadius: 14,
+                                border: '1px solid var(--glass-border)',
                                 alignItems: 'start',
                                 flexDirection: 'column',
                                 gap: 4,
@@ -176,12 +181,12 @@ export function ThemeSettings() {
                             onClick={() => setThemePalette(palette)}
                             style={{
                                 fontFamily: 'Vazir, sans-serif',
-                                border: `1px solid ${themePalette === palette ? 'var(--accent-primary)' : 'var(--border-primary)'}`,
-                                background: 'var(--bg-secondary)',
+                                border: `1px solid ${themePalette === palette ? 'var(--accent-primary)' : 'var(--glass-border)'}`,
+                                background: 'var(--glass-surface-soft)',
                                 color: 'var(--text-primary)',
-                                borderRadius: 14,
+                                borderRadius: 16,
                                 minHeight: 48,
-                                padding: '8px 10px',
+                                padding: '8px 12px',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
@@ -199,5 +204,6 @@ export function ThemeSettings() {
                 </div>
             </div>
         </div>
+        </>
     );
 }

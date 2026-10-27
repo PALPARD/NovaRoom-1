@@ -1,4 +1,8 @@
-import { ArrowLeft } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { screenVariants } from '../utils/screenMotion';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 interface LoginEvent {
   tokenHash: string;
@@ -28,14 +32,19 @@ const toJalaliTehran = (timestamp: number): string => {
 };
 
 export function LoginLogs({ onBack, events }: { onBack: () => void; events: LoginEvent[] }) {
+  const { scrolled, handleScroll } = useScrollFade();
   return (
-    <div className="profile" style={{ fontFamily: 'Vazir, sans-serif', textTransform: 'none', letterSpacing: 'normal' }}>
-      <div className="profile__header" style={{ direction: 'ltr' }}>
-        <button onClick={onBack} className="profile__header-back"><ArrowLeft size={22} /></button>
+    <motion.div className="profile" variants={screenVariants} initial="hidden" animate="visible" exit="exit" style={{ textTransform: 'none', letterSpacing: 'normal' }}>
+      <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+      <div className="profile__header">
+        <div className="profile__header-side">
+          <button onClick={onBack} className="profile__header-back back-icon-btn" aria-label="بازگشت به دستگاه‌ها">
+            <ChevronLeft size={22} />
+          </button>
+        </div>
         <h1 className="profile__header-title">لاگ ورود</h1>
-        <div className="profile__header-spacer" />
       </div>
-      <div className="profile__content" style={{ gap: 8, paddingInline: 14, paddingTop: 12 }}>
+      <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 68 }}>
         {events.length === 0 ? <div style={{ textAlign: 'center', direction: 'rtl', opacity: 0.8, fontSize: 13, padding: '14px 0' }}>لاگ ورودی وجود ندارد.</div> : events.slice(0, 10).map((event) => (
           <div key={`${event.tokenHash}-${event.createdAt}`} className="profile__chat-id-card">
             <div className="profile__chat-id-row" style={{ alignItems: 'center', justifyContent: 'space-between', direction: 'rtl', textAlign: 'right', minHeight: 44, paddingBlock: 6 }}>
@@ -49,6 +58,6 @@ export function LoginLogs({ onBack, events }: { onBack: () => void; events: Logi
           </div>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }

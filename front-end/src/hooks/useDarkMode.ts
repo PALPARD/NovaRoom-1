@@ -9,8 +9,8 @@ const STORAGE_KEY = 'themeMode';
 const TONE_STORAGE_KEY = 'themeTone';
 const PALETTE_STORAGE_KEY = 'themePalette';
 const LEGACY_DARK_MODE_KEY = 'darkMode';
-const INTENSITY_STORAGE_KEY = 'themeAccentIntensity';
-const ULTRA_DARK_STORAGE_KEY = 'themeUltraDark';
+const INTENSITY_STORAGE_KEY = 'themeAccentIntensityV2';
+const ULTRA_DARK_STORAGE_KEY = 'themeUltraDarkV2';
 
 
 
@@ -178,10 +178,10 @@ function getInitialTone(): ThemeTone {
 }
 
 function getInitialIntensity(): AccentIntensity {
-  if (typeof window === 'undefined') return 'medium';
+  if (typeof window === 'undefined') return 'high';
   const stored = localStorage.getItem(INTENSITY_STORAGE_KEY);
   if (stored === 'low' || stored === 'medium' || stored === 'high') return stored;
-  return 'medium';
+  return 'high';
 }
 
 function getInitialPalette(): ThemePalette {
@@ -191,8 +191,8 @@ function getInitialPalette(): ThemePalette {
 }
 
 function getInitialUltraDark(): boolean {
-  if (typeof window === 'undefined') return false;
-  return localStorage.getItem(ULTRA_DARK_STORAGE_KEY) === 'true';
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem(ULTRA_DARK_STORAGE_KEY) !== 'false';
 }
 
 const createCustomSurfaceVars = (isDarkMode: boolean): Record<string, string> => {

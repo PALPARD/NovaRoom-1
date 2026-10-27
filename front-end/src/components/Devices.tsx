@@ -1,7 +1,10 @@
-import { ArrowLeft, Laptop, ShieldOff, FileText } from 'lucide-react';
+import { ChevronLeft, Laptop, ShieldOff, FileText } from 'lucide-react';
+import { screenVariants } from '../utils/screenMotion';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../config/api';
 import { AnimatePresence, motion } from 'framer-motion';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 interface DeviceSession {
     tokenHash: string;
@@ -29,6 +32,7 @@ const toJalaliTehran = (timestamp: number): string => {
 };
 
 export function Devices({ onBack, onOpenLogs, hasUnseenLoginLogs }: DevicesProps) {
+    const { scrolled, handleScroll } = useScrollFade();
     const [sessions, setSessions] = useState<DeviceSession[]>([]);
     const [loading, setLoading] = useState(true);
     const [busyHash, setBusyHash] = useState<string | null>(null);
@@ -125,18 +129,25 @@ export function Devices({ onBack, onOpenLogs, hasUnseenLoginLogs }: DevicesProps
     }, [confirmAction]);
 
     return (
-        <div className="profile" style={{ fontFamily: 'Vazir, sans-serif' }}>
-            <div className="profile__header" style={{ direction: 'ltr' }}>
-                <button onClick={onBack} className="profile__header-back"><ArrowLeft size={22} /></button>
+        <motion.div className="profile" variants={screenVariants} initial="hidden" animate="visible" exit="exit">
+            <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+            <div className="profile__header">
+                <div className="profile__header-side">
+                    <button onClick={onBack} className="profile__header-back back-icon-btn" aria-label="بازگشت به تنظیمات">
+                        <ChevronLeft size={22} />
+                    </button>
+                </div>
                 <h1 className="profile__header-title">دستگاه‌ها</h1>
-                <button onClick={onOpenLogs} className="profile__header-back" style={{ position: 'relative', marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border-primary)', background: 'color-mix(in srgb, var(--bg-secondary) 88%, transparent)', borderRadius: 10, padding: '6px 10px', fontFamily: 'Vazir, sans-serif' }}>
-                    <span style={{ fontSize: 13, fontFamily: 'Vazir, sans-serif' }}>لاگ</span>
-                    <FileText size={18} />
-                    {hasUnseenLoginLogs && <span style={{ position: 'absolute', top: 3, right: 2, width: 8, height: 8, borderRadius: 99, background: 'var(--accent-primary)' }} />}
-                </button>
+                <div className="profile__header-actions">
+                    <button onClick={onOpenLogs} className="profile__header-back profile__header-back--wide">
+                        <span style={{ fontSize: 13 }}>لاگ</span>
+                        <FileText size={18} />
+                        {hasUnseenLoginLogs && <span className="profile__header-dot" />}
+                    </button>
+                </div>
             </div>
 
-            <div className="profile__content" style={{ gap: 8, paddingInline: 14, paddingTop: 12 }}>
+            <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 68 }}>
                 {loading ? (
                     <div style={{ textAlign: 'center', direction: 'rtl', opacity: 0.8, fontSize: 13, padding: '14px 0' }}>
                         در حال بارگیری نشست‌ها...
@@ -177,8 +188,8 @@ export function Devices({ onBack, onOpenLogs, hasUnseenLoginLogs }: DevicesProps
                                     width: '100%',
                                     justifyContent: 'center',
                                     minHeight: 48,
-                                    marginTop: 4,
-                                    marginBottom: 15,
+                                    marginTop: 2,
+                                    marginBottom: 4,
                                     background: 'color-mix(in srgb, #dc2626 82%, var(--bg-tertiary))',
                                 }}
                                 disabled={bulkBusy}
@@ -249,6 +260,6 @@ export function Devices({ onBack, onOpenLogs, hasUnseenLoginLogs }: DevicesProps
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div>
+        </motion.div>
     );
 }

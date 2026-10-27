@@ -1,5 +1,8 @@
-import { ArrowLeft, Copy, Check, Calendar, Link2, MessageCircle, Pencil, X, Save, Image as ImageIcon, Trash2, RotateCcw, Ban } from 'lucide-react';
-import { motion, type Variants } from "framer-motion";
+import { ChevronLeft, Copy, Check, Calendar, Link2, MessageCircle, Pencil, X, Save, Image as ImageIcon, Trash2, RotateCcw, Ban, FileText, AtSign, UserRound } from 'lucide-react';
+import { motion } from "framer-motion";
+import { screenVariants } from '../utils/screenMotion';
+import { useScrollFade } from '../hooks/useScrollFade';
+import { cx } from '../utils/cx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { User } from '../types';
@@ -58,6 +61,7 @@ export function ContactInfo({
     autoOpenMembers = true,
     startInEditMode = false,
 }: ContactInfoProps) {
+    const { scrolled, handleScroll } = useScrollFade();
     const [copied, setCopied] = useState(false);
     const [canEditGroup, setCanEditGroup] = useState(false);
     const [editingGroup, setEditingGroup] = useState(false);
@@ -301,249 +305,29 @@ export function ContactInfo({
     const canRemoveAvatar = Boolean(previewAvatar);
     const isAvatarRemoved = avatarTouched && !groupAvatar && Boolean(originalAvatar);
 
-    const toastVariants: Variants = {
-        hidden: { scale: 0.9, opacity: 0, },
-        visible: { scale: 1, opacity: 1, transition: { duration: 0.2 } },
-    };
-
     return (
         <motion.div
             className="contact-info"
-            variants={toastVariants}
+            variants={screenVariants}
             initial="hidden"
             animate="visible"
             exit="exit"
         >
-            <div className="contact-info__header">
-                <button className="contact-info__back" onClick={onBack} aria-label="Back" type="button">
-                    <ArrowLeft size={20} />
-                </button>
-                <div className="contact-info__title">{isGroup ? 'اطلاعات گروه' : 'مخاطب'}</div>
-                <div className="contact-info__spacer" />
-
-                {isGroup && canEditGroup && (
-                    <button
-                        type="button"
-                        className="icon-btn"
-                        aria-label="Edit group"
-                        onClick={() => setEditingGroup((v) => !v)}
-                        title={editingGroup ? 'بستن ویرایش' : 'ویرایش'}
-                    >
-                        {editingGroup ? <X size={18} /> : <Pencil size={18} />}
+            <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+            <div className="profile__header">
+                <div className="profile__header-side">
+                    <button className="profile__header-back back-icon-btn" onClick={onBack} aria-label="بازگشت" type="button">
+                        <ChevronLeft size={22} />
                     </button>
-                )}
-            </div>
-
-            <div className="contact-info__content">
-                <div className="contact-info__avatar">
-                    <button type="button" onClick={openAvatarViewer} style={{ background: 'none', border: 'none', padding: 0, cursor: user.avatar ? 'zoom-in' : 'default' }}>
-                        <Avatar name={user.name} size="xl" online={(isBlocked || hideOnlineStatus) ? undefined : user.online} src={user.avatar} />
-                    </button>
-                    <div
-                        className="contact-info__name"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    >
-                        {user.name}
-                        {!isGroup && user.verified ? <VerifiedBadge size={16} /> : null}
-                    </div>
-                    {!isGroup && (
-                        <div className={!(isBlocked || hideOnlineStatus) && user.online ? 'contact-info__status contact-info__status--online' : 'contact-info__status'}>
-                            {(isBlocked || hideOnlineStatus) ? 'آخرین بازدید مدت‌ها پیش' : user.online ? 'آنلاین' : 'آفلاین'}
-                        </div>
-                    )}
                 </div>
-
-                {isGroup && canEditGroup && editingGroup && (
-                    <div className="contact-info__card" style={{ borderRadius: 16, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', border: '1px solid var(--border-primary)' }}>
-                        <div className="contact-info__label">ویرایش گروه</div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                <div style={{ fontSize: 12, opacity: 0.8, color: 'var(--text-primary, #fff)' }}>نام گروه</div>
-                                <input
-                                    value={groupName}
-                                    onChange={(e) => setGroupName(e.target.value)}
-                                    placeholder={String(user.name ?? '') || 'مثلاً تیم توسعه'}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px 12px',
-                                        borderRadius: 12,
-                                        border: '1px solid var(--border-primary)',
-                                        background: 'var(--bg-secondary)',
-                                        color: 'var(--text-primary, #fff)',
-                                        fontSize: 14,
-                                        fontFamily: 'Vazir, sans-serif',
-                                    }}
-                                    disabled={saving}
-                                />
-                            </div>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                <div style={{ fontSize: 12, opacity: 0.8, color: 'var(--text-primary, #fff)' }}>عکس گروه</div>
-
-                                <div
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        gap: 12,
-                                        padding: 10,
-                                        borderRadius: 12,
-                                        border: '1px solid var(--border-primary)',
-                                        background: 'linear-gradient(180deg, var(--bg-secondary), color-mix(in srgb, var(--bg-secondary) 78%, transparent))',
-                                    }}
-                                >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                        <Avatar name={previewName} size="md" src={previewAvatar} />
-                                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                            <div style={{ fontSize: 13, color: 'var(--text-primary, #fff)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                {previewName || 'گروه'}
-                                            </div>
-                                            <div style={{ fontSize: 12, color: 'var(--text-secondary, #bbb)' }}>
-                                                {isAvatarRemoved ? 'عکس برای حذف انتخاب شد (بعد از ذخیره کامل می‌شود)' : 'برای تغییر، عکس جدید انتخاب کن'}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => fileInputRef.current?.click()}
-                                            disabled={saving}
-                                            style={{
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: 8,
-                                                padding: '10px 12px',
-                                                borderRadius: 12,
-                                                border: '1px solid var(--border-primary)',
-                                                background: 'transparent',
-                                                color: 'var(--text-primary, #fff)',
-                                                cursor: saving ? 'not-allowed' : 'pointer',
-                                                fontSize: 13,
-                                                fontWeight: 700,
-                                                fontFamily: 'Vazir, sans-serif',
-                                            }}
-                                            title="انتخاب و آپلود عکس"
-                                        >
-                                            <ImageIcon size={18} />
-                                            انتخاب عکس
-                                        </button>
-
-                                        {isAvatarRemoved ? (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setError(null);
-                                                    setGroupAvatar(originalAvatar);
-                                                    setAvatarTouched(false);
-                                                }}
-                                                disabled={saving}
-                                                style={{
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: 8,
-                                                    padding: '10px 12px',
-                                                    borderRadius: 12,
-                                                    border: '1px solid var(--border-primary)',
-                                                    background: 'transparent',
-                                                    color: 'var(--text-primary, #fff)',
-                                                    cursor: saving ? 'not-allowed' : 'pointer',
-                                                    fontSize: 13,
-                                                    fontWeight: 700,
-                                                    fontFamily: 'Vazir, sans-serif',
-                                                }}
-                                                title="بازگردانی عکس"
-                                            >
-                                                <RotateCcw size={18} />
-                                                بازگردانی
-                                            </button>
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    if (!canRemoveAvatar) return;
-                                                    setError(null);
-                                                    setGroupAvatar('');
-                                                    setAvatarTouched(true);
-                                                }}
-                                                disabled={saving || !canRemoveAvatar}
-                                                style={{
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: 8,
-                                                    padding: '10px 12px',
-                                                    borderRadius: 12,
-                                                    border: '1px solid var(--border-primary)',
-                                                    background: 'transparent',
-                                                    color: !canRemoveAvatar ? 'var(--text-secondary, #999)' : 'var(--text-primary, #fff)',
-                                                    cursor: saving || !canRemoveAvatar ? 'not-allowed' : 'pointer',
-                                                    fontSize: 13,
-                                                    fontWeight: 700,
-                                                    fontFamily: 'Vazir, sans-serif',
-                                                    opacity: canRemoveAvatar ? 1 : 0.7,
-                                                }}
-                                                title={canRemoveAvatar ? 'حذف عکس گروه' : 'عکسی برای حذف وجود ندارد'}
-                                            >
-                                                <Trash2 size={18} />
-                                                حذف
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept="image/*"
-                                    style={{ display: 'none' }}
-                                    onChange={async (e) => {
-                                        const f = e.target.files?.[0];
-                                        if (!f) return;
-                                        await uploadGroupAvatar(f);
-                                        
-                                        e.currentTarget.value = '';
-                                    }}
-                                />
-                            </div>
-
-                            {error && (
-                                <div style={{ color: 'var(--danger, #ff4d4f)', fontSize: 12 }}>
-                                    {error}
-                                </div>
-                            )}
-
-                            <div style={{ display: 'flex', gap: 10 }}>
+                <h1 className="profile__header-title">{isGroup ? 'اطلاعات گروه' : 'اطلاعات مخاطب'}</h1>
+                {isGroup && canEditGroup && (
+                    <div className="profile__header-actions">
+                        {editingGroup ? (
+                            <>
                                 <button
                                     type="button"
-                                    onClick={saveGroup}
-                                    disabled={saving}
-                                    style={{
-                                        flex: 1,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 8,
-                                        padding: '10px 12px',
-                                        borderRadius: 12,
-                                        border: '1px solid var(--border-primary)',
-                                        background: 'var(--bg-secondary)',
-                                        color: 'var(--text-primary, #fff)',
-                                        cursor: saving ? 'not-allowed' : 'pointer',
-                                        fontSize: 14,
-                                        fontWeight: 700,
-                                        fontFamily: 'Vazir, sans-serif',
-                                    }}
-                                >
-                                    ذخیره
-                                    <Save size={18} />
-                                </button>
-
-                                <button
-                                    type="button"
+                                    className="profile__cancel-btn"
                                     onClick={() => {
                                         setError(null);
                                         setGroupName(String(user.name ?? ''));
@@ -552,111 +336,252 @@ export function ContactInfo({
                                         setEditingGroup(false);
                                     }}
                                     disabled={saving}
-                                    style={{
-                                        flex: 1,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 8,
-                                        padding: '10px 12px',
-                                        borderRadius: 12,
-                                        border: '1px solid var(--border-primary)',
-                                        background: 'transparent',
-                                        color: 'var(--text-primary, #fff)',
-                                        cursor: saving ? 'not-allowed' : 'pointer',
-                                        fontSize: 14,
-                                        fontWeight: 700,
-                                        fontFamily: 'Vazir, sans-serif',
-                                    }}
                                 >
-                                    انصراف
-                                    <X size={18} />
+                                    <X size={15} />
+                                    <span className="profile__btn-label">انصراف</span>
                                 </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {canOpenChat && (
-                    <div className="contact-info__card" style={{ padding: 10 }}>
-                        <div className="contact-info__actions-row">
+                                <button
+                                    type="button"
+                                    className="profile__save-btn"
+                                    onClick={saveGroup}
+                                    disabled={saving}
+                                >
+                                    <Save size={15} />
+                                    <span className="profile__btn-label">{saving ? 'در حال ذخیره' : 'ذخیره'}</span>
+                                </button>
+                            </>
+                        ) : (
                             <button
                                 type="button"
-                                onClick={() => onToggleBlock?.(user)}
-                                className={isBlocked ? 'contact-info__action-btn contact-info__action-btn--danger contact-info__action-btn--danger-soft' : 'contact-info__action-btn contact-info__action-btn--danger'}
-                                aria-label={isBlocked ? 'Unblock user' : 'Block user'}
+                                className="profile__edit-btn"
+                                onClick={() => setEditingGroup(true)}
                             >
-                                {isBlocked ? 'آنبلاک' : 'بلاک'}
-                                <Ban size={16} />
+                                <Pencil size={15} />
+                                ویرایش
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => onOpenChat?.(user)}
-                                className="contact-info__action-btn"
-                                aria-label="Open chat"
-                            >
-                                پیام
-                                <MessageCircle size={18} />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {(!isGroup || displayBio) && (
-                    <div className="contact-info__card">
-                        <div className="contact-info__label">بیوگرافی</div>
-                        <div className={displayBio ? 'contact-info__bio' : 'contact-info__bio contact-info__bio--empty'}>
-                            {displayBio || 'بدون بیوگرافی'}
-                        </div>
-                    </div>
-                )}
-
-                {}
-                {user.username && (
-                    <div className="contact-info__card">
-                        <div className="contact-info__label">
-                            {isGroup ? 'لینک دعوت' : 'نام کاربری'}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                            <div
-                                className="contact-info__mono"
-                                style={isGroup ? { fontSize: 13, wordBreak: 'break-all', display: 'flex', alignItems: 'center', gap: 6 } : undefined}
-                            >
-                                {isGroup ? (
-                                    <>
-                                        <Link2 size={14} style={{ opacity: 0.6, flexShrink: 0 }} />
-                                        {user.username}
-                                    </>
-                                ) : (
-                                    `@${user.username}`
-                                )}
-                            </div>
-                            <button
-                                type="button"
-                                className="icon-btn"
-                                aria-label="Copy"
-                                onClick={handleCopy}
-                                disabled={!user.username}
-                                style={{ flexShrink: 0 }}
-                            >
-                                {copied ? <Check size={18} /> : <Copy size={18} />}
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {!isGroup && (
-                    <div className="contact-info__card">
-                        <div className="contact-info__label">تاریخ عضویت</div>
-                        <div className="contact-info__registration-date" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <Calendar size={16} style={{ opacity: 0.7 }} />
-                            {registrationLoading ? (
-                                <span className="skeleton" style={{ display: 'inline-block', width: 110, height: 16, borderRadius: 8 }} />
-                            ) : (resolvedRegistrationDate ? toPersianDigits(resolvedRegistrationDate) : 'نامشخص')}
-                        </div>
+                        )}
                     </div>
                 )}
             </div>
+
+            <div className="contact-info__content">
+                <div className="profile__hero">
+                    <span className="profile__hero-orb profile__hero-orb--one" aria-hidden="true" />
+                    <span className="profile__hero-orb profile__hero-orb--two" aria-hidden="true" />
+
+                    <button
+                        type="button"
+                        className="profile__avatar-wrap"
+                        onClick={openAvatarViewer}
+                        aria-label="مشاهده تصویر"
+                        style={{ cursor: user.avatar ? 'zoom-in' : 'default' }}
+                    >
+                        <Avatar
+                            name={user.name}
+                            size="xl"
+                            online={(isBlocked || hideOnlineStatus) ? undefined : user.online}
+                            src={user.avatar}
+                        />
+                    </button>
+
+                    <h2 className="profile__name">
+                        {user.name}
+                        {!isGroup && user.verified ? <VerifiedBadge size={17} /> : null}
+                    </h2>
+
+                    {isGroup ? (
+                        <p className="profile__username-display">
+                            {editingGroup ? 'در حال ویرایش اطلاعات گروه' : 'گروه'}
+                        </p>
+                    ) : (
+                        <span className={(!(isBlocked || hideOnlineStatus) && user.online) ? 'contact-info__status contact-info__status--online' : 'contact-info__status'}>
+                            {(isBlocked || hideOnlineStatus) ? 'آخرین بازدید مدت‌ها پیش' : user.online ? 'آنلاین' : 'آفلاین'}
+                        </span>
+                    )}
+
+                    {isGroup && canEditGroup && editingGroup && (
+                        <div className="profile__avatar-actions">
+                            <button
+                                type="button"
+                                className="profile__avatar-btn profile__avatar-btn--upload"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={saving}
+                            >
+                                <ImageIcon size={14} />
+                                انتخاب عکس
+                            </button>
+                            {isAvatarRemoved ? (
+                                <button
+                                    type="button"
+                                    className="profile__avatar-btn"
+                                    disabled={saving}
+                                    onClick={() => {
+                                        setError(null);
+                                        setGroupAvatar(originalAvatar);
+                                        setAvatarTouched(false);
+                                    }}
+                                >
+                                    <RotateCcw size={14} />
+                                    بازگردانی
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="profile__avatar-btn profile__avatar-btn--danger"
+                                    disabled={saving || !canRemoveAvatar}
+                                    onClick={() => {
+                                        if (!canRemoveAvatar) return;
+                                        setError(null);
+                                        setGroupAvatar('');
+                                        setAvatarTouched(true);
+                                    }}
+                                >
+                                    <Trash2 size={14} />
+                                    حذف تصویر
+                                </button>
+                            )}
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    await uploadGroupAvatar(f);
+                                    e.currentTarget.value = '';
+                                }}
+                            />
+                        </div>
+                    )}
+                </div>
+
+                <div className="profile__fields" onScroll={handleScroll}>
+                    {isGroup && canEditGroup && editingGroup && (
+                        <div className="profile__card">
+                            <div className="profile__section-title">
+                                <span className="profile__section-icon"><Pencil size={15} /></span>
+                                ویرایش گروه
+                            </div>
+
+                            <div className="profile__field-group">
+                                <label className="profile__field-label">نام گروه</label>
+                                <input
+                                    value={groupName}
+                                    onChange={(e) => setGroupName(e.target.value)}
+                                    placeholder={String(user.name ?? '') || 'مثلاً تیم توسعه'}
+                                    className="profile__field-input"
+                                    disabled={saving}
+                                />
+                            </div>
+
+                            <div className="profile__field-group">
+                                <label className="profile__field-label">عکس گروه</label>
+                                <div className="contact-info__avatar-editor">
+                                    <Avatar name={previewName} size="md" src={previewAvatar} />
+                                    <div className="contact-info__avatar-editor-text">
+                                        <span className="contact-info__avatar-editor-name">{previewName || 'گروه'}</span>
+                                        <span className="contact-info__avatar-editor-hint">
+                                            {isAvatarRemoved
+                                                ? 'عکس برای حذف انتخاب شد (بعد از ذخیره کامل می‌شود)'
+                                                : 'برای تغییر، از دکمه بالا عکس جدید انتخاب کن'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {error && <p className="contact-info__error">{error}</p>}
+                        </div>
+                    )}
+
+                    {canOpenChat && (
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => onOpenChat?.(user)}
+                                className="profile__edit-action"
+                                aria-label="ارسال پیام"
+                            >
+                                <MessageCircle size={17} />
+                                ارسال پیام
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onToggleBlock?.(user)}
+                                className="contact-info__block-btn"
+                                aria-label={isBlocked ? 'آنبلاک کردن' : 'بلاک کردن'}
+                            >
+                                <Ban size={17} />
+                                {isBlocked ? 'آنبلاک کردن' : 'بلاک کردن'}
+                            </button>
+                        </>
+                    )}
+
+                    {(!isGroup || displayBio) && (
+                        <div className="profile__card">
+                            <div className="profile__section-title">
+                                <span className="profile__section-icon"><FileText size={15} /></span>
+                                بیوگرافی
+                            </div>
+                            <p className={displayBio ? 'profile__bio-text' : 'profile__bio-text profile__bio-text--empty'}>
+                                {displayBio || 'بدون بیوگرافی'}
+                            </p>
+                        </div>
+                    )}
+
+                    {user.username && (
+                        <div className="profile__card">
+                            <div className="profile__section-title">
+                                <span className="profile__section-icon">
+                                    {isGroup ? <Link2 size={15} /> : <AtSign size={15} />}
+                                </span>
+                                {isGroup ? 'لینک دعوت' : 'نام کاربری'}
+                            </div>
+                            <div className="profile__info-row">
+                                <span className="profile__info-icon">
+                                    {isGroup ? <Link2 size={16} /> : <AtSign size={16} />}
+                                </span>
+                                <div className="profile__info-body">
+                                    <span className="profile__info-label">{isGroup ? 'لینک دعوت گروه' : 'نام کاربری'}</span>
+                                    <span className="profile__info-value profile__info-value--mono contact-info__invite-value">
+                                        {isGroup ? user.username : `@${user.username}`}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    className={copied ? 'profile__copy-btn profile__copy-btn--copied' : 'profile__copy-btn'}
+                                    aria-label="کپی"
+                                    onClick={handleCopy}
+                                    disabled={!user.username}
+                                >
+                                    {copied ? <Check size={16} /> : <Copy size={16} />}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {!isGroup && (
+                        <div className="profile__card">
+                            <div className="profile__section-title">
+                                <span className="profile__section-icon"><Calendar size={15} /></span>
+                                تاریخ عضویت
+                            </div>
+                            <div className="profile__info-row">
+                                <span className="profile__info-icon"><UserRound size={16} /></span>
+                                <div className="profile__info-body">
+                                    <span className="profile__info-label">عضو شده در</span>
+                                    <span className="profile__info-value">
+                                        {registrationLoading ? (
+                                            <span className="skeleton" style={{ display: 'inline-block', width: 110, height: 16, borderRadius: 8 }} />
+                                        ) : (resolvedRegistrationDate ? toPersianDigits(resolvedRegistrationDate) : 'نامشخص')}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
             {openedProfileImage && (
                 <ImageMediaViewer
                     imageUrl={openedProfileImage.url}

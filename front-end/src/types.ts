@@ -103,4 +103,4 @@ export interface AIChatSummary {
 
 export type AIModelKey = 'nova-flash' | 'nova-pro';
 
-export type View = 'chatList' | 'chatRoom' | 'profile' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage';
+export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage';

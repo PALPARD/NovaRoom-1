@@ -168,7 +168,7 @@ MAX_AI_MESSAGE_LENGTH = 3000
 MAX_AI_MESSAGES_PER_CHAT = 30
 OFFICIAL_CHANNEL_CHAT_ID = "official-channel"
 OFFICIAL_CHANNEL_NAME = "کانال نواروم"
-OFFICIAL_CHANNEL_AVATAR = "/avatars/ch.png"
+OFFICIAL_CHANNEL_AVATAR = "/logo/ch.png"
 
 
 def is_official_channel_chat(chat_id: str) -> bool:

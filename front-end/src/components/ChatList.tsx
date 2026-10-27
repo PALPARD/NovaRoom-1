@@ -1,10 +1,11 @@
-import { Search, MessageCirclePlus, Menu, User as UserIcon, LogOut, Bookmark, Settings as SettingsIcon, AlignJustify, Trash2, RefreshCw, Pin, PinOff, MessageSquarePlus } from 'lucide-react';
+import { Search, Plus, LogOut, Bookmark, Trash2, RefreshCw, Pin, PinOff, MessageSquarePlus, X } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Chat, User } from '../types';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { cx } from '../utils/cx';
+import { isElementScrolled } from '../utils/scrollFade';
 import { EmptyState } from './EmptyState';
 import { ChatListSkeleton } from './ChatListSkeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -17,16 +18,13 @@ interface ChatListProps {
     wsConnected: boolean;
     wsReconnectExhausted: boolean;
     onSelectChat: (chatId: string) => void;
-    onOpenProfile: () => void;
     onNewChatClick: () => void;
     onLogout: () => void;
     onOpenAIChat: () => void;
     onOpenSavedMessages: () => void;
-    onOpenSettings: () => void;
     onReconnectNow: () => void;
     onDragHoverChat?: (chatId: string) => void;
     loading?: boolean;
-    hasUnseenLoginLogs?: boolean;
 }
 
 type IconProps = {
@@ -63,20 +61,6 @@ function FilledMegaphoneIcon({ size = 14, className, style, title }: IconProps) 
                 <path d="M3 10.5c0-.83.67-1.5 1.5-1.5H7l7.8-4.68A1 1 0 0 1 16.3 5v14a1 1 0 0 1-1.5.86L7 15H4.5A1.5 1.5 0 0 1 3 13.5v-3Z" fill="currentColor" />
                 <path d="M9 15.5 10.8 20a1 1 0 0 1-1.86.74L7.1 16" fill="currentColor" opacity=".9" />
                 <path d="M18.8 8.2a1 1 0 0 1 1.4 0 5 5 0 0 1 0 7.07 1 1 0 1 1-1.4-1.42 3 3 0 0 0 0-4.23 1 1 0 0 1 0-1.42Z" fill="currentColor" />
-            </svg>
-        </span>
-    );
-}
-
-function FilledBotIcon({ size = 14, className, style, title }: IconProps) {
-    return (
-        <span className={className} style={{ display: 'inline-flex', ...style }} title={title}>
-            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-                <rect x="4" y="7" width="16" height="12" rx="5" fill="currentColor" />
-                <rect x="10.8" y="3" width="2.4" height="4" rx="1.2" fill="currentColor" />
-                <circle cx="9.2" cy="12.6" r="1.45" fill="none" stroke="var(--bg-primary)" strokeWidth="1.35" />
-                <circle cx="14.8" cy="12.6" r="1.45" fill="none" stroke="var(--bg-primary)" strokeWidth="1.35" />
-                <rect x="8.5" y="15.3" width="7" height="1.6" rx=".8" fill="var(--bg-primary)" />
             </svg>
         </span>
     );
@@ -387,20 +371,17 @@ export const ChatList = memo(function ChatList({
     wsConnected,
     wsReconnectExhausted,
     onSelectChat,
-    onOpenProfile,
     onNewChatClick,
     onLogout,
-    onOpenAIChat,
+    onOpenAIChat: _onOpenAIChat,
     onOpenSavedMessages,
-    onOpenSettings,
     onReconnectNow,
     onDragHoverChat,
     loading = false,
-    hasUnseenLoginLogs = false,
 }: ChatListProps) {
     const [searchQuery, setSearchQuery] = useState('');
-    const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement | null>(null);
+    const [searchOpen, setSearchOpen] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement | null>(null);
     useDarkMode();
 
     const isMobile = useIsMobile(768);
@@ -451,10 +432,17 @@ export const ChatList = memo(function ChatList({
     const chatItemsRef = useRef<HTMLDivElement | null>(null);
     const chatActionMenuRef = useRef<HTMLDivElement | null>(null);
     const chatActionBtnRef = useRef<HTMLElement | null>(null);
+    const menuOpenedAtRef = useRef(0);
+    const menuClosedAtRef = useRef(0);
+    const [menuPressSuppressed, setMenuPressSuppressed] = useState(false);
+    const lastTouchAtRef = useRef(0);
+    const longPressTimerRef = useRef<number | null>(null);
+    const isLongPressTriggeredRef = useRef(false);
     const dragHoverTimerRef = useRef<number | null>(null);
     const dragHoverTargetRef = useRef<string | null>(null);
     const [dragHoverChatId, setDragHoverChatId] = useState<string | null>(null);
 
+    const [listScrolled, setListScrolled] = useState(false);
     const [pinBusy, setPinBusy] = useState<Record<string, boolean>>({});
     const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
 
@@ -564,28 +552,24 @@ export const ChatList = memo(function ChatList({
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
-            if (!menuRef.current) return;
-            if (menuRef.current.contains(e.target as Node)) return;
-            setMenuOpen(false);
-        };
-        if (menuOpen) {
-            document.addEventListener('mousedown', onDocClick);
-        }
-        return () => document.removeEventListener('mousedown', onDocClick);
-    }, [menuOpen]);
-
-    useEffect(() => {
-        const onDocClick = (e: MouseEvent) => {
+            if (Date.now() - menuOpenedAtRef.current < 250) return;
             const target = e.target as Node;
             if (chatActionMenuRef.current?.contains(target)) return;
             if (chatActionBtnRef.current?.contains(target)) return;
+            if ((target as Element)?.closest?.('.chat-list__menu-backdrop')) return;
             setChatActionMenu(null);
         };
 
+        let timerId: number | null = null;
         if (chatActionMenu) {
-            document.addEventListener('mousedown', onDocClick);
+            timerId = window.setTimeout(() => {
+                document.addEventListener('mousedown', onDocClick);
+            }, 50);
         }
-        return () => document.removeEventListener('mousedown', onDocClick);
+        return () => {
+            if (timerId) window.clearTimeout(timerId);
+            document.removeEventListener('mousedown', onDocClick);
+        };
     }, [chatActionMenu]);
 
     useEffect(() => {
@@ -709,10 +693,6 @@ export const ChatList = memo(function ChatList({
         setConfirmAction({ kind: 'leave_group', chatId });
     };
 
-    const requestLogout = () => {
-        setConfirmAction({ kind: 'logout', chatId: '__logout__' });
-    };
-
     const runConfirmAction = async () => {
         if (!confirmAction) return;
         const { kind, chatId } = confirmAction;
@@ -740,7 +720,9 @@ export const ChatList = memo(function ChatList({
         }
     };
 
-    const openActionMenu = (chatId: string, btnEl: HTMLElement, menuItemCount: number) => {
+    const openActionMenu = (chatId: string, btnEl: HTMLElement, menuItemCount: number, allowToggle = true) => {
+        chatActionBtnRef.current = btnEl;
+        menuOpenedAtRef.current = Date.now();
         const r = btnEl.getBoundingClientRect();
         const menuWidth = 190;
         const menuHeight = (menuItemCount * 40) + 14;
@@ -748,8 +730,8 @@ export const ChatList = memo(function ChatList({
         const viewportHeight = window.innerHeight;
         const viewportWidth = window.innerWidth;
 
-        const preferredTop = r.bottom + 6;
-        const preferredBottomTop = r.top - menuHeight - 6;
+        const preferredTop = r.bottom + 4;
+        const preferredBottomTop = r.top - menuHeight - 4;
         const top = preferredTop + menuHeight <= viewportHeight - padding
             ? preferredTop
             : Math.max(padding, preferredBottomTop);
@@ -757,13 +739,61 @@ export const ChatList = memo(function ChatList({
         const preferredLeft = r.right - menuWidth;
         const left = Math.max(padding, Math.min(preferredLeft, viewportWidth - menuWidth - padding));
 
-        setChatActionMenu((prev) => (prev?.chatId === chatId ? null : { chatId, top, left }));
+        setChatActionMenu((prev) => {
+            if (prev?.chatId === chatId) {
+                return allowToggle && !isLongPressTriggeredRef.current ? null : prev;
+            }
+            return { chatId, top, left };
+        });
     };
+
+    const startLongPress = (chatId: string, el: HTMLElement, menuItemCount: number) => {
+        if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+        isLongPressTriggeredRef.current = false;
+        longPressTimerRef.current = window.setTimeout(() => {
+            isLongPressTriggeredRef.current = true;
+            window.setTimeout(() => {
+                isLongPressTriggeredRef.current = false;
+            }, 800);
+            try {
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    navigator.vibrate(12);
+                }
+            } catch {
+            }
+            openActionMenu(chatId, el, menuItemCount, false);
+        }, 500);
+    };
+
+    const cancelLongPress = () => {
+        if (longPressTimerRef.current) {
+            window.clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+
+    useEffect(() => {
+        if (!menuPressSuppressed) return;
+        const release = () => setMenuPressSuppressed(false);
+        window.addEventListener('pointerup', release);
+        window.addEventListener('pointercancel', release);
+        window.addEventListener('touchend', release);
+        window.addEventListener('mouseup', release);
+        return () => {
+            window.removeEventListener('pointerup', release);
+            window.removeEventListener('pointercancel', release);
+            window.removeEventListener('touchend', release);
+            window.removeEventListener('mouseup', release);
+        };
+    }, [menuPressSuppressed]);
 
     useEffect(() => {
         if (!chatActionMenu) return;
 
-        const closeMenu = () => setChatActionMenu(null);
+        const closeMenu = () => {
+            if (Date.now() - menuOpenedAtRef.current < 350) return;
+            setChatActionMenu(null);
+        };
         const listEl = chatItemsRef.current;
 
         window.addEventListener('resize', closeMenu);
@@ -822,9 +852,6 @@ export const ChatList = memo(function ChatList({
 
     const hasActiveChat = Boolean(activeChatId);
 
-    
-    const showAIChat = !searchQuery || 'NovaRoom AI'.includes(searchQuery.toLowerCase()) || 'دستیار'.includes(searchQuery);
-
     const confirmBusy = confirmAction ? Boolean(actionBusy[confirmAction.chatId]) : false;
     const actionMenuChat = chatActionMenu
         ? localChats.find((chat) => chat.id === chatActionMenu.chatId) || null
@@ -834,134 +861,98 @@ export const ChatList = memo(function ChatList({
     const actionMenuGroup = actionMenuChat ? isGroupChat(actionMenuChat) : false;
 
     return (
-        <div className="chat-list" style={{ position: 'relative' }}>
-            {}
+        <div className={cx('chat-list', chatActionMenu && 'chat-list--menu-open', menuPressSuppressed && 'chat-list--press-suppressed')} style={{ position: 'relative' }}>
+            <div className={cx('header-fade', 'header-fade--list', listScrolled && 'header-fade--visible')} aria-hidden="true" />
             <div className="chat-list__header">
-                <div className="chat-list__header-left">
-                    <button onClick={onOpenProfile}>
-                        <Avatar name={currentUser.name} size="sm" src={currentUser.avatar} />
-                    </button>
-                    <div className="chat-list__title-wrap">
-                        <h1 className="chat-list__title">
-                            {wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...')}
-                        </h1>
-                        {!wsConnected && wsReconnectExhausted && (
+                <div className="chat-list__header-row">
+                    <div className={cx('chat-list__header-left', searchOpen && 'chat-list__header-left--hidden')}>
+                        <div className="chat-list__title-wrap">
+                            <span className="chat-list__brand-logo" aria-hidden="true" />
+                            <h1 className="chat-list__title">
+                                {wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...')}
+                            </h1>
+                            {!wsConnected && wsReconnectExhausted && (
+                                <button
+                                    type="button"
+                                    className="chat-list__reconnect-btn"
+                                    onClick={() => {
+                                        onReconnectNow();
+                                    }}
+                                >
+                                    <RefreshCw size={16} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className={cx('chat-list__inline-search', searchOpen && 'chat-list__inline-search--open')}>
+                        <span className="chat-list__search-icon">
+                            <Search size={16} />
+                        </span>
+                        <input
+                            ref={searchInputRef}
+                            type="text"
+                            placeholder="جستجوی گفتگو..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onBlur={() => {
+                                setSearchOpen(false);
+                                setSearchQuery('');
+                            }}
+                            className="chat-list__search-input"
+                        />
+                        <button
+                            type="button"
+                            className="chat-list__search-clear"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSearchQuery('');
+                                setSearchOpen(false);
+                                searchInputRef.current?.blur();
+                            }}
+                            aria-label="Close search"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+
+                    <div className="chat-list__header-actions">
+                        {!searchOpen && (
                             <button
-                                type="button"
-                                className="chat-list__reconnect-btn"
+                                className="icon-btn"
                                 onClick={() => {
-                                    onReconnectNow();
+                                    setSearchOpen(true);
+                                    window.setTimeout(() => {
+                                        searchInputRef.current?.focus();
+                                    }, 20);
                                 }}
+                                aria-label="Search"
+                                type="button"
                             >
-                                <RefreshCw size={16} />
+                                <Search size={20} />
                             </button>
                         )}
-                    </div>
-                </div>
-                <div className="chat-list__header-actions">
-                    <button className="icon-btn" onClick={onNewChatClick}>
-                        <MessageCirclePlus size={20} />
-                    </button>
 
-                    <div className="chat-list__menu" ref={menuRef}>
                         <button
                             className="icon-btn"
-                            onClick={() => setMenuOpen(v => !v)}
-                            aria-label="Menu"
+                            onClick={onOpenSavedMessages}
+                            aria-label="پیام‌های ذخیره شده"
                             type="button"
-                            style={{ position: 'relative' }}
                         >
-                            <Menu size={20} />
-                            {hasUnseenLoginLogs && <span style={{ position: 'absolute', top: 5, right: 5, width: 8, height: 8, borderRadius: 99, background: 'var(--accent-primary)' }} />}
+                            <Bookmark size={20} />
                         </button>
-
-                        {menuOpen && (
-                            <div className="popover popover--mini popover--right">
-                                <button className="popover__item" onClick={() => { setMenuOpen(false); onOpenProfile(); }} type="button">
-                                    <UserIcon size={16} />
-                                    پروفایل
-                                </button>
-                                <button className="popover__item" onClick={() => { setMenuOpen(false); onOpenSavedMessages(); }} type="button">
-                                    <Bookmark size={16} />
-                                    پیام‌های ذخیره شده
-                                </button>
-                                <button className="popover__item" onClick={() => { setMenuOpen(false); onOpenSettings(); }} type="button" style={{ position: 'relative' }}>
-                                    <SettingsIcon size={16} />
-                                    تنظیمات
-                                    {hasUnseenLoginLogs && <span style={{ marginInlineStart: 'auto', width: 8, height: 8, borderRadius: 99, background: 'var(--accent-primary)' }} />}
-                                </button>
-                                <button className="popover__item popover__item--danger" onClick={() => { setMenuOpen(false); requestLogout(); }} type="button">
-                                    <LogOut size={16} />
-                                    خروج
-                                </button>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>
 
-            {}
-            <div className="chat-list__search">
-                <div className="chat-list__search-wrapper">
-                    <span className="chat-list__search-icon">
-                        <Search size={16} />
-                    </span>
-                    <input
-                        type="text"
-                        placeholder="جستجوی گفتگو..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="chat-list__search-input"
-                    />
-                </div>
-            </div>
-
-            {}
             <div
                 className="chat-list__items"
                 ref={chatItemsRef}
+                onScroll={(event) => setListScrolled(isElementScrolled(event.currentTarget))}
                 style={{ position: 'relative' }}
                 onDrop={clearDragHoverState}
                 onDragEnd={clearDragHoverState}
             >
-                {}
-                {showAIChat && (
-                    <button
-                        onClick={onOpenAIChat}
-                        className="chat-list__item chat-list__item--ai"
-                    >
-                        <img
-                            src="/avatars/ai.png"
-                            alt="NovaRoom AI"
-                            style={{
-                                width: '48px',
-                                height: '48px',
-                                borderRadius: '50%',
-                                objectFit: 'cover',
-                                flexShrink: 0,
-                            }}
-                        />
-                        <div className="chat-list__item-content">
-                            <div className="chat-list__item-row">
-                                <span
-                                    className="chat-list__item-name"
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                                >
-                                    <FilledBotIcon size={14} style={{ opacity: 0.95 }} />
-                                    Nova AI
-                                    <VerifiedBadge size={14} />
-                                </span>
-                            </div>
-                            <div className="chat-list__item-preview">
-                                <p className="chat-list__item-text">
-                                    دستیار هوشمند شما
-                                </p>
-                            </div>
-                        </div>
-                    </button>
-                )}
-
-                {}
                 {loading ? (
                     <ChatListSkeleton />
                 ) : localChats.length === 0 ? (
@@ -983,7 +974,44 @@ export const ChatList = memo(function ChatList({
                             return (
                                 <button
                                     key={chat.id}
-                                    onClick={() => onSelectChat(chat.id)}
+                                    onClick={() => {
+                                        if (isLongPressTriggeredRef.current) {
+                                            isLongPressTriggeredRef.current = false;
+                                            return;
+                                        }
+                                        if (chatActionMenu) {
+                                            menuClosedAtRef.current = Date.now();
+                                            setChatActionMenu(null);
+                                            return;
+                                        }
+                                        if (Date.now() - menuClosedAtRef.current < 400) return;
+                                        onSelectChat(chat.id);
+                                    }}
+                                    onMouseDown={(e) => {
+                                        if (chatActionMenu) {
+                                            setMenuPressSuppressed(true);
+                                            return;
+                                        }
+                                        if (Date.now() - lastTouchAtRef.current < 800) return;
+                                        startLongPress(chat.id, e.currentTarget, 1);
+                                    }}
+                                    onMouseUp={cancelLongPress}
+                                    onMouseLeave={cancelLongPress}
+                                    onTouchStart={(e) => {
+                                        if (chatActionMenu) {
+                                            setMenuPressSuppressed(true);
+                                            return;
+                                        }
+                                        lastTouchAtRef.current = Date.now();
+                                        startLongPress(chat.id, e.currentTarget, 1);
+                                    }}
+                                    onTouchEnd={cancelLongPress}
+                                    onTouchMove={cancelLongPress}
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        cancelLongPress();
+                                        openActionMenu(chat.id, e.currentTarget, 1, !isLongPressTriggeredRef.current);
+                                    }}
                                     onDragEnter={(e) => {
                                         if (!isFileDragEvent(e)) return;
                                         queueDragHoverOpenChat(chat.id);
@@ -993,7 +1021,7 @@ export const ChatList = memo(function ChatList({
                                         e.preventDefault();
                                         queueDragHoverOpenChat(chat.id);
                                     }}
-                                    className={cx('chat-list__item', isActive && 'chat-list__item--active', dragHoverChatId === chat.id && 'chat-list__item--drag-hover')}
+                                    className={cx('chat-list__item', isActive && 'chat-list__item--active', chatActionMenu?.chatId === chat.id && 'chat-list__item--menu-open', dragHoverChatId === chat.id && 'chat-list__item--drag-hover')}
                                 >
                                     <Avatar name="" size="md" savedMessages={true} />
                                     <div className="chat-list__item-content">
@@ -1018,19 +1046,6 @@ export const ChatList = memo(function ChatList({
                                                         {toPersianDigits(formatTime(chat.lastMessage.timestamp))}
                                                     </span>
                                                 )}
-                                                <button
-                                                    className="icon-btn icon-btn--xs"
-                                                    type="button"
-                                                    aria-label="Saved messages actions"
-                                                    onClick={(e) => {
-                                                        e.preventDefault();
-                                                        e.stopPropagation();
-                                                        chatActionBtnRef.current = e.currentTarget;
-                                                        openActionMenu(chat.id, e.currentTarget, 1);
-                                                    }}
-                                                >
-                                                    <AlignJustify size={16} />
-                                                </button>
                                             </div>
                                         </div>
                                         <div className="chat-list__item-preview">
@@ -1051,11 +1066,50 @@ export const ChatList = memo(function ChatList({
                         const blockedRelation = Boolean((chat.otherUser as any)?.blockedByMe || (chat.otherUser as any)?.blockedByOther);
                         const unreadCount = Math.max(0, Number(chat.unreadCount || 0));
                         const groupStats = group ? getGroupStats(chat) : null;
+                        const menuItemCount = group ? (isVerifiedUser ? 3 : 2) : 2;
 
                         return (
                             <button
                                 key={chat.id}
-                                onClick={() => onSelectChat(chat.id)}
+                                onClick={() => {
+                                    if (isLongPressTriggeredRef.current) {
+                                        isLongPressTriggeredRef.current = false;
+                                        return;
+                                    }
+                                    if (chatActionMenu) {
+                                        menuClosedAtRef.current = Date.now();
+                                        setChatActionMenu(null);
+                                        return;
+                                    }
+                                    if (Date.now() - menuClosedAtRef.current < 400) return;
+                                    onSelectChat(chat.id);
+                                }}
+                                onMouseDown={(e) => {
+                                    if (chatActionMenu) {
+                                        setMenuPressSuppressed(true);
+                                        return;
+                                    }
+                                    if (Date.now() - lastTouchAtRef.current < 800) return;
+                                    startLongPress(chat.id, e.currentTarget, menuItemCount);
+                                }}
+                                onMouseUp={cancelLongPress}
+                                onMouseLeave={cancelLongPress}
+                                onTouchStart={(e) => {
+                                    if (chatActionMenu) {
+                                        setMenuPressSuppressed(true);
+                                        return;
+                                    }
+                                    lastTouchAtRef.current = Date.now();
+                                    startLongPress(chat.id, e.currentTarget, menuItemCount);
+                                }}
+                                touch-action="manipulation"
+                                onTouchEnd={cancelLongPress}
+                                onTouchMove={cancelLongPress}
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    cancelLongPress();
+                                    openActionMenu(chat.id, e.currentTarget, menuItemCount, !isLongPressTriggeredRef.current);
+                                }}
                                 onDragEnter={(e) => {
                                     if (!isFileDragEvent(e)) return;
                                     queueDragHoverOpenChat(chat.id);
@@ -1069,6 +1123,7 @@ export const ChatList = memo(function ChatList({
                                     'chat-list__item',
                                     isActive && 'chat-list__item--active',
                                     pinned && 'chat-list__item--pinned',
+                                    chatActionMenu?.chatId === chat.id && 'chat-list__item--menu-open',
                                     dragHoverChatId === chat.id && 'chat-list__item--drag-hover'
                                 )}
                             >
@@ -1076,7 +1131,7 @@ export const ChatList = memo(function ChatList({
                                     name={contact.name}
                                     size="md"
                                     online={group || blockedRelation ? undefined : contact.online}
-                                    src={isOfficial ? '/avatars/ch.png' : contact.avatar}
+                                    src={isOfficial ? '/logo/ch.png' : contact.avatar}
                                 />
 
                                 <div className="chat-list__item-content">
@@ -1108,23 +1163,6 @@ export const ChatList = memo(function ChatList({
                                                     {toPersianDigits(formatTime(chat.lastMessage.timestamp))}
                                                 </span>
                                             )}
-
-                                            <button
-                                                className="icon-btn icon-btn--xs"
-                                                type="button"
-                                                aria-label="Chat actions"
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    chatActionBtnRef.current = e.currentTarget;
-                                                    const menuItemCount = group
-                                                        ? (isVerifiedUser ? 3 : 2)
-                                                        : 2;
-                                                    openActionMenu(chat.id, e.currentTarget, menuItemCount);
-                                                }}
-                                            >
-                                                <AlignJustify size={16} />
-                                            </button>
                                         </div>
                                     </div>
 
@@ -1153,6 +1191,32 @@ export const ChatList = memo(function ChatList({
                 )}
             </div>
 
+            <button
+                type="button"
+                className="chat-list__fab"
+                onClick={onNewChatClick}
+                aria-label="گفتگوی جدید"
+            >
+                <Plus size={24} />
+            </button>
+
+            {chatActionMenu && actionMenuChat && (
+                <div
+                    className="chat-list__menu-backdrop"
+                    aria-hidden="true"
+                    onPointerDown={(e) => {
+                        e.preventDefault();
+                        menuClosedAtRef.current = Date.now();
+                        setChatActionMenu(null);
+                    }}
+                    onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (Date.now() - menuOpenedAtRef.current < 450) return;
+                        menuClosedAtRef.current = Date.now();
+                        setChatActionMenu(null);
+                    }}
+                />
+            )}
             {chatActionMenu && actionMenuChat && (
                 <div
                     ref={chatActionMenuRef}

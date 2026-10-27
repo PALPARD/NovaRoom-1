@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowDown, ArrowLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Menu, Pin, PinOff, MessageSquareDashed } from 'lucide-react';
+import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Menu, Pin, PinOff, MessageSquareDashed } from 'lucide-react';
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,8 +9,8 @@ import type { Message, Chat, FileMetadata, AIChatSummary, AIModelKey } from '../
 import { ChatMessagesSkeleton } from './ChatMessagesSkeleton';
 import { ForwardModal } from './ForwardModal';
 import { notify } from '../utils/notificationBus';
-import ASCIIText from './ASCIIText';
-import { useDarkMode } from '../hooks/useDarkMode';
+import { cx } from '../utils/cx';
+import { isElementScrolled } from '../utils/scrollFade';
 
 interface AIChatRoomProps {
     messages: Message[];
@@ -32,7 +32,6 @@ interface AIChatRoomProps {
     onSetPendingForwardDraft?: (targetChatId: string, draft: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }) => void;
     aiChats: AIChatSummary[];
     activeAIChatId: string | null;
-    activeAIChatTitle?: string;
     onCreateAIChat: () => void;
     onCreateTemporaryAIChat?: () => void;
     onSelectAIChat: (chatId: string) => void;
@@ -215,7 +214,6 @@ export function AIChatRoom({
     onSetPendingForwardDraft,
     aiChats,
     activeAIChatId,
-    activeAIChatTitle,
     onCreateAIChat,
     onCreateTemporaryAIChat,
     onSelectAIChat,
@@ -225,12 +223,12 @@ export function AIChatRoom({
     temporaryMode = false,
     currentUserVerified = false,
 }: AIChatRoomProps) {
-    const { isDarkMode } = useDarkMode();
     const MAX_AI_MESSAGE_LENGTH = 3000;
     const [text, setText] = useState('');
     const [msgMenu, setMsgMenu] = useState<{ id: string; top: number; left: number } | null>(null);
     const [newMsgCount, setNewMsgCount] = useState(0);
     const [showScrollBtn, setShowScrollBtn] = useState(false);
+    const [messagesScrolled, setMessagesScrolled] = useState(false);
     const [hideScrollBtnUntilBottom, setHideScrollBtnUntilBottom] = useState(false);
     const [forwardModalOpen, setForwardModalOpen] = useState(false);
     const [forwardingMessageId, setForwardingMessageId] = useState<string | null>(null);
@@ -638,6 +636,7 @@ export function AIChatRoom({
     const onMessagesScroll = () => {
         const container = messagesContainerRef.current;
         if (!container) return;
+        setMessagesScrolled(isElementScrolled(container));
         if (msgMenu) setMsgMenu(null);
         if (aiChatActionMenu) setAIChatActionMenu(null);
 
@@ -792,55 +791,55 @@ export function AIChatRoom({
             animate="visible"
             exit="exit"
         >
+            <div className="header-fade header-fade--room header-fade--visible" aria-hidden="true" />
             <div className="chat-room__header">
                 <button
-                    className="chat-room__back-btn"
+                    className={cx('chat-room__back-btn', 'back-icon-btn', messagesScrolled && 'chat-room__back-btn--scrolled')}
                     onClick={onBack}
                     aria-label="Back"
                     type="button"
                     style={{ display: 'flex' }}
                 >
-                    <ArrowLeft size={20} />
+                    <ChevronLeft size={22} />
                 </button>
 
                 <div className="chat-room__header-clickable chat-room__header-clickable--full ai-chat-room__header-main">
-                    <div className="ai-chat-room__header-brand" ref={modelDropdownRef}>
-                        <button
-                            type="button"
-                            className="ai-model-switcher"
-                            onClick={() => setModelDropdownOpen((prev) => !prev)}
-                            aria-label="انتخاب مدل هوش مصنوعی"
-                        >
-                            <span>{selectedModelLabel}</span>
-                            <ChevronDown size={14} className={modelDropdownOpen ? 'ai-model-switcher__chevron ai-model-switcher__chevron--open' : 'ai-model-switcher__chevron'} />
-                        </button>
+                    <div className="ai-chat-room__header-brand-wrap" ref={modelDropdownRef}>
+                        <div className="ai-chat-room__header-brand">
+                            <button
+                                type="button"
+                                className="ai-model-switcher"
+                                onClick={() => setModelDropdownOpen((prev) => !prev)}
+                                aria-label="انتخاب مدل هوش مصنوعی"
+                            >
+                                <span>{selectedModelLabel}</span>
+                                <ChevronDown size={14} className={modelDropdownOpen ? 'ai-model-switcher__chevron ai-model-switcher__chevron--open' : 'ai-model-switcher__chevron'} />
+                            </button>
+                        </div>
                         <AnimatePresence initial={false}>
                             {modelDropdownOpen && (
                                 <motion.div
                                     className="ai-model-switcher__menu"
-                                    initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                                    exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                                    initial={{ opacity: 0, y: -8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -8 }}
                                     transition={{ duration: 0.2, ease: 'easeOut' }}
                                 >
                                     <button type="button" className={`${selectedModel === 'nova-flash' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isFlashDisabled ? ' ai-model-option--disabled' : ''}`} onClick={() => handleSelectModel('nova-flash')}>
-                                        <div className="ai-model-option__title">Nova Flash</div>
-                                        <div className="ai-model-option__desc">سریع و سبک برای گفتگوهای روزانه، سوال‌های کوتاه و پاسخ‌ فوری</div>
+                                        <div className="ai-model-option__title" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>Nova Flash</div>
+                                        <div className="ai-model-option__desc" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>سریع و سبک برای گفتگوهای روزانه، سوال‌های کوتاه و پاسخ‌ فوری</div>
                                     </button>
                                     <button
                                         type="button"
                                         className={`${selectedModel === 'nova-pro' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isProDisabled ? ' ai-model-option--disabled' : ''}`}
                                         onClick={() => handleSelectModel('nova-pro')}
                                     >
-                                        <div className="ai-model-option__title">Nova Pro</div>
-                                        <div className="ai-model-option__desc">دقیق‌تر برای تحلیل عمیق، کارهای حرفه‌ای و درخواست‌های پیچیده‌تر</div>
+                                        <div className="ai-model-option__title" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>Nova Pro</div>
+                                        <div className="ai-model-option__desc" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>دقیق‌تر برای تحلیل عمیق، کارهای حرفه‌ای و درخواست‌های پیچیده‌تر</div>
                                     </button>
                                 </motion.div>
                             )}
                         </AnimatePresence>
-                    </div>
-                    <div className="ai-chat-room__header-title">
-                        {temporaryMode ? 'گفتگوی موقت' : (activeAIChatTitle || 'گفتگوی جدید')}
                     </div>
                 </div>
                 <button
@@ -872,16 +871,7 @@ export function AIChatRoom({
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: 'translateY(-20px)', width: '100%' }}>
-                                    <div style={{ position: 'relative', width: 'min(680px, 100%)', height: window.innerWidth < 768 ? 120 : 130 }}>
-                                        <ASCIIText
-                                            text="NovaAI"
-                                            enableWaves={false}
-                                            asciiFontSize={window.innerWidth < 768 ? 4 : 5}
-                                            planeBaseHeight={window.innerWidth < 768 ? 12 : 14}
-                                            textColor="#ffffff"
-                                            isDarkMode={isDarkMode}
-                                        />
-                                    </div>
+                                    <div className="ai-chat-empty-logo" role="img" aria-label="NovaAI" />
                                     <div style={{ fontSize: window.innerWidth < 768 ? 20 : 22, fontWeight: 700, opacity: 0.95, lineHeight: 1.5 }}>{emptyStatePrompt}</div>
                                 </div>
                             )}
@@ -1032,18 +1022,21 @@ export function AIChatRoom({
                         className="ai-chat-drawer__overlay"
                         onClick={() => setAIChatsDrawerOpen(false)}
                         role="presentation"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.22, ease: 'easeOut' }}
                     >
+                        <motion.div
+                            className="ai-chat-drawer__dim"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.22, ease: 'easeOut' }}
+                        />
                         <motion.aside
                             className="ai-chat-drawer"
                             onClick={(e) => e.stopPropagation()}
-                            initial={{ x: '100%' }}
-                            animate={{ x: 0 }}
-                            exit={{ x: '100%' }}
-                            transition={{ type: 'spring', stiffness: 450, damping: 28, mass: 0.6 }}
+                            initial={{ right: -360 }}
+                            animate={{ right: 10 }}
+                            exit={{ right: -360 }}
+                            transition={{ type: 'tween', duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                         >
                             <button
                                 type="button"
@@ -1320,17 +1313,22 @@ export function AIChatRoom({
                         transition={{ duration: 0.14, ease: 'easeOut' }}
                         style={{
                             position: 'absolute',
-                            right: 16,
+                            right: 18,
                             bottom: 96,
+                            width: newMsgCount > 0 ? 'auto' : 44,
+                            height: newMsgCount > 0 ? 'auto' : 44,
+                            justifyContent: 'center',
                             display: 'flex',
                             alignItems: 'center',
                             gap: 10,
-                            padding: newMsgCount > 0 ? '8px 10px' : '10px',
-                            borderRadius: 999,
-                            border: '1px solid var(--border-secondary)',
-                            background: 'var(--bg-secondary)',
+                            padding: newMsgCount > 0 ? '8px 14px' : 0,
+                            borderRadius: 9999,
+                            border: '1px solid var(--glass-border)',
+                            background: 'var(--glass-surface-elevated)',
+                            backdropFilter: 'var(--glass-blur)',
+                            WebkitBackdropFilter: 'var(--glass-blur)',
                             color: 'var(--text-primary)',
-                            boxShadow: 'var(--shadow-md)',
+                            boxShadow: 'var(--glass-shadow), var(--glass-specular)',
                             cursor: 'pointer',
                             fontSize: 12,
                             lineHeight: '12px',
@@ -1363,11 +1361,14 @@ export function AIChatRoom({
                         aria-label="Reasoning mode"
                         title="حالت استدلال"
                         style={{
-                            height: 44,
-                            padding: '0 10px',
-                            borderRadius: 12,
-                            border: `1px solid ${reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 50%, transparent)' : 'var(--border-secondary)'}`,
-                            background: reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 18%, var(--bg-secondary))' : 'var(--bg-secondary)',
+                            height: 46,
+                            padding: '0 14px',
+                            borderRadius: 9999,
+                            border: `1px solid ${reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 50%, transparent)' : 'var(--glass-border)'}`,
+                            background: reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 22%, var(--glass-surface))' : 'var(--glass-surface)',
+                            backdropFilter: 'var(--glass-blur)',
+                            WebkitBackdropFilter: 'var(--glass-blur)',
+                            boxShadow: 'var(--glass-shadow), var(--glass-specular)',
                             color: reasoningEnabled ? 'var(--accent-hover)' : 'var(--text-secondary)',
                             display: 'inline-flex',
                             alignItems: 'center',
@@ -1431,68 +1432,93 @@ export function AIChatRoom({
                     </button>
                 </div>
             </div>
+            <div className="header-fade header-fade--bottom header-fade--visible" aria-hidden="true" />
 
             <style>{`
                 .ai-chat-room .chat-room__header {
-                    padding: 10px 10px;
-                    padding-top: 12px;
+                    padding: 0;
+                    gap: 8px;
                 }
                 .ai-chat-room .chat-room__back-btn {
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
                     line-height: 0;
-                    margin-bottom: 4px;
                 }
                 .ai-chat-room .chat-room__header-clickable--full {
-                    padding: 2px 5px;
+                    padding: 0;
                 }
                 .ai-chat-room__header-main {
                     justify-content: space-between;
-                    gap: 6px;
+                    gap: 8px;
                     direction: ltr;
                     align-items: center;
                     position: relative;
                     z-index: 60;
+                    background: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    backdrop-filter: none !important;
+                    -webkit-backdrop-filter: none !important;
+                    min-height: 46px;
                 }
                 .ai-chat-room__header-main.chat-room__header-clickable:hover {
                     opacity: 1;
+                    background: transparent !important;
                 }
-                .ai-chat-room__header-title {
-                    min-width: 0;
-                    flex: 1;
-                    direction: rtl;
-                    text-align: right;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--text-secondary);
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                    line-height: 1.2;
-                    margin-bottom: 1px;
+                .ai-chat-empty-logo {
+                    width: 96px;
+                    height: 74px;
+                    margin-bottom: 8px;
+                    background-color: currentColor;
+                    opacity: 0.95;
+                    -webkit-mask: url('/logo/logo.svg') center / contain no-repeat;
+                    mask: url('/logo/logo.svg') center / contain no-repeat;
+                }
+                .ai-chat-room__header-brand-wrap {
+                    position: relative;
+                    display: inline-flex;
+                    flex-shrink: 0;
+                    height: 46px;
                 }
                 .ai-chat-room__header-brand {
                     flex-shrink: 0;
                     font-size: 18px;
                     text-align: left;
-                    margin-right: 8px;
+                    margin-right: 0;
                     line-height: 1.2;
                     position: relative;
+                    height: 46px;
+                    padding: 0 6px;
+                    border-radius: 9999px;
+                    background: var(--glass-surface);
+                    backdrop-filter: var(--glass-blur);
+                    -webkit-backdrop-filter: var(--glass-blur);
+                    border: 1px solid var(--glass-border);
+                    box-shadow: var(--glass-shadow), var(--glass-specular);
+                    display: inline-flex;
+                    align-items: center;
                 }
                 .ai-model-switcher {
                     border: 0;
-                    background: var(--bg-primary);
+                    background: transparent;
                     color: var(--text-primary);
                     font-weight: 700;
-                    font-size: 16px;
+                    font-size: 15px;
                     display: inline-flex;
                     align-items: center;
                     gap: 4px;
                     cursor: pointer;
-                    padding: 0;
-                    border-radius: 0;
+                    padding: 6px 10px;
+                    border-radius: 9999px;
                     font-family: inherit;
+                    transition: background 0.15s ease, transform 0.14s ease;
+                }
+                .ai-model-switcher:hover {
+                    background: var(--hover-bg-light);
+                }
+                .ai-model-switcher:active {
+                    transform: scale(0.97);
                 }
                 .ai-model-switcher__chevron {
                     transition: transform 0.2s ease;
@@ -1504,17 +1530,17 @@ export function AIChatRoom({
                     position: absolute;
                     top: calc(100% + 8px);
                     left: 0;
-                    width: 260px;
-                    border: 1px solid var(--border-secondary);
-                    border-radius: 12px;
-                    background: var(--bg-primary);
-                    box-shadow: var(--shadow-md);
+                    width: 268px;
+                    border: 1px solid var(--glass-border);
+                    border-radius: 18px;
+                    background: var(--glass-surface-elevated);
+                    box-shadow: var(--shadow-lg), var(--glass-specular);
                     padding: 6px;
                     z-index: 61;
                     direction: rtl;
-                    font-family: Vazir, sans-serif;
-                    backdrop-filter: none;
-                    -webkit-backdrop-filter: none;
+                    font-family: 'Nunito', 'Vazir', sans-serif;
+                    backdrop-filter: var(--glass-blur);
+                    -webkit-backdrop-filter: var(--glass-blur);
                     display: flex;
                     flex-direction: column;
                     gap: 4px;
@@ -1524,19 +1550,23 @@ export function AIChatRoom({
                     border: 0;
                     background: transparent;
                     text-align: right;
-                    border-radius: 10px;
-                    padding: 8px 10px;
+                    border-radius: 13px;
+                    padding: 9px 11px;
                     cursor: pointer;
                     display: flex;
                     flex-direction: column;
                     gap: 3px;
                     color: var(--text-primary);
+                    transition: background 0.15s ease, transform 0.14s ease;
                 }
                 .ai-model-option:hover {
-                    background: var(--bg-secondary);
+                    background: var(--hover-bg-light);
+                }
+                .ai-model-option:active {
+                    transform: scale(0.985);
                 }
                 .ai-model-option--active {
-                    background: var(--bg-tertiary);
+                    background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
                 }
                 .ai-model-option--disabled {
                     opacity: 0.45;
@@ -1545,13 +1575,13 @@ export function AIChatRoom({
                 .ai-model-option__title {
                     font-size: 14px;
                     font-weight: 700;
-                    font-family: Vazir, sans-serif;
+                    font-family: 'Nunito', 'Vazir', sans-serif;
                 }
                 .ai-model-option__desc {
                     font-size: 12px;
                     color: var(--text-secondary);
                     line-height: 1.5;
-                    font-family: Vazir, sans-serif;
+                    font-family: 'Nunito', 'Vazir', sans-serif;
                 }
                 .typing-indicator {
                     display: flex;
@@ -1705,13 +1735,13 @@ export function AIChatRoom({
                 .chat-room-confirm-modal__input {
                     width: 100%;
                     margin-top: 6px;
-                    min-height: 42px;
-                    border-radius: 10px;
-                    border: 1px solid var(--border-secondary);
-                    background: var(--bg-secondary);
+                    min-height: 44px;
+                    border-radius: 14px;
+                    border: 1px solid var(--glass-border);
+                    background: var(--glass-surface-soft);
                     color: var(--text-primary);
                     font: inherit;
-                    padding: 0 10px;
+                    padding: 0 12px;
                     direction: rtl;
                     text-align: right;
                     outline: none;

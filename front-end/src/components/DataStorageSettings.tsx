@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
+import { screenVariants } from '../utils/screenMotion';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clearAllMediaCache, getMediaCacheUsageBytes } from '../utils/mediaCache';
 import { autoDownloadCookieKeys, isAutoDownloadEnabled, setAutoDownloadCookie } from '../utils/autoDownloadPrefs';
 import { notify } from '../utils/notificationBus';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 const formatCacheSize = (bytes: number): string => {
     const kb = bytes / 1024;
@@ -19,6 +22,7 @@ interface Props {
 }
 
 export function DataStorageSettings({ onBack }: Props) {
+    const { scrolled, handleScroll } = useScrollFade();
     const [cacheUsageBytes, setCacheUsageBytes] = useState(0);
     const [showClearModal, setShowClearModal] = useState(false);
     const [clearing, setClearing] = useState(false);
@@ -99,29 +103,29 @@ export function DataStorageSettings({ onBack }: Props) {
     };
 
     const isDarkMode = typeof document !== 'undefined' && document.documentElement.classList.contains('dark-mode');
-    const panelBorder = isDarkMode
-        ? '1px solid var(--border-primary)'
-        : '1px solid color-mix(in srgb, var(--text-primary) 14%, var(--border-primary))';
-    const panelBg = isDarkMode
-        ? 'var(--surface-primary)'
-        : 'color-mix(in srgb, var(--surface-primary) 82%, var(--text-primary) 18%)';
+    const panelBorder = '1px solid var(--glass-border)';
+    const panelBg = 'var(--glass-surface-soft)';
 
-    return <motion.div className="profile" style={{ fontFamily: 'Vazir, sans-serif' }} initial={{ opacity: 0, y: 8, scale: 0.995 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
-        <div className="profile__header" style={{ direction: 'ltr' }}>
-            <button onClick={onBack} className="profile__header-back"><ArrowLeft size={22} /></button>
+    return <motion.div className="profile" variants={screenVariants} initial="hidden" animate="visible" exit="exit">
+        <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+        <div className="profile__header">
+            <div className="profile__header-side">
+                <button onClick={onBack} className="profile__header-back back-icon-btn" aria-label="بازگشت به تنظیمات">
+                    <ChevronLeft size={22} />
+                </button>
+            </div>
             <h1 className="profile__header-title">داده‌ها و ذخیره‌ سازی</h1>
-            <div className="profile__header-spacer" />
         </div>
 
-        <div className="profile__content" style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 12, flex: '0 0 auto' }}>
-            <div style={{ border: panelBorder, borderRadius: 14, overflow: 'hidden', background: panelBg }}>
+        <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 68, flex: '0 0 auto' }}>
+            <div style={{ border: panelBorder, borderRadius: 20, overflow: 'hidden', background: panelBg, backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)' }}>
                 <button type="button" className="popover__item" onClick={() => setShowClearModal(true)} style={{ width: '100%', minHeight: 56, justifyContent: 'space-between', direction: 'rtl', padding: '10px 14px', borderRadius: 0 }}>
                     <span style={{ fontWeight: 600 }}>رسانه‌های کش شده</span>
                     <span style={{ color: 'var(--accent-primary)', fontWeight: 700, direction: 'ltr' }}>{humanSize}</span>
                 </button>
             </div>
 
-            <div style={{ border: panelBorder, borderRadius: 14, overflow: 'hidden', background: panelBg }}>
+            <div style={{ border: panelBorder, borderRadius: 20, overflow: 'hidden', background: panelBg, backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)' }}>
                 <div style={{ padding: '12px 14px', fontSize: 15, fontWeight: 700, direction: 'rtl', borderBottom: panelBorder }}>دانلود خودکار</div>
 
                 {[
@@ -132,7 +136,7 @@ export function DataStorageSettings({ onBack }: Props) {
                 ].map((row) => (
                     <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 14, fontWeight: 600, direction: 'rtl', padding: '10px 14px', borderTop: panelBorder }}>
                         <span>{row.label}</span>
-                        <button type="button" onClick={() => onToggleAutoDownload(row.key)} aria-label={`toggle ${row.label}`} style={{ width: 48, height: 28, borderRadius: 999, border: isDarkMode ? (row.enabled ? '1px solid color-mix(in srgb, var(--accent-primary) 70%, var(--border-primary))' : '1px solid color-mix(in srgb, var(--text-primary) 35%, var(--border-primary))') : (row.enabled ? '1px solid color-mix(in srgb, var(--text-primary) 28%, var(--accent-primary))' : '1px solid color-mix(in srgb, var(--text-primary) 24%, var(--border-primary))'), background: row.enabled ? 'var(--accent-primary)' : (isDarkMode ? 'var(--surface-tertiary)' : 'color-mix(in srgb, var(--text-primary) 30%, var(--surface-primary))'), position: 'relative', transition: 'all .2s ease' }}>
+                        <button type="button" onClick={() => onToggleAutoDownload(row.key)} aria-label={`toggle ${row.label}`} style={{ width: 48, height: 28, borderRadius: 999, border: isDarkMode ? (row.enabled ? '1px solid color-mix(in srgb, var(--accent-primary) 70%, var(--border-primary))' : '1px solid color-mix(in srgb, var(--text-primary) 35%, var(--border-primary))') : (row.enabled ? '1px solid color-mix(in srgb, var(--text-primary) 28%, var(--accent-primary))' : '1px solid color-mix(in srgb, var(--text-primary) 24%, var(--border-primary))'), background: row.enabled ? 'var(--accent-primary)' : (isDarkMode ? 'var(--bg-tertiary)' : 'color-mix(in srgb, var(--text-primary) 24%, var(--bg-primary))'), position: 'relative', transition: 'all .2s ease' }}>
                             <span style={{ position: 'absolute', top: 2, right: row.enabled ? 2 : 22, width: 22, height: 22, borderRadius: '50%', background: isDarkMode ? '#fff' : (row.enabled ? '#fff' : '#d3d3d3'), transition: 'all .2s ease' }} />
                         </button>
                     </div>

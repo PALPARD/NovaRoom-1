@@ -146,7 +146,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                                                 name={user.name || user.username}
                                                 size="md"
                                                 online={user.online}
-                                                src={chat.id === 'official-channel' ? '/avatars/ch.png' : user.avatar}
+                                                src={chat.id === 'official-channel' ? '/logo/ch.png' : user.avatar}
                                             />
                                             <div className="user-item-info">
                                                 <div className="user-name" style={{ fontFamily: "'Vazir', 'AppleEmoji', sans-serif", display: 'flex', alignItems: 'center', gap: 4 }}>

@@ -1,5 +1,5 @@
-import { ArrowLeft, Copy, Check, Pencil, X, Save, Calendar, Upload, Trash2, Link2, Users } from 'lucide-react';
-import { motion, type Variants } from "framer-motion";
+import { Copy, Check, Pencil, Save, Calendar, Upload, Trash2, Link2, Users, UserRound, AtSign, Hash, FileText, ChevronLeft, LogOut } from 'lucide-react';
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { User } from '../types';
@@ -9,11 +9,16 @@ import { cx } from '../utils/cx';
 import { apiFetch } from '../config/api';
 import { ImageMediaViewer } from './ImageMediaViewer';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
+import { screenVariants } from '../utils/screenMotion';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 interface ProfileProps {
     user: User;
-    onBack: () => void;
+    mode: 'view' | 'edit';
     onUpdateProfile: (updates: Partial<Pick<User, 'name' | 'username' | 'bio' | 'avatar'>>) => Promise<void> | void;
+    onEdit: () => void;
+    onFinishEdit: () => void;
+    onLogout: () => void;
 }
 
 interface OwnedGroup {
@@ -26,8 +31,11 @@ interface OwnedGroup {
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 const toPersianDigits = (value: string | number): string => String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
 
-export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
-    const [isEditing, setIsEditing] = useState(false);
+export function Profile({ user, mode, onUpdateProfile, onEdit, onFinishEdit, onLogout }: ProfileProps) {
+    const { scrolled, handleScroll } = useScrollFade();
+    const isEditing = mode === 'edit';
+    const [saving, setSaving] = useState(false);
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const [name, setName] = useState(user.name);
     const [username, setUsername] = useState(user.username);
     const [bio, setBio] = useState(user.bio);
@@ -126,18 +134,26 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
         };
     }, [username, isEditing, user.username]);
 
-    const handleSave = () => {
+    const handleSave = async () => {
         const trimmedName = name.trim();
         const trimmedUsername = username.trim();
         if (!trimmedName || !trimmedUsername) return;
         if (usernameStatus !== 'available') return;
 
-        onUpdateProfile({
-            name: trimmedName,
-            username: trimmedUsername,
-            bio: bio.trim(),
-        });
-        setIsEditing(false);
+        setSaving(true);
+        try {
+            await onUpdateProfile({
+                name: trimmedName,
+                username: trimmedUsername,
+                bio: bio.trim(),
+            });
+            onFinishEdit();
+        } catch (error) {
+            console.error('Failed to update profile', error);
+            alert('ذخیره تغییرات پروفایل انجام نشد.');
+        } finally {
+            setSaving(false);
+        }
     };
 
     useEffect(() => {
@@ -219,161 +235,142 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
         setName(user.name);
         setUsername(user.username);
         setBio(user.bio);
-        setIsEditing(false);
         setUsernameStatus('idle');
         setUsernameHint('');
+        onFinishEdit();
     };
+
+    useEffect(() => {
+        if (!isEditing) return;
+        setName(user.name);
+        setUsername(user.username);
+        setBio(user.bio);
+    }, [isEditing, user.name, user.username, user.bio]);
+
+    useEffect(() => {
+        if (!showLogoutConfirm) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setShowLogoutConfirm(false);
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [showLogoutConfirm]);
 
     const canSave =
-        isEditing && !!name.trim() && !!username.trim() && usernameStatus === 'available';
-
-    const toastVariants: Variants = {
-        hidden: { scale: 0.9, opacity: 0, },
-        visible: { scale: 1, opacity: 1, transition: { duration: 0.2 } },
-    };
+        isEditing && !!name.trim() && !!username.trim() && usernameStatus === 'available' && !saving;
 
     return (
         <motion.div
             className="profile"
-            variants={toastVariants}
+            variants={screenVariants}
             initial="hidden"
             animate="visible"
             exit="exit"
         >
-            {}
+            <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
             <div className="profile__header">
-                <button onClick={onBack} className="profile__header-back">
-                    <ArrowLeft size={22} />
-                </button>
-                <h1 className="profile__header-title">پروفایل</h1>
-                <div className="profile__header-spacer" />
-                {!isEditing ? (
-                    <button onClick={() => setIsEditing(true)} className="profile__edit-btn">
-                        <Pencil size={14} />
-                        ویرایش
-                    </button>
-                ) : (
-                    <div className="profile__header-actions">
-                        <button onClick={handleCancel} className="profile__cancel-btn">
-                            <X size={14} />
-                            لغو
+                {isEditing && (
+                    <div className="profile__header-side">
+                        <button onClick={handleCancel} className="profile__header-back back-icon-btn" aria-label="بازگشت به پروفایل">
+                            <ChevronLeft size={22} />
                         </button>
+                    </div>
+                )}
+                <h1 className="profile__header-title">{isEditing ? 'ویرایش پروفایل' : 'پروفایل'}</h1>
+                {isEditing && (
+                    <div className="profile__header-actions">
                         <button onClick={handleSave} className="profile__save-btn" disabled={!canSave}>
-                            <Save size={14} />
-                            ذخیره
+                            <Save size={15} />
+                            <span className="profile__btn-label">{saving ? 'در حال ذخیره' : 'ذخیره'}</span>
                         </button>
                     </div>
                 )}
             </div>
 
-            <div className="profile__content">
-                {}
-                <div className="profile__avatar-section">
-                    <button type="button" onClick={openAvatarViewer} style={{ background: 'none', border: 'none', padding: 0, cursor: user.avatar ? 'zoom-in' : 'default' }}>
+            <div className="profile__content" onScroll={handleScroll}>
+                <div className="profile__hero">
+                    <span className="profile__hero-orb profile__hero-orb--one" aria-hidden="true" />
+                    <span className="profile__hero-orb profile__hero-orb--two" aria-hidden="true" />
+
+                    <button
+                        type="button"
+                        onClick={openAvatarViewer}
+                        className="profile__avatar-wrap"
+                        aria-label="مشاهده تصویر پروفایل"
+                        style={{ cursor: user.avatar ? 'zoom-in' : 'default' }}
+                    >
                         <Avatar name={user.name} size="xl" src={user.avatar || ''} />
                     </button>
-                    <div className="profile__avatar-actions">
-                        <label className="profile__avatar-btn" aria-disabled={updatingAvatar}>
-                            <Upload size={14} />
-                            آپلود عکس
-                            <input
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                        handleAvatarUpload(file);
-                                        e.currentTarget.value = '';
-                                    }
-                                }}
-                                disabled={updatingAvatar}
-                                hidden
-                            />
-                        </label>
-                        <button
-                            type="button"
-                            className="profile__avatar-btn profile__avatar-btn--danger"
-                            onClick={handleAvatarRemove}
-                            disabled={updatingAvatar || !user.avatar}
-                        >
-                            <Trash2 size={14} />
-                            حذف عکس
-                        </button>
-                    </div>
-                    <h2
-                        className="profile__name"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    >
+
+                    <h2 className="profile__name">
                         {user.name}
-                        {user.verified ? <VerifiedBadge size={16} /> : null}
+                        {user.verified ? <VerifiedBadge size={17} /> : null}
                     </h2>
                     <p className="profile__username-display">@{user.username}</p>
+
+                    {isEditing && (
+                        <div className="profile__avatar-actions">
+                            <label className="profile__avatar-btn profile__avatar-btn--upload" aria-disabled={updatingAvatar}>
+                                <Upload size={14} />
+                                {updatingAvatar ? 'در حال آپلود...' : 'آپلود تصویر'}
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                            handleAvatarUpload(file);
+                                            e.currentTarget.value = '';
+                                        }
+                                    }}
+                                    disabled={updatingAvatar}
+                                    hidden
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                className="profile__avatar-btn profile__avatar-btn--danger"
+                                onClick={handleAvatarRemove}
+                                disabled={updatingAvatar || !user.avatar}
+                            >
+                                <Trash2 size={14} />
+                                حذف تصویر
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="profile__fields">
-                    {}
-                    <div className="profile__chat-id-card">
-                        <div className="profile__chat-id-row">
-                            <div>
-                                <p className="profile__field-label">شناسه چت</p>
-                                <p className="profile__chat-id-value" style={{ direction: 'ltr', unicodeBidi: 'plaintext', fontFamily: "'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace" }}>{user.chatId}</p>
-                            </div>
-                            <button
-                                onClick={() => handleCopy(user.chatId, 'chatId')}
-                                className={cx(
-                                    'profile__copy-btn',
-                                    copiedField === 'chatId' && 'profile__copy-btn--copied'
-                                )}
-                            >
-                                {copiedField === 'chatId' ? <Check size={16} /> : <Copy size={16} />}
-                            </button>
-                        </div>
-                    </div>
-
-                    {}
-                    {user.registrationDate && (
-                        <div className="profile__chat-id-card" style={{ marginTop: 12 }}>
-                            <div className="profile__chat-id-row">
-                                <div>
-                                    <p className="profile__field-label">تاریخ عضویت</p>
-                                    <p className="profile__chat-id-value" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <Calendar size={16} style={{ opacity: 0.7 }} />
-                                        {toPersianDigits(user.registrationDate)}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
+                    {!isEditing && (
+                        <button type="button" className="profile__edit-action" onClick={onEdit}>
+                            <Pencil size={17} />
+                            ویرایش پروفایل
+                        </button>
                     )}
 
-                    {}
-                    {}
-                    <div className="profile__field-group">
-                        <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>نام</label>
-                        {isEditing ? (
-                            <input
-                                ref={nameRef}
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                onFocus={() => scrollIntoViewOnMobile(nameRef.current)}
-                                className="profile__field-input"
-                                placeholder="نام شما"
-                                maxLength={50}
-                            />
-                        ) : (
-                            <div className="profile__field-static">
-                                <p style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                    {user.name}
-                                </p>
+                    {isEditing ? (
+                        <div className="profile__card">
+                            <div className="profile__section-title">
+                                <span className="profile__section-icon"><Pencil size={15} /></span>
+                                ویرایش اطلاعات
                             </div>
-                        )}
-                    </div>
 
-                    {}
-                    <div className="profile__field-group">
-                        <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>نام کاربری</label>
-                        {isEditing ? (
-                            <div>
+                            <div className="profile__field-group">
+                                <label className="profile__field-label">نام نمایشی</label>
+                                <input
+                                    ref={nameRef}
+                                    type="text"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    onFocus={() => scrollIntoViewOnMobile(nameRef.current)}
+                                    className="profile__field-input"
+                                    placeholder="نام شما"
+                                    maxLength={50}
+                                />
+                            </div>
+
+                            <div className="profile__field-group">
+                                <label className="profile__field-label">نام کاربری</label>
                                 <div className="profile__username-wrapper">
                                     <span className="profile__username-at">@</span>
                                     <input
@@ -388,15 +385,14 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                                     />
                                 </div>
                                 {!!usernameHint && (
-                                    <div className='profile__field-hint'
+                                    <div
+                                        className="profile__field-hint"
                                         style={{
-                                            marginTop: 6,
-                                            fontSize: 12,
                                             color:
                                                 usernameStatus === 'available'
                                                     ? 'var(--accent-hover)'
                                                     : usernameStatus === 'taken' || usernameStatus === 'invalid'
-                                                        ? '#dc2626'
+                                                        ? 'var(--accent-danger)'
                                                         : 'var(--text-secondary)',
                                         }}
                                     >
@@ -404,27 +400,9 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                                     </div>
                                 )}
                             </div>
-                        ) : (
-                            <div className="profile__field-static profile__field-static--with-copy">
-                                <p>@{user.username}</p>
-                                <button
-                                    onClick={() => handleCopy(`@${user.username}`, 'username')}
-                                    className={cx(
-                                        'profile__small-copy-btn',
-                                        copiedField === 'username' && 'profile__small-copy-btn--copied'
-                                    )}
-                                >
-                                    {copiedField === 'username' ? <Check size={14} /> : <Copy size={14} />}
-                                </button>
-                            </div>
-                        )}
-                    </div>
 
-                    {}
-                    <div className="profile__field-group">
-                        <label className="profile__field-label" style={{ textAlign: 'left', paddingLeft: 6 }}>بیوگرافی</label>
-                        {isEditing ? (
-                            <div>
+                            <div className="profile__field-group">
+                                <label className="profile__field-label">بیوگرافی</label>
                                 <textarea
                                     ref={bioRef}
                                     value={bio}
@@ -435,52 +413,118 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                                     rows={3}
                                     maxLength={150}
                                 />
-                                <p className="profile__char-count" style={{ textAlign: 'right', direction: 'rtl' }}>{toPersianDigits(bio.length)}/{toPersianDigits(150)}</p>
+                                <p className="profile__char-count">{toPersianDigits(bio.length)}/{toPersianDigits(150)}</p>
                             </div>
-                        ) : (
-                            <div className="profile__field-static">
-                                <p className={!user.bio ? 'profile__bio-empty' : ''}>
-                                    {user.bio || 'بیوگرافی وجود ندارد'}
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    {}
-                    <div className="profile__info-note">
-                        <p>
-                            شناسه چت شما یکتا بوده و قابل تغییر نیست. نام کاربری خود را با دیگران به اشتراک بگذارید تا بتوانند شما را پیدا کرده و پیام بدهند.
-                        </p>
-                    </div>
-
-                    <div className="profile__groups-card">
-                        <div className="profile__groups-title">
-                            <Users size={16} />
-                            گروه‌های ساخته‌شده توسط شما
                         </div>
-                        {ownedGroups.length === 0 ? (
-                            <p className="profile__groups-empty">هنوز گروهی نساخته‌اید.</p>
-                        ) : (
-                            ownedGroups.map((group) => (
-                                <div className="profile__group-item" key={group.chatId}>
-                                    <div>
-                                        <p className="profile__group-name">{group.name}</p>
-                                        <p className="profile__group-code">{group.inviteCode}</p>
+                    ) : (
+                        <>
+                            <div className="profile__card">
+                                <div className="profile__section-title">
+                                    <span className="profile__section-icon"><UserRound size={15} /></span>
+                                    اطلاعات حساب
+                                </div>
+
+                                <div className="profile__info-row">
+                                    <span className="profile__info-icon"><UserRound size={16} /></span>
+                                    <div className="profile__info-body">
+                                        <span className="profile__info-label">نام</span>
+                                        <span className="profile__info-value">{user.name}</span>
+                                    </div>
+                                </div>
+
+                                <div className="profile__info-row">
+                                    <span className="profile__info-icon"><AtSign size={16} /></span>
+                                    <div className="profile__info-body">
+                                        <span className="profile__info-label">نام کاربری</span>
+                                        <span className="profile__info-value" style={{ direction: 'ltr', textAlign: 'right' }}>@{user.username}</span>
                                     </div>
                                     <button
-                                        type="button"
-                                        className="profile__group-copy"
-                                        onClick={() => handleCopy(group.inviteLink, `group-${group.chatId}`)}
+                                        onClick={() => handleCopy(`@${user.username}`, 'username')}
+                                        className={cx('profile__copy-btn', copiedField === 'username' && 'profile__copy-btn--copied')}
+                                        aria-label="کپی نام کاربری"
                                     >
-                                        <Link2 size={14} />
-                                        {copiedField === `group-${group.chatId}` ? 'کپی شد' : 'کپی لینک دعوت'}
+                                        {copiedField === 'username' ? <Check size={16} /> : <Copy size={16} />}
                                     </button>
                                 </div>
-                            ))
-                        )}
-                    </div>
+
+                                <div className="profile__info-row">
+                                    <span className="profile__info-icon"><Hash size={16} /></span>
+                                    <div className="profile__info-body">
+                                        <span className="profile__info-label">شناسه چت</span>
+                                        <span className="profile__info-value profile__info-value--mono">{user.chatId}</span>
+                                    </div>
+                                    <button
+                                        onClick={() => handleCopy(user.chatId, 'chatId')}
+                                        className={cx('profile__copy-btn', copiedField === 'chatId' && 'profile__copy-btn--copied')}
+                                        aria-label="کپی شناسه چت"
+                                    >
+                                        {copiedField === 'chatId' ? <Check size={16} /> : <Copy size={16} />}
+                                    </button>
+                                </div>
+
+                                {user.registrationDate && (
+                                    <div className="profile__info-row">
+                                        <span className="profile__info-icon"><Calendar size={16} /></span>
+                                        <div className="profile__info-body">
+                                            <span className="profile__info-label">تاریخ عضویت</span>
+                                            <span className="profile__info-value">{toPersianDigits(user.registrationDate)}</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="profile__card">
+                                <div className="profile__section-title">
+                                    <span className="profile__section-icon"><FileText size={15} /></span>
+                                    بیوگرافی
+                                </div>
+                                <p className={cx('profile__bio-text', !user.bio && 'profile__bio-text--empty')}>
+                                    {user.bio || 'هنوز بیوگرافی اضافه نکرده‌اید.'}
+                                </p>
+                            </div>
+                        </>
+                    )}
+
+                    {!isEditing && (
+                        <>
+                            <div className="profile__card">
+                                <div className="profile__section-title">
+                                    <span className="profile__section-icon"><Users size={15} /></span>
+                                    گروه‌های ساخته‌شده توسط شما
+                                </div>
+                                {ownedGroups.length === 0 ? (
+                                    <p className="profile__groups-empty">هنوز گروهی نساخته‌اید.</p>
+                                ) : (
+                                    <div className="profile__groups-list">
+                                        {ownedGroups.map((group) => (
+                                            <div className="profile__group-item" key={group.chatId}>
+                                                <div className="profile__group-main">
+                                                    <p className="profile__group-name">{group.name}</p>
+                                                    <p className="profile__group-code">{group.inviteCode}</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    className="profile__group-copy"
+                                                    onClick={() => handleCopy(group.inviteLink, `group-${group.chatId}`)}
+                                                >
+                                                    <Link2 size={14} />
+                                                    {copiedField === `group-${group.chatId}` ? 'کپی شد' : 'کپی لینک دعوت'}
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            <button type="button" className="profile__logout-btn" onClick={() => setShowLogoutConfirm(true)}>
+                                <LogOut size={17} />
+                                خروج از حساب کاربری
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
+
             {openedProfileImage && (
                 <ImageMediaViewer
                     imageUrl={openedProfileImage.url}
@@ -493,6 +537,53 @@ export function Profile({ user, onBack, onUpdateProfile }: ProfileProps) {
                     }}
                 />
             )}
-        </motion.div >
+
+            <AnimatePresence>
+                {showLogoutConfirm && (
+                    <motion.div
+                        className="chat-room-modal-overlay"
+                        style={{ zIndex: 140 }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2, ease: 'easeOut' }}
+                        onClick={() => setShowLogoutConfirm(false)}
+                    >
+                        <motion.div
+                            className="chat-room-confirm-modal"
+                            onClick={(event) => event.stopPropagation()}
+                            initial={{ opacity: 0, y: 14, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                        >
+                            <h3 className="chat-room-confirm-modal__title">خروج از حساب کاربری؟</h3>
+                            <p className="chat-room-confirm-modal__text">
+                                با خروج از حساب، برای ورود مجدد باید ایمیل و رمز عبور خود را وارد کنید.
+                            </p>
+                            <div className="chat-room-confirm-modal__actions">
+                                <button
+                                    type="button"
+                                    className="chat-room-confirm-modal__btn"
+                                    onClick={() => setShowLogoutConfirm(false)}
+                                >
+                                    لغو
+                                </button>
+                                <button
+                                    type="button"
+                                    className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger"
+                                    onClick={() => {
+                                        setShowLogoutConfirm(false);
+                                        onLogout();
+                                    }}
+                                >
+                                    خروج از حساب
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
     );
 }

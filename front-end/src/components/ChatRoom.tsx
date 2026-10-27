@@ -1,6 +1,6 @@
 import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, Copy, Eye, AlignJustify, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
+import { ChevronLeft, Copy, Eye, MoreVertical, Pencil, SendHorizontal, Smile, Trash2, X, Users, Search, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -10,6 +10,8 @@ import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { API_BASE_URL, apiFetch, getMessageSeenBy } from '../config/api';
 import { ContactInfo } from './ContactInfo';
+import { cx } from '../utils/cx';
+import { isElementScrolled } from '../utils/scrollFade';
 import { ChatMessagesSkeleton } from './ChatMessagesSkeleton';
 import { ReactionPicker } from './ReactionPicker';
 import { ForwardModal } from './ForwardModal';
@@ -485,6 +487,7 @@ export function ChatRoom({
 
     const [text, setText] = useState('');
     const [uploadedFile, setUploadedFile] = useState<FileMetadata | null>(null);
+    const [, setComposerRenderTick] = useState(0);
     const [uploadComposerState, setUploadComposerState] = useState<{ isUploading: boolean; progress: number; fileName: string | null; phase: 'preview' | 'upload' | 'encrypt' }>({
         isUploading: false,
         progress: 0,
@@ -507,6 +510,7 @@ export function ChatRoom({
     const forwardingInFlightRef = useRef(false);
 
     const [replyTo, setReplyTo] = useState<MessageReplyType | null>(null);
+    const [messagesScrolled, setMessagesScrolled] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
 
     const [msgMenu, setMsgMenu] = useState<null | { id: string; top: number; left: number; isFileDownloaded?: boolean }>(null);
@@ -2084,6 +2088,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const container = messagesContainerRef.current;
         if (!container) return;
         const currentTop = container.scrollTop;
+        setMessagesScrolled(isElementScrolled(container));
         const lastTop = lastScrollTopRef.current;
         const scrollingDown = currentTop > lastTop + 1;
         lastScrollTopRef.current = currentTop;
@@ -2243,11 +2248,13 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         return uploadingStatusLabel;
     }, [typingStatusLabel, uploadingStatusLabel]);
 
+    const displayedUploadedFile = uploadedFile ?? pendingUploadedFileByChat[chatId] ?? null;
+
     const activeInputStackCount = (replyTo || editingId ? 1 : 0)
         + (uploadComposerState.isUploading ? 1 : 0)
-        + (uploadedFile ? 1 : 0)
+        + (displayedUploadedFile ? 1 : 0)
         + (pendingForwardDraft ? 1 : 0);
-    const scrollButtonBottom = 96 + (activeInputStackCount * 56);
+    const scrollButtonBottom = 68 + (activeInputStackCount * 56);
 
     const jumpToLatest = async () => {
         setHideScrollBtnUntilBottom(true);
@@ -2288,9 +2295,9 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             alert(`حداکثر طول پیام ${MAX_CHAT_MESSAGE_LENGTH} کاراکتر است`);
             return;
         }
-        if (!trimmedText && !uploadedFile && (!pendingForwardDraft || Boolean(editingId))) return;
-        if (trimmedText || uploadedFile) {
-            onSendMessage({ text: rawText || '', replyToId: replyTo?.id, editMessageId: editingId ?? undefined, file: uploadedFile ?? undefined });
+        if (!trimmedText && !displayedUploadedFile && (!pendingForwardDraft || Boolean(editingId))) return;
+        if (trimmedText || displayedUploadedFile) {
+            onSendMessage({ text: rawText || '', replyToId: replyTo?.id, editMessageId: editingId ?? undefined, file: displayedUploadedFile ?? undefined });
         }
         if (pendingForwardDraft && !editingId) {
             void handleForwardMessage(pendingForwardDraft.sourceChatId, pendingForwardDraft.messageId, chatId);
@@ -2298,6 +2305,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         stopTyping();
         pendingUploadedFileByChat[chatId] = null;
         setText(''); setUploadedFile(null); setReplyTo(null); setEditingId(null);
+        setComposerRenderTick((v) => v + 1);
         requestAnimationFrame(() => scrollToBottom(true));
     };
 
@@ -2350,7 +2358,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
         const r = targetEl.getBoundingClientRect();
 
         const x = typeof clientX === 'number' && Number.isFinite(clientX) ? clientX : (r.left + 12);
-        const y = typeof clientY === 'number' && Number.isFinite(clientY) ? clientY : r.bottom;
+        const y = typeof clientY === 'number' && Number.isFinite(clientY) ? clientY : (r.top + 28);
 
         
         const relX = x - roomRect.left;
@@ -2623,7 +2631,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                 return;
                             }
                             const ne = e.nativeEvent as MouseEvent;
-                            openMessageMenu(m.id, e.currentTarget, ne.clientX, ne.clientY);
+                            const hasPointer = typeof ne.clientX === 'number' && typeof ne.clientY === 'number' && (ne.clientX > 0 || ne.clientY > 0);
+                            openMessageMenu(m.id, e.currentTarget, hasPointer ? ne.clientX : undefined, hasPointer ? ne.clientY : undefined);
                         }}
                         role="button" tabIndex={0}
                         onKeyDown={(e) => { if (e.key === 'Enter') openMessageMenu(m.id, e.currentTarget as any); }}
@@ -2925,13 +2934,13 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
             <>
                 <div className="contact-info">
                     <div className="contact-info__header">
-                        <button className="contact-info__back" onClick={() => {
+                        <button className="contact-info__back back-icon-btn" onClick={() => {
                             setShowMembersList(false);
                             if (onCloseForcedContactInfo) {
                                 onCloseForcedContactInfo(chatId);
                                 return;
                             }
-                        }} type="button"><ArrowLeft size={20} /></button>
+                        }} type="button"><ChevronLeft size={22} /></button>
                         <div className="contact-info__title">اطلاعات گروه</div>
                         <div className="contact-info__spacer" />
                         {isVerifiedUser && (
@@ -3112,6 +3121,9 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 }
             }}
         >
+            {!isSelectionModeActive && (
+                <div className={cx('header-fade', 'header-fade--room', messagesScrolled && 'header-fade--visible')} aria-hidden="true" />
+            )}
             {isSelectionModeActive ? (
                 <div className="chat-room__header chat-room__header--selection">
                     <div className="chat-room__selection-left">
@@ -3163,8 +3175,8 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 </div>
             ) : (
                 <div className="chat-room__header">
-                    <button className="chat-room__back-btn" onClick={() => { maybeSaveScroll(chatId); onBack(); }} aria-label="Back" type="button"><ArrowLeft size={20} /></button>
-                    <button className="icon-btn chat-room__close-btn" onClick={() => { maybeSaveScroll(chatId); onCloseChat(); }} aria-label="Back to empty" type="button"><ArrowLeft size={20} /></button>
+                    <button className={cx('chat-room__back-btn', 'back-icon-btn', messagesScrolled && 'chat-room__back-btn--scrolled')} onClick={() => { maybeSaveScroll(chatId); onBack(); }} aria-label="Back" type="button"><ChevronLeft size={22} /></button>
+                    <button className="icon-btn chat-room__close-btn" onClick={() => { maybeSaveScroll(chatId); onCloseChat(); }} aria-label="Back to empty" type="button"><ChevronLeft size={22} /></button>
 
                     <button
                         className="chat-room__header-clickable chat-room__header-clickable--full"
@@ -3222,7 +3234,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                 style={!canDeleteChat ? { opacity: 0.4, cursor: 'default' } : undefined}
                                 type="button"
                             >
-                                <AlignJustify size={20} />
+                                <MoreVertical size={20} />
                             </button>
 
                             {chatMenuOpen && canDeleteChat && (
@@ -3354,6 +3366,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 return (
                     <div ref={msgMenuRef} className="popover popover--mini"
                         style={{ top: msgMenu.top, left: msgMenu.left, right: 'auto', position: 'absolute', zIndex: 50 }}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}>
                         {showSeenByAction && (
                             <button className="popover__item" onClick={() => {
@@ -3494,6 +3507,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                 return (
                     <div ref={reactionMenuRef}
                         style={{ top: reactionMenu.top, left: reactionMenu.left, right: 'auto', position: 'absolute', zIndex: 50 }}
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}>
                         <ReactionPicker
                             messageId={reactionMsg.id}
@@ -3546,17 +3560,15 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                         type="button"
                         aria-label="Jump to latest messages"
                         onClick={jumpToLatest}
+                        className="chat-room__send-btn chat-room__send-btn--disabled"
                         animate={{ opacity: 1 }}
                         initial={{ opacity: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.14, ease: 'easeOut' }}
-                        style={{ position: 'absolute', right: 16, bottom: scrollButtonBottom, display: 'flex', alignItems: 'center', gap: 10, padding: newMsgCount > 0 ? '8px 10px' : '10px', borderRadius: 999, border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', boxShadow: '0 6px 20px rgba(0,0,0,0.10)', cursor: 'pointer', fontSize: 12, lineHeight: '12px', zIndex: 12 }}>
-                        <ArrowDown size={16} color="currentColor" />
+                        style={{ position: 'absolute', right: 12, bottom: `calc(${scrollButtonBottom}px + env(safe-area-inset-bottom, 0px))`, zIndex: 12, color: '#ffffff', cursor: 'pointer' }}>
+                        <ChevronDown size={20} />
                         {newMsgCount > 0 && (
-                            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'Vazir, sans-serif' }}>{toPersianDigits(newMsgCount)}</span>
-                                <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent-primary)', marginTop: 4 }} />
-                            </span>
+                            <span className="chat-room__scroll-badge">{toPersianDigits(newMsgCount)}</span>
                         )}
                     </motion.button>
                 )}
@@ -3612,16 +3624,17 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                         </button>
                     </div>
                 )}
-                {uploadedFile && (
+                {displayedUploadedFile && (
                     <div className="chat-room__reply-edit-box">
                         <div style={{ minWidth: 0, flex: 1, textAlign: 'right' }}>
                             <div className="chat-room__reply-edit-box__title">فایل آپلود شده</div>
-                            <div className="chat-room__reply-edit-box__text">{uploadedFile.fileName}</div>
+                            <div className="chat-room__reply-edit-box__text">{displayedUploadedFile.fileName}</div>
                         </div>
                         <button type="button" className="icon-btn" aria-label="Remove file" onClick={() => {
-                            if (uploadedFile) void cleanupUploadedFile(uploadedFile);
+                            if (displayedUploadedFile) void cleanupUploadedFile(displayedUploadedFile);
                             pendingUploadedFileByChat[chatId] = null;
                             setUploadedFile(null);
+                            setComposerRenderTick((v) => v + 1);
                         }}><X size={18} /></button>
                     </div>
                 )}
@@ -3656,7 +3669,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                 token={token}
                                 chatId={chatId}
                                 onFileUploaded={handleFileUploaded}
-                                fileAttached={Boolean(uploadedFile)}
+                                fileAttached={Boolean(displayedUploadedFile)}
                                 onUploadStateChange={handleUploadStateChange}
                                 onRegisterUploadFile={handleRegisterUploadFile}
                             />
@@ -3688,14 +3701,18 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                                 rows={1}
                             />
                             <button
-                                className={text.trim() || uploadedFile || (pendingForwardDraft && !editingId) ? 'chat-room__send-btn chat-room__send-btn--active' : 'chat-room__send-btn chat-room__send-btn--disabled'}
-                                onClick={submit} disabled={!text.trim() && !uploadedFile && (!pendingForwardDraft || Boolean(editingId))} aria-label="Send" type="button">
+                                className={text.trim() || displayedUploadedFile || (pendingForwardDraft && !editingId) ? 'chat-room__send-btn chat-room__send-btn--active' : 'chat-room__send-btn chat-room__send-btn--disabled'}
+                                onClick={submit} disabled={!text.trim() && !displayedUploadedFile && (!pendingForwardDraft || Boolean(editingId))} aria-label="Send" type="button">
                                 <SendHorizontal size={18} />
                             </button>
                         </>
                     )}
                 </div>
             </div>
+
+            {!isSelectionModeActive && (
+                <div className={cx('header-fade', 'header-fade--bottom', messagesScrolled && 'header-fade--visible')} aria-hidden="true" />
+            )}
 
             <ForwardModal
                 isOpen={forwardModalOpen}

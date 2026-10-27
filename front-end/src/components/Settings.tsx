@@ -1,20 +1,23 @@
-import { ArrowLeft, ChevronLeft, HardDrive, Laptop, Palette } from 'lucide-react';
+import { ChevronLeft, HardDrive, Laptop, Palette } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Devices } from './Devices';
 import { ThemeSettings } from './ThemeSettings';
 import { LoginLogs } from './LoginLogs';
 import { DataStorageSettings } from './DataStorageSettings';
+import { screenVariants } from '../utils/screenMotion';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 interface SettingsProps {
     section: 'menu' | 'devices' | 'theme' | 'logs' | 'dataStorage';
-    onBack: () => void;
     onOpenSection: (section: 'devices' | 'theme' | 'logs' | 'dataStorage') => void;
     onBackToMenu: () => void;
     loginEvents: any[];
     hasUnseenLoginLogs?: boolean;
 }
 
-export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEvents, hasUnseenLoginLogs }: SettingsProps) {
+export function Settings({ section, onOpenSection, onBackToMenu, loginEvents, hasUnseenLoginLogs }: SettingsProps) {
+    const { scrolled, handleScroll } = useScrollFade();
     if (section === 'devices') {
         return <Devices onBack={onBackToMenu} onOpenLogs={() => onOpenSection('logs')} hasUnseenLoginLogs={hasUnseenLoginLogs} />;
     }
@@ -24,11 +27,15 @@ export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEv
 
     if (section === 'theme') {
         return (
-            <motion.div className="profile" style={{ fontFamily: 'Vazir, sans-serif' }} initial={{ opacity: 0, y: 8, scale: 0.995 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
-                <div className="profile__header" style={{ direction: 'ltr' }}>
-                    <button onClick={onBackToMenu} className="profile__header-back"><ArrowLeft size={22} /></button>
+            <motion.div className="profile" variants={screenVariants} initial="hidden" animate="visible" exit="exit">
+                <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+                <div className="profile__header">
+                    <div className="profile__header-side">
+                        <button onClick={onBackToMenu} className="profile__header-back back-icon-btn" aria-label="بازگشت به تنظیمات">
+                            <ChevronLeft size={22} />
+                        </button>
+                    </div>
                     <h1 className="profile__header-title">تم</h1>
-                    <div className="profile__header-spacer" />
                 </div>
                 <ThemeSettings />
             </motion.div>
@@ -39,19 +46,18 @@ export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEv
     }
 
     return (
-        <div className="profile" style={{ fontFamily: 'Vazir, sans-serif' }}>
-            <div className="profile__header" style={{ direction: 'ltr' }}>
-                <button onClick={onBack} className="profile__header-back"><ArrowLeft size={22} /></button>
+        <motion.div className="profile" variants={screenVariants} initial="hidden" animate="visible" exit="exit">
+            <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+            <div className="profile__header">
                 <h1 className="profile__header-title">تنظیمات</h1>
-                <div className="profile__header-spacer" />
             </div>
 
-            <div className="profile__content" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 12, paddingInline: 14, paddingTop: 12, flex: '0 0 auto' }}>
+            <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 12, paddingInline: 14, paddingTop: 68, flex: '0 0 auto' }}>
                 <button
                     type="button"
                     className="popover__item"
                     onClick={() => onOpenSection('theme')}
-                    style={{ border: '1px solid var(--border-primary)', borderRadius: 14, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 15px', position: 'relative' }}
+                    style={{ border: '1px solid var(--glass-border)', background: 'var(--glass-surface-soft)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)', borderRadius: 9999, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 22px', position: 'relative' }}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textAlign: 'right' }}>
                         <Palette size={18} /> تم
@@ -63,7 +69,7 @@ export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEv
                     type="button"
                     className="popover__item"
                     onClick={() => onOpenSection('dataStorage')}
-                    style={{ border: '1px solid var(--border-primary)', borderRadius: 14, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 15px' }}
+                    style={{ border: '1px solid var(--glass-border)', background: 'var(--glass-surface-soft)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)', borderRadius: 9999, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 22px' }}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textAlign: 'right' }}>
                         <HardDrive size={18} />داده‌ها و ذخیره‌ سازی
@@ -74,7 +80,7 @@ export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEv
                     type="button"
                     className="popover__item"
                     onClick={() => onOpenSection('devices')}
-                    style={{ border: '1px solid var(--border-primary)', borderRadius: 14, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 15px', position: 'relative' }}
+                    style={{ border: '1px solid var(--glass-border)', background: 'var(--glass-surface-soft)', backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)', borderRadius: 9999, height: 60, justifyContent: 'space-between', direction: 'rtl', padding: '6px 22px', position: 'relative' }}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textAlign: 'right' }}>
                         <Laptop size={18} /> دستگاه‌ها
@@ -82,7 +88,8 @@ export function Settings({ section, onBack, onOpenSection, onBackToMenu, loginEv
                     {hasUnseenLoginLogs && <span style={{ position: 'absolute', top: 12, left: 12, width: 8, height: 8, borderRadius: 99, background: 'var(--accent-primary)' }} />}
                     <ChevronLeft size={18} style={{ marginInlineStart: 8 }} />
                 </button>
+
             </div>
-        </div>
+        </motion.div>
     );
 }

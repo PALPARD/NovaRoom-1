@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MessageCircle, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import DotGrid from './DotGrid';
 import { useDarkMode } from '../hooks/useDarkMode';
 import DecryptedText from './DecryptedText';
@@ -39,7 +39,7 @@ export function EmptyState() {
             </div>
             <div className="empty-state__content">
                 <div className="empty-state__icon">
-                    <MessageCircle size={32} />
+                    <img src="/logo/logo-white.svg" alt="نوا روم" className="empty-state__logo" />
                 </div>
                 <h2 className="empty-state__title">به نوا روم خوش آمدید</h2>
                 <p className="empty-state__description">برای شروع صحبت یک گفتگو انتخاب کنید یا کاربری را جستوجو کنید.</p>

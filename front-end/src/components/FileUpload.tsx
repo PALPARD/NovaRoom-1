@@ -101,10 +101,6 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 task.delivered = true;
                 onFileUploadedRef.current(task.result);
             }
-            if (task.status === 'done' && fileAttached) {
-                uploadTasksByChat.delete(chatId);
-                resetUpload();
-            }
         };
 
         existingTask.listeners.add(handleTask);
@@ -113,6 +109,15 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
         return () => {
             existingTask.listeners.delete(handleTask);
         };
+    }, [chatId]);
+
+    useEffect(() => {
+        if (!fileAttached) return;
+        const task = uploadTasksByChat.get(chatId);
+        if (task?.status === 'done') {
+            uploadTasksByChat.delete(chatId);
+            resetUpload();
+        }
     }, [chatId, fileAttached]);
 
     const startUploadFromFile = (file: File | null | undefined) => {

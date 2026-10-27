@@ -12,23 +12,28 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: none;
-    border: none;
-    border-radius: 12px;
-    padding: 8px;
-    padding-bottom: 10px;
-    color: var(--text-secondary);
+    width: 46px;
+    height: 46px;
+    flex-shrink: 0;
+    background: var(--glass-surface);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-specular);
+    border-radius: 9999px;
+    padding: 0;
+    color: var(--text-primary);
     cursor: pointer;
     transition: all 0.15s;
 }
 
 .file-upload-button:hover {
-    background: var(--hover-bg);
+    background: var(--glass-surface-elevated);
     color: var(--text-primary);
 }
 
 .file-upload-button:active {
-    transform: scale(0.95);
+    transform: scale(0.93);
 }
 
 .file-upload-button:disabled {
@@ -39,30 +44,32 @@
 .file-upload-picker-menu {
     position: absolute;
     inset-inline-start: 0;
-    bottom: calc(100% + 8px);
+    bottom: calc(100% + 10px);
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-width: 120px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-primary);
-    border-radius: 12px;
-    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.16);
+    min-width: 144px;
+    background: var(--glass-surface-elevated);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    border-radius: 22px;
+    box-shadow: var(--shadow-lg), var(--glass-specular);
     padding: 6px;
-    z-index: 12;
+    z-index: 40;
     transform-origin: bottom left;
     will-change: transform, opacity;
 }
 
 .file-upload-picker-item {
     border: none;
-    border-radius: 8px;
+    border-radius: 16px;
     background: transparent;
     color: var(--text-primary);
-    font-size: 13px;
-    font-family: 'Vazir', sans-serif;
+    font-size: 13.5px;
+    font-family: 'Nunito', 'Vazir', sans-serif;
     text-align: right;
-    padding: 8px 10px;
+    padding: 9px 12px;
     cursor: pointer;
     transition: background 0.16s ease, color 0.16s ease;
 }
@@ -120,7 +127,7 @@
     gap: 8px;
     padding: 8px 12px;
     background: var(--bg-tertiary);
-    border-radius: 12px;
+    border-radius: 14px;
     max-width: 300px;
 }
 
@@ -185,7 +192,7 @@
     justify-content: center;
     background: none;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 4px;
     color: var(--text-secondary);
     cursor: pointer;
@@ -197,26 +204,26 @@
     color: #dc2626;
 }
 
-
 .file-message {
-    margin-top: 8px;
+    margin-top: 6px;
 }
-
 
 .file-attachment {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 12px;
+    padding: 10px 14px;
     background: rgba(0, 0, 0, 0.05);
-    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    border-radius: 16px;
     cursor: pointer;
     transition: all 0.15s;
     max-width: 280px;
 }
 
 .dark-mode .file-attachment {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.06);
 }
 
 .file-attachment:hover {
@@ -225,11 +232,12 @@
 }
 
 .dark-mode .file-attachment:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.09);
 }
 
 .message-bubble--mine .file-attachment {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.18);
 }
 
 .message-bubble--mine .file-attachment:hover {
@@ -252,7 +260,7 @@
 
 .file-name {
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -272,7 +280,7 @@
 }
 
 .message-bubble--mine .file-size {
-    color: color-mix(in srgb, var(--message-mine-text) 74%, transparent);
+    color: color-mix(in srgb, var(--message-mine-text) 76%, transparent);
 }
 
 .file-download-btn {
@@ -282,7 +290,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.05);
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 6px;
     color: var(--text-primary);
     cursor: pointer;
@@ -312,13 +320,12 @@
     background: rgba(255, 255, 255, 0.3);
 }
 
-
 .file-image-preview {
     position: relative;
     max-width: min(280px, 100%);
     max-height: 440px;
     width: fit-content;
-    border-radius: 12px;
+    border-radius: 16px;
     overflow: hidden;
     cursor: pointer;
     display: flex;
@@ -351,7 +358,8 @@
 .file-image-overlay .file-download-btn {
     background: rgba(0, 0, 0, 0.6);
     color: #ffffff;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .file-image-overlay .file-download-btn:hover {
@@ -362,17 +370,24 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 10px 14px;
     background: rgba(0, 0, 0, 0.05);
-    border-radius: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    border-radius: 16px;
     width: 100%;
     max-width: 340px;
     min-width: 0;
     overflow: hidden;
 }
 
+.dark-mode .file-audio-card {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
 .message-bubble--mine .file-audio-card {
     background: color-mix(in srgb, var(--message-mine-text) 16%, transparent);
+    border-color: rgba(255, 255, 255, 0.16);
 }
 
 .file-audio-meta {
@@ -402,7 +417,7 @@
 .file-audio-cover {
     width: 44px;
     height: 44px;
-    border-radius: 10px;
+    border-radius: 12px;
     flex-shrink: 0;
     background: linear-gradient(135deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 60%, white));
     color: #fff;
@@ -431,9 +446,8 @@
     height: 36px;
 }
 
-
 .file-video-card {
-    border-radius: 12px;
+    border-radius: 16px;
     overflow: hidden;
     max-width: 300px;
     background: rgba(0, 0, 0, 0.07);
@@ -453,7 +467,7 @@
     height: 100%;
     max-height: 300px;
     background: #000;
-    border-radius: 12px;
+    border-radius: 16px;
     outline: none;
     object-fit: cover;
 }
@@ -475,10 +489,12 @@
     left: 8px;
     font-size: 11px;
     font-weight: 700;
-    padding: 3px 7px;
+    padding: 3px 8px;
     border-radius: 999px;
     color: #fff;
-    background: rgba(0, 0, 0, 0.68);
+    background: rgba(0, 0, 0, 0.56);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     z-index: 2;
 }
 
@@ -493,39 +509,50 @@
     align-items: center;
     justify-content: center;
     color: #fff;
-    background: rgba(0, 0, 0, 0.58);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(0, 0, 0, 0.48);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.32);
     z-index: 2;
     pointer-events: none;
 }
-
 
 .image-media-viewer {
     position: fixed;
     inset: 0;
     z-index: 4000;
     background: rgba(0, 0, 0, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 .image-media-viewer__btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(0, 0, 0, 0.35);
+    width: 42px;
+    height: 42px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(22px) saturate(190%);
+    -webkit-backdrop-filter: blur(22px) saturate(190%);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.22);
     color: #fff;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    transition: background 0.15s ease, transform 0.12s ease;
 }
 
 .image-media-viewer__btn:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.image-media-viewer__btn:active {
+    transform: scale(0.94);
 }
 
 .image-media-viewer__btn--close {
-    margin-inline-start: 8px;
+    margin-inline-start: 4px;
 }
 
 .image-media-viewer__stage {
@@ -541,21 +568,18 @@
 
 .image-media-viewer__controls {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 14px;
+    right: 14px;
     z-index: 2;
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(0, 0, 0, 0.28);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 14px;
-    padding: 6px;
-    backdrop-filter: blur(6px);
-}
-
-
-.image-media-viewer__controls {
+    background: transparent;
+    border: none;
+    border-radius: 9999px;
+    padding: 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     transition: opacity 0.22s ease;
 }
 
@@ -573,27 +597,29 @@
     -webkit-user-drag: none;
 }
 
-
 .video-media-viewer {
     position: fixed;
     inset: 0;
     z-index: 4100;
     background: rgba(0, 0, 0, 0.93);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 .video-media-viewer__header {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 14px;
+    right: 14px;
     z-index: 4;
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(0, 0, 0, 0.28);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 14px;
-    padding: 6px;
-    backdrop-filter: blur(6px);
+    background: transparent;
+    border: none;
+    border-radius: 9999px;
+    padding: 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
 }
 
 .video-media-viewer__stage {
@@ -769,12 +795,14 @@
 }
 
 .video-media-viewer__fullscreen-btn {
-    width: 34px;
-    height: 34px;
+    width: 38px;
+    height: 38px;
     border: 1px solid rgba(255, 255, 255, 0.26);
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
     color: #fff;
-    border-radius: 10px;
+    border-radius: 9999px;
     display: inline-flex;
     align-items: center;
     justify-content: center;

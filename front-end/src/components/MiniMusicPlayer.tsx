@@ -41,23 +41,25 @@ export const MiniMusicPlayer: React.FC = () => {
   return (
     <div style={{
       position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
+      top: 6,
+      left: 12,
+      right: 12,
       zIndex: 1500,
-      background: 'var(--bg-primary, #fff)',
-      borderBottom: '1px solid var(--border-primary, #e5e7eb)',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+      background: 'var(--glass-surface-elevated)',
+      backdropFilter: 'var(--glass-blur)',
+      WebkitBackdropFilter: 'var(--glass-blur)',
+      border: '1px solid var(--glass-border)',
+      borderRadius: 20,
+      boxShadow: 'var(--glass-shadow), var(--glass-specular)',
       display: 'flex',
       flexDirection: 'column',
-      padding: '6px 12px 0',
+      padding: '7px 14px 6px',
       fontFamily: 'Vazir, sans-serif',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{
-          width: 40, height: 40,
-          borderRadius: 10,
+          width: 38, height: 38,
+          borderRadius: 12,
           background: 'linear-gradient(135deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 60%, white))',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,
@@ -71,7 +73,6 @@ export const MiniMusicPlayer: React.FC = () => {
           )}
         </div>
 
-        {}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontSize: 13,
@@ -89,7 +90,6 @@ export const MiniMusicPlayer: React.FC = () => {
           </div>
         </div>
 
-        {}
         <button onClick={handleSkipBack} style={btnStyle} title="-10s">
           <SkipBack size={16} />
         </button>
@@ -104,24 +104,24 @@ export const MiniMusicPlayer: React.FC = () => {
         </button>
       </div>
 
-      {}
       <div
         ref={progressRef}
         onClick={handleProgressClick}
         style={{
           height: 3,
           background: 'var(--border-primary, #e5e7eb)',
-          borderRadius: 2,
+          borderRadius: 999,
           cursor: 'pointer',
           marginTop: 6,
           position: 'relative',
+          overflow: 'hidden',
         }}
       >
         <div style={{
           height: '100%',
           width: `${progress}%`,
           background: 'var(--accent-primary)',
-          borderRadius: 2,
+          borderRadius: 999,
           transition: 'width 0.1s linear',
         }} />
       </div>

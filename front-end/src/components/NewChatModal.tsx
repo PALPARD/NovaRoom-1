@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
-import { Search, Users, Link as LinkIcon, X, Copy, CheckCheck } from 'lucide-react';
-import { motion, type Variants } from "framer-motion";
+import { useState, useEffect } from 'react';
+import { Search, Users, Link as LinkIcon, ChevronLeft, Copy, CheckCheck, Lock } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { apiFetch } from '../config/api';
 import { type User } from '../types';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
+import { screenVariants } from '../utils/screenMotion';
+import { cx } from '../utils/cx';
+import { useScrollFade } from '../hooks/useScrollFade';
 
-interface NewChatModalProps {
-    isOpen: boolean;
+interface NewChatScreenProps {
     onClose: () => void;
     onUserSelected: (user: User) => void;
     onCreateGroup: (groupName: string) => Promise<any> | any;
@@ -15,8 +17,32 @@ interface NewChatModalProps {
     currentUser?: User | null;
 }
 
-export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, onJoinGroup, currentUser }: NewChatModalProps) {
-    const EXIT_ANIMATION_MS = 200;
+const navigationTabTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] } as const;
+
+const surfaceStyle = {
+    border: '1px solid var(--border-primary)',
+    background: 'var(--bg-secondary)',
+    borderRadius: 20,
+} as const;
+
+const extractInviteCode = (rawValue: string): string => {
+    const value = rawValue.trim();
+    if (!value) return '';
+
+    const deepLink = value.match(/(?:senoroom|novaroom):\/\/group\/([a-zA-Z0-9]+)/);
+    if (deepLink?.[1]) return deepLink[1];
+
+    const urlLink = value.match(/\/group\/([a-zA-Z0-9]+)/);
+    if (urlLink?.[1]) return urlLink[1];
+
+    const fullLink = value.match(/groupInvite=([a-zA-Z0-9]+)/);
+    if (fullLink?.[1]) return fullLink[1];
+
+    return value;
+};
+
+export function NewChatModal({ onClose, onUserSelected, onCreateGroup, onJoinGroup, currentUser }: NewChatScreenProps) {
+    const { scrolled, handleScroll } = useScrollFade();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<User[]>([]);
     const [loading, setLoading] = useState(false);
@@ -25,58 +51,10 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
     const [inviteInput, setInviteInput] = useState('');
     const [createdGroupLink, setCreatedGroupLink] = useState<string>('');
     const [copied, setCopied] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [joining, setJoining] = useState(false);
     const [groupError, setGroupError] = useState<string>('');
     const [joinError, setJoinError] = useState<string>('');
-    const [shouldRender, setShouldRender] = useState(isOpen);
-    const [isClosing, setIsClosing] = useState(false);
-
-    const inputRef = useRef<HTMLInputElement | null>(null);
-
-    useEffect(() => {
-        if (isOpen) {
-            setShouldRender(true);
-            setIsClosing(false);
-            return;
-        }
-
-        if (!shouldRender) return;
-        setIsClosing(true);
-        const t = window.setTimeout(() => {
-            setShouldRender(false);
-            setIsClosing(false);
-        }, EXIT_ANIMATION_MS);
-        return () => window.clearTimeout(t);
-    }, [isOpen, shouldRender]);
-
-    useEffect(() => {
-        if (!shouldRender) return;
-        const prevBodyOverflow = document.body.style.overflow;
-        const prevBodyOverscroll = document.body.style.overscrollBehavior;
-        const prevHtmlOverflow = document.documentElement.style.overflow;
-        document.body.style.overflow = 'hidden';
-        document.body.style.overscrollBehavior = 'contain';
-        document.documentElement.style.overflow = 'hidden';
-
-        return () => {
-            document.body.style.overflow = prevBodyOverflow;
-            document.body.style.overscrollBehavior = prevBodyOverscroll;
-            document.documentElement.style.overflow = prevHtmlOverflow;
-        };
-    }, [shouldRender]);
-
-    useEffect(() => {
-        if (!isOpen) return;
-        setQuery('');
-        setResults([]);
-        setLoading(false);
-        setMode('chat');
-        setGroupName('');
-        setInviteInput('');
-        setCreatedGroupLink('');
-        setCopied(false);
-        setGroupError('');
-        setJoinError('');
-    }, [isOpen]);
 
     useEffect(() => {
         if (mode !== 'chat') return;
@@ -85,11 +63,12 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
 
         if (!q || q.length < 3) {
             setResults([]);
+            setLoading(false);
             return;
         }
 
+        setLoading(true);
         const search = async () => {
-            setLoading(true);
             try {
                 const users = await apiFetch(`/users/search?query=${encodeURIComponent(q)}`);
                 const usernameQuery = q.toLowerCase();
@@ -110,26 +89,6 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
 
     const handleSelectUser = (user: User) => {
         onUserSelected(user);
-        onClose();
-    };
-
-    const extractInviteCode = (rawValue: string): string => {
-        const value = rawValue.trim();
-        if (!value) return '';
-
-        
-        const deepLink = value.match(/(?:senoroom|novaroom):\/\/group\/([a-zA-Z0-9]+)/);
-        if (deepLink?.[1]) return deepLink[1];
-
-        
-        const urlLink = value.match(/\/group\/([a-zA-Z0-9]+)/);
-        if (urlLink?.[1]) return urlLink[1];
-
-        const fullLink = value.match(/groupInvite=([a-zA-Z0-9]+)/);
-        if (fullLink?.[1]) return fullLink[1];
-
-        
-        return value;
     };
 
     const handleCreateGroup = async () => {
@@ -139,10 +98,15 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
             return;
         }
         setGroupError('');
-        const res = await onCreateGroup(normalized);
-        if (res?.inviteLink) {
-            setCreatedGroupLink(res.inviteLink);
-            setGroupName('');
+        setCreating(true);
+        try {
+            const res = await onCreateGroup(normalized);
+            if (res?.inviteLink) {
+                setCreatedGroupLink(res.inviteLink);
+                setGroupName('');
+            }
+        } finally {
+            setCreating(false);
         }
     };
 
@@ -153,266 +117,230 @@ export function NewChatModal({ isOpen, onClose, onUserSelected, onCreateGroup, o
             return;
         }
         setJoinError('');
+        setJoining(true);
         try {
             await onJoinGroup(inviteCode);
         } catch {
             setJoinError('لینک دعوت نامعتبر است یا گروه یافت نشد');
+        } finally {
+            setJoining(false);
         }
     };
 
     const handleCopy = () => {
-        navigator.clipboard.writeText(createdGroupLink);
+        void navigator.clipboard.writeText(createdGroupLink);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
 
-    if (!shouldRender) return null;
-
     const isVerified = Boolean(currentUser?.verified);
+    const trimmedQuery = query.trim().replace(/^@+/, '');
 
-
-    const toastVariants: Variants = {
-        hidden: { opacity: 0, scale: 0.9 },
-        visible: { opacity: 1, scale: 1, transition: { duration: 0.2 } },
-        exit: { opacity: 0, scale: 0.6, transition: { duration: 0.2 } },
-    };
+    const tabs: Array<{ key: 'chat' | 'group'; label: string; icon: typeof Search }> = [
+        { key: 'chat', label: 'چت خصوصی', icon: Search },
+        { key: 'group', label: 'گروه', icon: Users },
+    ];
 
     return (
-        <div
-            className={`modal-overlay modal-overlay--new-chat ${isClosing ? 'modal-overlay--closing' : ''}`}
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => {
-                if (e.target === e.currentTarget) {
-                    onClose();
-                }
+        <motion.div
+            className="profile new-chat-screen"
+            variants={screenVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            onPointerDownCapture={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('input, textarea')) return;
+                e.preventDefault();
             }}
         >
-            <motion.div
-                className="new-chat-modal"
-                variants={toastVariants}
-                initial="hidden"
-                animate={isClosing ? 'exit' : 'visible'}
-            >
-                <div className="modal-header">
-                    <h2>گفتگوی جدید</h2>
-                    <button onClick={onClose} className="icon-btn" aria-label="Close">
-                        <X size={20} />
+            <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
+            <div className="profile__header">
+                <div className="profile__header-side">
+                    <button type="button" onClick={onClose} className="profile__header-back back-icon-btn" aria-label="بازگشت">
+                        <ChevronLeft size={22} />
                     </button>
                 </div>
+                <h1 className="profile__header-title">گفتگوی جدید</h1>
+            </div>
 
-                <div className="new-chat-modal__tabs">
-                    <button
-                        type="button"
-                        className={`new-chat-modal__tab ${mode === 'chat' ? 'new-chat-modal__tab--active' : ''}`}
-                        onClick={() => setMode('chat')}
-                    >
-                        <Search size={15} />
-                        چت خصوصی
-                    </button>
-                    <button
-                        type="button"
-                        className={`new-chat-modal__tab ${mode === 'group' ? 'new-chat-modal__tab--active' : ''}`}
-                        onClick={() => setMode('group')}
-                    >
-                        <Users size={15} />
-                        گروه
-                    </button>
+            <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 68 }}>
+                <div role="tablist" className="new-chat-screen__tabs">
+                    {tabs.map(({ key, label, icon: Icon }) => {
+                        const active = mode === key;
+                        return (
+                            <button
+                                key={key}
+                                type="button"
+                                role="tab"
+                                aria-selected={active}
+                                onClick={() => setMode(key)}
+                                className={`new-chat-screen__tab${active ? ' new-chat-screen__tab--active' : ''}`}
+                            >
+                                <Icon size={16} />
+                                {label}
+                            </button>
+                        );
+                    })}
                 </div>
 
-                {mode === 'chat' ? (
-                    <>
-                        <div className="search-box" style={{ direction: 'rtl', flexDirection: 'row-reverse' }}>
-                            <Search size={20} />
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                style={{ direction: 'rtl', textAlign: 'right' }}
-                                placeholder="جستجو با نام کاربری..."
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                autoFocus
-                            />
-                        </div>
+                <div className="new-chat-screen__panels">
+                    {mode === 'chat' ? (
+                        <motion.div
+                            key="chat"
+                            className="new-chat-screen__panel"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={navigationTabTransition}
+                            style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+                        >
+                            <div className="new-chat-screen__search">
+                                <Search size={18} />
+                                <input
+                                    type="text"
+                                    inputMode="text"
+                                    placeholder="جستجو با نام کاربری..."
+                                    value={query}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                />
+                            </div>
 
-                        <div className="results">
-                            {loading ? (
-                                <p className="loading">در حال جستجو...</p>
-                            ) : results.length === 0 && query.trim().replace(/^@+/, '').length >= 3 ? (
-                                <p className="no-results">کاربری یافت نشد</p>
-                            ) : (
-                                results.map((user) => (
-                                    <div
-                                        key={user.chatId}
-                                        className="user-item"
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() => handleSelectUser(user)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault();
-                                                handleSelectUser(user);
-                                            }
-                                        }}
-                                    >
-                                        <Avatar name={user.name} size="md" online={user.online} src={user.avatar} />
-                                        <div style={{ flex: 1 }}>
-                                            <div
-                                                className="user-name"
-                                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                                            >
-                                                {user.name}
-                                                {user.verified ? <VerifiedBadge size={14} /> : null}
-                                            </div>
-                                            <div className="user-username">@{user.username}</div>
-                                        </div>
+                            <div className="new-chat-screen__results">
+                                {loading ? (
+                                    <div className="new-chat-screen__state">
+                                        <span className="chat-range-loader" aria-hidden="true" />
+                                        <span>در حال جستجو...</span>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                    </>
-                ) : (
-                    <div className="new-chat-modal__group-box">
-                        {}
-                        {isVerified ? (
-                            <>
-                                <label className="new-chat-modal__label">ساخت گروه</label>
-                                <div className="new-chat-modal__input-wrap">
-                                    <Users size={16} style={{ color: 'var(--text-secondary)' }} />
+                                ) : results.length > 0 ? (
+                                    <div className="new-chat-screen__list">
+                                        {results.map((user) => (
+                                            <button
+                                                key={user.chatId}
+                                                type="button"
+                                                className="new-chat-screen__user"
+                                                onClick={() => handleSelectUser(user)}
+                                            >
+                                                <Avatar name={user.name} size="md" online={user.online} src={user.avatar} />
+                                                <span className="new-chat-screen__user-text">
+                                                    <span className="new-chat-screen__user-name">
+                                                        {user.name}
+                                                        {user.verified ? <VerifiedBadge size={14} /> : null}
+                                                    </span>
+                                                    <span className="new-chat-screen__user-username">@{user.username}</span>
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="new-chat-screen__state">
+                                        <Search size={22} style={{ opacity: 0.55 }} />
+                                        <span>{trimmedQuery.length >= 3 ? 'کاربری یافت نشد' : 'نام کاربری مورد نظر را جستجو کنید'}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key="group"
+                            className="new-chat-screen__panel"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={navigationTabTransition}
+                            style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+                        >
+                            <div style={{ ...surfaceStyle, padding: 16 }}>
+                                <p className="profile__field-label" style={{ marginBottom: 10 }}>ساخت گروه</p>
+                                {isVerified ? (
+                                    <>
+                                        <div style={{ position: 'relative' }}>
+                                            <Users size={16} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
+                                            <input
+                                                type="text"
+                                                className="profile__field-input"
+                                                style={{ paddingRight: 40, borderRadius: 9999, background: 'var(--bg-primary)' }}
+                                                placeholder="نام گروه"
+                                                value={groupName}
+                                                onChange={(e) => {
+                                                    setGroupName(e.target.value);
+                                                    if (groupError) setGroupError('');
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && !creating) handleCreateGroup();
+                                                }}
+                                            />
+                                        </div>
+                                        {groupError && <p className="new-chat-screen__error">{groupError}</p>}
+                                        <button
+                                            type="button"
+                                            className="new-chat-screen__action new-chat-screen__action--primary"
+                                            onClick={handleCreateGroup}
+                                            disabled={creating}
+                                        >
+                                            <Users size={16} />
+                                            {creating ? 'در حال ساخت...' : 'ساخت گروه جدید'}
+                                        </button>
+
+                                        {createdGroupLink && (
+                                            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-primary)' }}>
+                                                <p className="profile__field-label" style={{ marginBottom: 8, color: 'var(--accent-primary)' }}>گروه ساخته شد</p>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                    <span className="new-chat-screen__invite">
+                                                        {createdGroupLink}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleCopy}
+                                                        className={`new-chat-screen__copy${copied ? ' new-chat-screen__copy--copied' : ''}`}
+                                                    >
+                                                        {copied ? <CheckCheck size={14} /> : <Copy size={14} />}
+                                                        {copied ? 'کپی شد' : 'کپی'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="new-chat-screen__notice">
+                                        <Lock size={16} style={{ flexShrink: 0 }} />
+                                        <span>ساخت گروه فقط برای کاربران تأییدشده در دسترس است</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div style={{ ...surfaceStyle, padding: 16 }}>
+                                <p className="profile__field-label" style={{ marginBottom: 10 }}>عضویت با لینک</p>
+                                <div style={{ position: 'relative' }}>
+                                    <LinkIcon size={16} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
                                     <input
                                         type="text"
-                                        placeholder="نام گروه"
-                                        value={groupName}
+                                        className="profile__field-input"
+                                        style={{ paddingRight: 40, borderRadius: 9999, background: 'var(--bg-primary)' }}
+                                        placeholder="novaroom://group/INVITE_CODE"
+                                        value={inviteInput}
                                         onChange={(e) => {
-                                            setGroupName(e.target.value);
-                                            if (groupError) setGroupError('');
+                                            setInviteInput(e.target.value);
+                                            if (joinError) setJoinError('');
                                         }}
                                         onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleCreateGroup();
+                                            if (e.key === 'Enter' && !joining) handleJoinGroup();
                                         }}
                                     />
                                 </div>
-                                {groupError && (
-                                    <p style={{
-                                        fontSize: 12,
-                                        color: '#ef4444',
-                                        margin: '4px 0 0',
-                                        paddingRight: 4,
-                                    }}>
-                                        {groupError}
-                                    </p>
-                                )}
-                                <button type="button" className="new-chat-modal__action" onClick={handleCreateGroup}>
-                                    ساخت گروه جدید
+                                {joinError && <p className="new-chat-screen__error">{joinError}</p>}
+                                <button
+                                    type="button"
+                                    className="new-chat-screen__action"
+                                    onClick={handleJoinGroup}
+                                    disabled={joining}
+                                >
+                                    <LinkIcon size={16} />
+                                    {joining ? 'در حال عضویت...' : 'عضویت در گروه'}
                                 </button>
-
-                                {}
-                                {createdGroupLink && (
-                                    <div style={{
-                                        marginTop: 12,
-                                        padding: '12px 14px',
-                                        background: 'var(--bg-secondary)',
-                                        borderRadius: 12,
-                                        border: '1px solid var(--border-primary)',
-                                    }}>
-                                        <div style={{
-                                            fontSize: 12,
-                                            color: 'var(--text-secondary)',
-                                            marginBottom: 8,
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 6,
-                                        }}>
-                                            ✅ گروه ساخته شد — لینک دعوت:
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <span style={{
-                                                fontSize: 12,
-                                                fontFamily: 'monospace',
-                                                flex: 1,
-                                                wordBreak: 'break-all',
-                                                color: 'var(--text-primary)',
-                                                background: 'var(--bg-primary)',
-                                                padding: '6px 10px',
-                                                borderRadius: 8,
-                                                border: '1px solid var(--border-primary)',
-                                            }}>
-                                                {createdGroupLink}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={handleCopy}
-                                                style={{
-                                                    padding: '6px 12px',
-                                                    borderRadius: 8,
-                                                    border: '1px solid var(--border-primary)',
-                                                    background: copied ? '#22c55e' : 'var(--bg-primary)',
-                                                    color: copied ? '#fff' : 'var(--text-primary)',
-                                                    cursor: 'pointer',
-                                                    fontSize: 12,
-                                                    whiteSpace: 'nowrap',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: 4,
-                                                    transition: 'background 0.2s, color 0.2s',
-                                                }}
-                                            >
-                                                {copied ? <CheckCheck size={14} /> : <Copy size={14} />}
-                                                {copied ? 'کپی شد' : 'کپی'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                            </>
-                        ) : (
-                            <div style={{
-                                padding: '12px 14px',
-                                background: 'var(--bg-secondary)',
-                                borderRadius: 12,
-                                border: '1px solid var(--border-primary)',
-                                fontSize: 13,
-                                color: 'var(--text-secondary)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                            }}>
-                                <Users size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
-                                ساخت گروه فقط برای کاربران تأییدشده در دسترس است
                             </div>
-                        )}
-
-                        <label className="new-chat-modal__label" style={{ marginTop: 16 }}>عضویت با لینک</label>
-                        <div className="new-chat-modal__input-wrap">
-                            <LinkIcon size={16} style={{ color: 'var(--text-secondary)' }} />
-                            <input
-                                type="text"
-                                placeholder="novaroom://group/INVITE_CODE"
-                                value={inviteInput}
-                                onChange={(e) => {
-                                    setInviteInput(e.target.value);
-                                    if (joinError) setJoinError('');
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleJoinGroup();
-                                }}
-                            />
-                        </div>
-                        {joinError && (
-                            <p style={{
-                                fontSize: 12,
-                                color: '#ef4444',
-                                margin: '4px 0 0',
-                                paddingRight: 4,
-                            }}>
-                                {joinError}
-                            </p>
-                        )}
-                        <button type="button" className="new-chat-modal__action new-chat-modal__action--secondary" onClick={handleJoinGroup}>
-                            عضویت در گروه
-                        </button>
-                    </div>
-                )}
-            </motion.div>
-        </div>
+                        </motion.div>
+                    )}
+                </div>
+            </div>
+        </motion.div>
     );
 }

@@ -20,6 +20,7 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { notify } from './utils/notificationBus';
 import { decryptBioClientSide, decryptMessageClientSide, encryptChatTextClientSide } from './utils/e2ee';
 import { useDarkMode } from './hooks/useDarkMode';
+import { BottomNavbar } from './components/BottomNavbar';
 import './App.css';
 
 
@@ -128,7 +129,6 @@ export function App() {
     useEffect(() => {
         messageRangeStateRef.current = messageRangeState;
     }, [messageRangeState]);
-    const [newChatModalOpen, setNewChatModalOpen] = useState(false);
     const [wsConnected, setWsConnected] = useState(false);
     const [wsReconnectExhausted, setWsReconnectExhausted] = useState(false);
     const [typingUserIdsByChat, setTypingUserIdsByChat] = useState<Record<string, string[]>>({});
@@ -587,7 +587,6 @@ export function App() {
             setChats([]);
             setMessages({});
             setMessageRangeState({});
-            setNewChatModalOpen(false);
             setIsInitialChatsLoad(true);
             setMessagesLoadedOnce({});
             setShowAIChat(false);
@@ -1608,8 +1607,18 @@ export function App() {
             return;
         }
 
+        if (pathname === '/new-chat') {
+            setShowAIChat(false);
+            setView('newChat');
+            return;
+        }
+
         if (pathname === '/profile') {
             setView('profile');
+            return;
+        }
+        if (pathname === '/profile/edit') {
+            setView('profileEdit');
             return;
         }
         if (pathname === '/settings' || pathname === '/settings/') {
@@ -2010,7 +2019,6 @@ export function App() {
     }, [activeAIChatId]);
 
     const handleUserSelectedFromModal = useCallback((user: User) => {
-        setNewChatModalOpen(false);
 
         const myId = currentUser?.chatId;
         if (myId) {
@@ -2103,10 +2111,11 @@ export function App() {
             });
 
             await loadChats(false);
-            setNewChatModalOpen(false);
-
             if (res?.chatId) {
                 handleSelectChat(res.chatId);
+            } else {
+                setView('chatList');
+                navigate('/', { replace: true });
             }
         } catch (error) {
             console.error(error);
@@ -2138,8 +2147,13 @@ export function App() {
         navigate('/settings');
     }, [navigate]);
     const handleNewChatClick = useCallback(() => {
-        setNewChatModalOpen(true);
-    }, []);
+        setView('newChat');
+        navigate('/new-chat');
+    }, [navigate]);
+    const handleCloseNewChat = useCallback(() => {
+        setView('chatList');
+        navigate('/', { replace: true });
+    }, [navigate]);
     const cleanupTemporaryAIChat = useCallback(async (chatId: string) => {
         try {
             await apiFetch(`/ai/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
@@ -2241,6 +2255,23 @@ export function App() {
             navigate('/ai/c/new');
         }
     }, [aiResponding, aiRespondingChatId, navigate]);
+
+    const handleSelectNavTab = useCallback((tab: 'ai' | 'chats' | 'settings' | 'profile') => {
+        if (tab === 'ai') {
+            handleOpenAIChat();
+        } else if (tab === 'chats') {
+            if (showAIChat || view !== 'chatList') {
+                setShowAIChat(false);
+                setView('chatList');
+                setActiveChatId(null);
+                navigate('/', { replace: true });
+            }
+        } else if (tab === 'settings') {
+            handleOpenSettings();
+        } else if (tab === 'profile') {
+            handleOpenProfile();
+        }
+    }, [showAIChat, view, handleOpenAIChat, handleOpenSettings, handleOpenProfile, navigate]);
 
     const handleCreateAIChat = useCallback(() => {
         if (temporaryAIChat && activeAIChatId && !aiResponding) {
@@ -2555,7 +2586,6 @@ export function App() {
     const activeRange = activeChatId ? messageRangeState[activeChatId] : undefined;
     const isSavedMessagesActive = currentUser && activeChatId === `saved_messages_${currentUser.chatId}`;
     const aiMessages = activeAIChatId ? aiMessagesByChat[activeAIChatId] || [] : [];
-    const activeAIChat = aiChats.find((c) => c.id === activeAIChatId) || null;
     const isActiveAIResponding = Boolean(activeAIChatId && aiRespondingChatId && activeAIChatId === aiRespondingChatId);
 
     const initialUnreadCount = openChatUnread?.chatId && openChatUnread.chatId === (activeChatId || 'pending')
@@ -2563,14 +2593,22 @@ export function App() {
         : 0;
 
     const currentSearchParams = new URLSearchParams(location.search);
-    const isInfoRouteActive = currentSearchParams.get('panel') === 'info' && view !== 'profile';
+    const isInfoRouteActive = currentSearchParams.get('panel') === 'info' && view !== 'profile' && view !== 'profileEdit';
+
+    const activeNavTab: 'ai' | 'chats' | 'settings' | 'profile' = showAIChat
+        ? 'ai'
+        : view === 'profile' || view === 'profileEdit'
+        ? 'profile'
+        : String(view).startsWith('settings')
+        ? 'settings'
+        : 'chats';
 
     return (
         <MusicPlayerProvider>
             <NotificationCenter />
             <div className={cx('app', 'app--resizable-desktop')} style={desktopSidebarWidth != null ? ({ ['--desktop-sidebar-width' as string]: `${desktopSidebarWidth}px` }) : undefined}>
-                {view !== 'profile' && !String(view).startsWith('settings') && (
-                    <div className={cx('app__sidebar', view === 'chatRoom' && 'app__sidebar--hidden-mobile')}>
+                {!showAIChat && (
+                    <div className={cx('app__sidebar', (view === 'chatRoom' || view === 'newChat' || view === 'profile' || view === 'profileEdit' || String(view).startsWith('settings')) && 'app__sidebar--hidden-mobile')}>
                         <ChatList
                             chats={chats}
                             currentUser={currentUser!}
@@ -2578,46 +2616,58 @@ export function App() {
                             wsConnected={wsConnected}
                             wsReconnectExhausted={wsReconnectExhausted}
                             onSelectChat={handleSelectChat}
-                            onOpenProfile={handleOpenProfile}
                             onNewChatClick={handleNewChatClick}
                             onLogout={handleLogout}
                             onOpenAIChat={handleOpenAIChat}
                             onOpenSavedMessages={handleOpenSavedMessages}
-                            onOpenSettings={handleOpenSettings}
                             onReconnectNow={reconnectNow}
                             onDragHoverChat={handleDragHoverChat}
                             loading={isInitialChatsLoad}
-                            hasUnseenLoginLogs={unseenLoginCount > 0}
+                        />
+                        <BottomNavbar
+                            activeTab={activeNavTab}
+                            onSelectTab={handleSelectNavTab}
+                            currentUser={currentUser}
+                            hasUnseenSettings={unseenLoginCount > 0}
                         />
                     </div>
                 )}
 
-                {view === 'profile' && currentUser && (
+                {showAIChat && (
                     <div className="app__main app__main--full">
-                        <Profile
-                            user={currentUser}
+                        <AIChatRoom
+                            messages={aiMessages}
+                            currentUserId={currentUser!.chatId}
+                            onSendMessage={handleSendAIMessage}
+                            selectedModel={selectedAIModel}
+                            onSelectModel={setSelectedAIModel}
+                            proRemainingToday={aiProRemaining}
+                            flashRemainingToday={aiFlashRemaining}
+                            onStopGenerating={handleStopAIResponse}
+                            onDeleteMessage={handleDeleteAIMessage}
                             onBack={handleBack}
-                            onUpdateProfile={async (u) => {
-                                await apiFetch('/profile/me', { method: 'PATCH', body: JSON.stringify(u) });
-                                setCurrentUser(prev => (prev ? { ...prev, ...u } : null));
-                            }}
+                            loading={aiLoading}
+                            isTyping={isActiveAIResponding ? aiTyping : false}
+                            isResponding={isActiveAIResponding ? aiResponding : false}
+                            isReasoningPending={isActiveAIResponding ? aiReasoningPending : false}
+                            chats={chats}
+                            onSelectChat={handleSelectChat}
+                            onSetPendingForwardDraft={handleSetPendingForwardDraft}
+                            aiChats={aiChats}
+                            activeAIChatId={activeAIChatId}
+                            onCreateAIChat={handleCreateAIChat}
+                            onCreateTemporaryAIChat={handleCreateTemporaryAIChat}
+                            onSelectAIChat={handleSelectAIChat}
+                            onDeleteAIChat={handleDeleteAIChat}
+                            onRenameAIChat={handleRenameAIChat}
+                            respondingAIChatId={aiRespondingChatId}
+                            temporaryMode={temporaryAIChat}
+                            currentUserVerified={Boolean((currentUser as any)?.verified)}
                         />
                     </div>
                 )}
 
-                {String(view).startsWith('settings') && (
-                    <div className="app__main app__main--full">
-                        <Settings
-                            section={view === 'settingsDevices' ? 'devices' : view === 'settingsTheme' ? 'theme' : view === 'settingsLogs' ? 'logs' : view === 'settingsDataStorage' ? 'dataStorage' : 'menu'}
-                            onBack={handleBack}
-                            onOpenSection={(section) => navigate(section === 'logs' ? '/settings/devices/logs' : section === 'dataStorage' ? '/settings/data-storage' : `/settings/${section}`)}
-                            onBackToMenu={() => navigate('/settings')}
-                            loginEvents={loginEvents}
-                            hasUnseenLoginLogs={unseenLoginCount > 0}
-                        />
-                    </div>
-                )}
-                {view !== 'profile' && !String(view).startsWith('settings') && (
+                {!showAIChat && (
                     <div
                         className="app__resizer"
                         onMouseDown={(event) => {
@@ -2631,39 +2681,64 @@ export function App() {
                     />
                 )}
 
-                {view !== 'profile' && !String(view).startsWith('settings') && (
-                    <div className={cx('app__main', view === 'chatList' && 'app__main--hidden-mobile')}>
-                        {view === 'chatRoom' && showAIChat ? (
-                            <AIChatRoom
-                                messages={aiMessages}
-                                currentUserId={currentUser!.chatId}
-                                onSendMessage={handleSendAIMessage}
-                                selectedModel={selectedAIModel}
-                                onSelectModel={setSelectedAIModel}
-                                proRemainingToday={aiProRemaining}
-                                flashRemainingToday={aiFlashRemaining}
-                                onStopGenerating={handleStopAIResponse}
-                                onDeleteMessage={handleDeleteAIMessage}
-                                onBack={handleBack}
-                                loading={aiLoading}
-                                isTyping={isActiveAIResponding ? aiTyping : false}
-                                isResponding={isActiveAIResponding ? aiResponding : false}
-                                isReasoningPending={isActiveAIResponding ? aiReasoningPending : false}
-                                chats={chats}
-                                onSelectChat={handleSelectChat}
-                                onSetPendingForwardDraft={handleSetPendingForwardDraft}
-                                aiChats={aiChats}
-                                activeAIChatId={activeAIChatId}
-                                activeAIChatTitle={activeAIChat?.title}
-                                onCreateAIChat={handleCreateAIChat}
-                                onCreateTemporaryAIChat={handleCreateTemporaryAIChat}
-                                onSelectAIChat={handleSelectAIChat}
-                                onDeleteAIChat={handleDeleteAIChat}
-                                onRenameAIChat={handleRenameAIChat}
-                                respondingAIChatId={aiRespondingChatId}
-                                temporaryMode={temporaryAIChat}
-                                currentUserVerified={Boolean((currentUser as any)?.verified)}
+                {!showAIChat && (
+                    <div className={cx('app__main', view === 'chatList' && 'app__main--hidden-mobile')} style={{ position: 'relative' }}>
+                        {view === 'newChat' ? (
+                            <NewChatModal
+                                onClose={handleCloseNewChat}
+                                onUserSelected={handleUserSelectedFromModal}
+                                onCreateGroup={handleCreateGroup}
+                                onJoinGroup={handleJoinGroup}
+                                currentUser={currentUser}
                             />
+                        ) : (view === 'profile' || view === 'profileEdit') && currentUser ? (
+                            <>
+                                <Profile
+                                    key={view}
+                                    user={currentUser}
+                                    mode={view === 'profileEdit' ? 'edit' : 'view'}
+                                    onUpdateProfile={async (u) => {
+                                        await apiFetch('/profile/me', { method: 'PATCH', body: JSON.stringify(u) });
+                                        setCurrentUser(prev => (prev ? { ...prev, ...u } : null));
+                                    }}
+                                    onEdit={() => {
+                                        setView('profileEdit');
+                                        navigate('/profile/edit');
+                                    }}
+                                    onFinishEdit={() => {
+                                        setView('profile');
+                                        navigate('/profile');
+                                    }}
+                                    onLogout={handleLogout}
+                                />
+                                {view === 'profile' && (
+                                    <BottomNavbar
+                                        activeTab={activeNavTab}
+                                        onSelectTab={handleSelectNavTab}
+                                        currentUser={currentUser}
+                                        hasUnseenSettings={unseenLoginCount > 0}
+                                    />
+                                )}
+                            </>
+                        ) : String(view).startsWith('settings') ? (
+                            <>
+                                <Settings
+                                    key={view}
+                                    section={view === 'settingsDevices' ? 'devices' : view === 'settingsTheme' ? 'theme' : view === 'settingsLogs' ? 'logs' : view === 'settingsDataStorage' ? 'dataStorage' : 'menu'}
+                                    onOpenSection={(section) => navigate(section === 'logs' ? '/settings/devices/logs' : section === 'dataStorage' ? '/settings/data-storage' : `/settings/${section}`)}
+                                    onBackToMenu={() => navigate('/settings')}
+                                    loginEvents={loginEvents}
+                                    hasUnseenLoginLogs={unseenLoginCount > 0}
+                                />
+                                {view === 'settings' && (
+                                    <BottomNavbar
+                                        activeTab={activeNavTab}
+                                        onSelectTab={handleSelectNavTab}
+                                        currentUser={currentUser}
+                                        hasUnseenSettings={unseenLoginCount > 0}
+                                    />
+                                )}
+                            </>
                         ) : view === 'chatRoom' && (activeChat || pendingUser || isSavedMessagesActive) ? (
                             <ChatRoom
                                 key={activeChatId || 'pending'}
@@ -2723,15 +2798,6 @@ export function App() {
                         )}
                     </div>
                 )}
-
-                <NewChatModal
-                    isOpen={newChatModalOpen}
-                    onClose={() => setNewChatModalOpen(false)}
-                    onUserSelected={handleUserSelectedFromModal}
-                    onCreateGroup={handleCreateGroup}
-                    onJoinGroup={handleJoinGroup}
-                    currentUser={currentUser}
-                />
             </div>
             <MiniMusicPlayer />
         </MusicPlayerProvider>
