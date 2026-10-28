@@ -11,6 +11,7 @@ const PALETTE_STORAGE_KEY = 'themePalette';
 const LEGACY_DARK_MODE_KEY = 'darkMode';
 const INTENSITY_STORAGE_KEY = 'themeAccentIntensityV2';
 const ULTRA_DARK_STORAGE_KEY = 'themeUltraDarkV2';
+const BLUR_EFFECT_STORAGE_KEY = 'themeBlurEffect';
 
 
 
@@ -195,6 +196,11 @@ function getInitialUltraDark(): boolean {
   return localStorage.getItem(ULTRA_DARK_STORAGE_KEY) !== 'false';
 }
 
+function getInitialBlurEffect(): boolean {
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem(BLUR_EFFECT_STORAGE_KEY) !== 'false';
+}
+
 const createCustomSurfaceVars = (isDarkMode: boolean): Record<string, string> => {
   if (!isDarkMode) {
     return {
@@ -235,6 +241,7 @@ export function useDarkMode() {
   const [themePalette, setThemePalette] = useState<ThemePalette>(getInitialPalette);
   const [accentIntensity, setAccentIntensity] = useState<AccentIntensity>(getInitialIntensity);
   const [ultraDarkMode, setUltraDarkMode] = useState<boolean>(getInitialUltraDark);
+  const [blurEffect, setBlurEffect] = useState<boolean>(getInitialBlurEffect);
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
@@ -264,6 +271,8 @@ export function useDarkMode() {
     localStorage.setItem(PALETTE_STORAGE_KEY, themePalette);
     localStorage.setItem(INTENSITY_STORAGE_KEY, accentIntensity);
     localStorage.setItem(ULTRA_DARK_STORAGE_KEY, ultraDarkMode ? 'true' : 'false');
+    localStorage.setItem(BLUR_EFFECT_STORAGE_KEY, blurEffect ? 'true' : 'false');
+    root.classList.toggle('no-blur-effect', !blurEffect);
 
     const baseVars = isDarkMode ? neutralThemeVars.dark : neutralThemeVars.light;
     Object.entries(baseVars).forEach(([key, value]) => root.style.setProperty(key, value));
@@ -343,7 +352,7 @@ export function useDarkMode() {
 
     ensureMeta('msapplication-navbutton-color');
     (root.style as any).colorScheme = isDarkMode ? 'dark' : 'light';
-  }, [isDarkMode, themeMode, themeTone, themePalette, accentIntensity, ultraDarkMode]);
+  }, [isDarkMode, themeMode, themeTone, themePalette, accentIntensity, ultraDarkMode, blurEffect]);
 
   return {
     themeMode,
@@ -358,5 +367,7 @@ export function useDarkMode() {
     setAccentIntensity,
     ultraDarkMode,
     setUltraDarkMode,
+    blurEffect,
+    setBlurEffect,
   };
 }

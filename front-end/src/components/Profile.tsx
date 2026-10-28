@@ -63,9 +63,12 @@ export function Profile({ user, mode, onUpdateProfile, onEdit, onFinishEdit, onL
     };
 
     const handleCopy = (text: string, field: string) => {
-        copyText(text).catch(() => { });
-        setCopiedField(field);
-        setTimeout(() => setCopiedField(null), 2000);
+        copyText(text)
+            .then(() => {
+                setCopiedField(field);
+                setTimeout(() => setCopiedField(null), 2000);
+            })
+            .catch(() => alert('کپی انجام نشد'));
     };
 
     useEffect(() => {

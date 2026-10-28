@@ -4,8 +4,10 @@ import { BrowserRouter } from "react-router-dom";
 import "./index.css";
 import { App } from "./App";
 import { installScrollbarAutohide } from "./utils/scrollbarAutohide";
+import { initEmojiFont } from "./utils/emojiFont";
 
 installScrollbarAutohide();
+void initEmojiFont();
 
 createRoot(document.getElementById("root")!).render(
     <StrictMode>

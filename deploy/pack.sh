@@ -25,6 +25,34 @@ if ! command -v zip &> /dev/null; then
   exit 1
 fi
 
+INCLUDE_FONT=""
+for arg in "$@"; do
+  case "$arg" in
+    --with-emoji|--include-font)
+      INCLUDE_FONT="yes"
+      ;;
+    --no-emoji|--skip-font)
+      INCLUDE_FONT="no"
+      ;;
+  esac
+done
+
+if [ -z "${INCLUDE_FONT}" ]; then
+  if [ -n "${INCLUDE_EMOJI_FONT}" ]; then
+    INCLUDE_FONT="${INCLUDE_EMOJI_FONT}"
+  elif [ -t 0 ]; then
+    echo ""
+    read -r -p "Include iOS emoji font (~40MB) in this deployment? [y/N]: " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+      INCLUDE_FONT="yes"
+    else
+      INCLUDE_FONT="no"
+    fi
+  else
+    INCLUDE_FONT="no"
+  fi
+fi
+
 echo "[1/4] Building frontend (Vite)..."
 cd "${ROOT_DIR}/front-end"
 
@@ -57,6 +85,30 @@ tar --exclude='.venv' \
     -cf - -C "${ROOT_DIR}/back-end" . | tar -xf - -C "${STAGE_DIR}/back-end"
 
 cp -r "${ROOT_DIR}/front-end/dist" "${STAGE_DIR}/front-end/"
+rm -rf "${STAGE_DIR}/front-end/dist/system"
+
+if [ "${INCLUDE_FONT}" = "yes" ] || [ "${INCLUDE_FONT}" = "1" ] || [ "${INCLUDE_FONT}" = "true" ]; then
+  FONT_SRC=""
+  for candidate in \
+    "${ROOT_DIR}/uploads/static/fonts/NotoColorEmoji.ttf" \
+    "${ROOT_DIR}/back-end/uploads/static/fonts/NotoColorEmoji.ttf"
+  do
+    if [ -f "${candidate}" ]; then
+      FONT_SRC="${candidate}"
+      break
+    fi
+  done
+
+  if [ -n "${FONT_SRC}" ]; then
+    mkdir -p "${STAGE_DIR}/back-end/uploads/static/fonts"
+    cp "${FONT_SRC}" "${STAGE_DIR}/back-end/uploads/static/fonts/NotoColorEmoji.ttf"
+    echo "[*] Included iOS emoji font in deployment package."
+  else
+    echo "[!] Warning: Font NotoColorEmoji.ttf not found in uploads/static/fonts!"
+  fi
+else
+  echo "[*] Skipping iOS emoji font (lightweight deployment)."
+fi
 
 cp "${ROOT_DIR}/docker/nginx.conf" "${STAGE_DIR}/docker/"
 cp "${ROOT_DIR}/docker/supervisord.conf" "${STAGE_DIR}/docker/"
@@ -104,5 +156,10 @@ echo "[4/4] Package created successfully!"
 echo "----------------------------------------------"
 echo "Output File : ${ZIP_PATH}"
 echo "File Size   : $(du -h "${ZIP_PATH}" | cut -f1)"
+if [ "${INCLUDE_FONT}" = "yes" ] || [ "${INCLUDE_FONT}" = "1" ] || [ "${INCLUDE_FONT}" = "true" ]; then
+  echo "Emoji Font  : Included (~40MB)"
+else
+  echo "Emoji Font  : Excluded (lightweight update)"
+fi
 echo "----------------------------------------------"
 echo "Ready to upload to Runflare Docker service!"

@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from starlette.websockets import WebSocketState
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
@@ -53,6 +53,7 @@ from email_service import (
 )
 from api_reaction_helper import aggregate_reactions
 from file_service import (
+    UPLOAD_DIR,
     save_uploaded_file,
     delete_file,
     validate_file_access,
@@ -3012,6 +3013,38 @@ async def remove_uploaded_file(
     if not deleted:
         raise HTTPException(status_code=404, detail="File not found")
     return {"success": True}
+
+
+@app.get("/static/fonts/{filename}")
+@app.get("/fonts/{filename}")
+@limiter.limit("60/minute")
+async def get_static_font(filename: str, request: Request):
+    safe_name = os.path.basename(filename)
+    candidates = [
+        UPLOAD_DIR / "static" / "fonts" / safe_name,
+        Path("uploads/static/fonts") / safe_name,
+        Path("back-end/uploads/static/fonts") / safe_name,
+        Path(__file__).resolve().parent / "uploads" / "static" / "fonts" / safe_name,
+        Path(__file__).resolve().parent.parent / "uploads" / "static" / "fonts" / safe_name,
+        Path("/app/back-end/uploads/static/fonts") / safe_name,
+        Path("/app/uploads/static/fonts") / safe_name,
+    ]
+    for path in candidates:
+        if path.is_file():
+            media_type = (
+                "font/ttf"
+                if safe_name.endswith(".ttf")
+                else ("font/woff2" if safe_name.endswith(".woff2") else "application/octet-stream")
+            )
+            return FileResponse(
+                path=str(path),
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+    raise HTTPException(status_code=404, detail="Font not found")
 
 
 @app.post("/chats/{chat_id}/messages/{message_id}/react")

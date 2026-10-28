@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { X, Search, MessageCircle, Bookmark } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { Search, ChevronRight, Bookmark } from 'lucide-react';
+import { AnimatePresence, motion, useDragControls } from 'framer-motion';
 import type { Chat } from '../types';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
@@ -22,6 +22,7 @@ const toPersianDigits = (num: number | string) =>
 
 export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified = false, forwardCount, onClose, onForward, onSelectTargetChat, onSelectChat }: ForwardModalProps) {
     const [searchQuery, setSearchQuery] = useState('');
+    const dragControls = useDragControls();
 
     const handlePickChat = (chatId: string) => {
         if (onSelectTargetChat) {
@@ -34,7 +35,6 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         onClose();
     };
 
-    
     const savedMessagesChat = {
         id: `saved_messages_${currentUserId}`,
         name: 'پیام‌های ذخیره شده',
@@ -51,7 +51,6 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         });
     }, [chats]);
 
-    
     const availableChats = sortedChats.filter((chat) => {
         if (chat.id.startsWith('saved_messages_')) return false;
         if (chat.id === 'official-channel' && !currentUserVerified) return false;
@@ -69,37 +68,52 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         )
         : availableChats;
 
-    
     const showSavedMessages = !searchQuery;
+    const isGroupChat = (chat: Chat) =>
+        chat.chatType === 'group' || chat.id.startsWith('grp_') || Boolean(chat.otherUser?.isGroup);
 
     return (
         <AnimatePresence>
             {isOpen && (
                 <motion.div
-                    className="modal-overlay"
+                    className="forward-sheet-overlay"
                     onClick={onClose}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.18 }}
+                    initial={false}
+                    exit={{ opacity: 1 }}
+                    transition={{ duration: 0.28 }}
                 >
                     <motion.div
-                        className="forward-modal"
+                        className="forward-sheet"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="فوروارد پیام"
                         onClick={(e) => e.stopPropagation()}
-                        initial={{ y: 26, opacity: 0, scale: 0.98 }}
-                        animate={{ y: 0, opacity: 1, scale: 1 }}
-                        exit={{ y: 16, opacity: 0, scale: 0.98 }}
-                        transition={{ duration: 0.2, ease: 'easeOut' }}
+                        initial={{ y: '100%' }}
+                        animate={{ y: 0 }}
+                        exit={{ y: '100%' }}
+                        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                        drag="y"
+                        dragListener={false}
+                        dragControls={dragControls}
+                        dragConstraints={{ top: 0, bottom: 0 }}
+                        dragElastic={{ top: 0, bottom: 0.7 }}
+                        onDragEnd={(_, info) => {
+                            if (info.offset.y > 90 || info.velocity.y > 600) onClose();
+                        }}
                     >
-                        <div className="modal-header">
-                            <h2>{forwardCount && forwardCount > 1 ? `فوروارد ${toPersianDigits(forwardCount)} پیام` : 'فوروارد پیام'}</h2>
-                            <button className="icon-btn" onClick={onClose} type="button" aria-label="Close">
-                                <X size={20} />
-                            </button>
+                        <div
+                            className="forward-sheet__drag-area"
+                            onPointerDown={(e) => dragControls.start(e)}
+                        >
+                            <div className="forward-sheet__grabber" aria-hidden="true" />
+
+                            <div className="forward-sheet__header">
+                                <h2>{forwardCount && forwardCount > 1 ? `فوروارد ${toPersianDigits(forwardCount)} پیام` : 'فوروارد پیام'}</h2>
+                            </div>
                         </div>
 
-                        <div className="search-box">
-                            <Search size={18} />
+                        <div className="forward-sheet__search">
+                            <Search size={17} />
                             <input
                                 type="text"
                                 placeholder="جستجو در گفتگو‌ها..."
@@ -108,26 +122,23 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                             />
                         </div>
 
-                        <div className="results">
+                        <div className="forward-sheet__results">
                             {showSavedMessages && (
                                 <button
-                                    key={savedMessagesChat.id}
-                                    className="user-item"
+                                    className="forward-sheet__item"
                                     onClick={() => handlePickChat(savedMessagesChat.id)}
                                     type="button"
                                 >
                                     <Avatar name="" size="md" online={false} savedMessages />
-                                    <div className="user-item-info">
-                                        <div className="user-name" style={{ fontFamily: "'Vazir', 'AppleEmoji', sans-serif" }}>
-                                            {savedMessagesChat.name}
-                                        </div>
+                                    <div className="forward-sheet__item-info">
+                                        <div className="forward-sheet__item-name">{savedMessagesChat.name}</div>
                                     </div>
-                                    <Bookmark size={18} style={{ color: 'var(--text-tertiary)', marginLeft: 'auto' }} />
+                                    <Bookmark size={17} className="forward-sheet__item-icon" />
                                 </button>
                             )}
 
                             {filteredChats.length === 0 && !showSavedMessages ? (
-                                <div className="no-results">
+                                <div className="forward-sheet__empty">
                                     {searchQuery ? 'گفتگویی یافت نشد' : 'گفتگوی فعالی وجود ندارد'}
                                 </div>
                             ) : (
@@ -138,7 +149,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                                     return (
                                         <button
                                             key={chat.id}
-                                            className="user-item"
+                                            className="forward-sheet__item"
                                             onClick={() => handlePickChat(chat.id)}
                                             type="button"
                                         >
@@ -148,14 +159,14 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                                                 online={user.online}
                                                 src={chat.id === 'official-channel' ? '/logo/ch.png' : user.avatar}
                                             />
-                                            <div className="user-item-info">
-                                                <div className="user-name" style={{ fontFamily: "'Vazir', 'AppleEmoji', sans-serif", display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                    {user.name}
+                                            <div className="forward-sheet__item-info">
+                                                <div className="forward-sheet__item-name">
+                                                    <span>{user.name}</span>
                                                     {user.verified && <VerifiedBadge size={14} />}
                                                 </div>
-                                                <div className="user-username" style={{ fontFamily: "'Vazir', 'AppleEmoji', sans-serif" }}>@{user.username}</div>
+                                                <div className="forward-sheet__item-username">{isGroupChat(chat) ? user.username : `@${user.username}`}</div>
                                             </div>
-                                            <MessageCircle size={18} style={{ color: 'var(--text-tertiary)', marginLeft: 'auto' }} />
+                                            <ChevronRight size={17} className="forward-sheet__item-icon" />
                                         </button>
                                     );
                                 })

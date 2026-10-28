@@ -204,9 +204,12 @@ export function ContactInfo({
         const un = (user.username || '').trim();
         if (!un) return;
         const textToCopy = isInviteLink(un) ? un : `@${un}`;
-        copyText(textToCopy).catch(() => { });
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+        copyText(textToCopy)
+            .then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => alert('کپی انجام نشد'));
     };
 
     const canOpenChat = Boolean(onOpenChat) && !isGroup && Boolean(user.chatId) && user.chatId !== 'saved';
