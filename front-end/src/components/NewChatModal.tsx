@@ -148,11 +148,6 @@ export function NewChatModal({ onClose, onUserSelected, onCreateGroup, onJoinGro
             initial="hidden"
             animate="visible"
             exit="exit"
-            onPointerDownCapture={(e) => {
-                const target = e.target as HTMLElement;
-                if (target.closest('input, textarea')) return;
-                e.preventDefault();
-            }}
         >
             <div className={cx('header-fade', 'header-fade--screen', scrolled && 'header-fade--visible')} aria-hidden="true" />
             <div className="profile__header">

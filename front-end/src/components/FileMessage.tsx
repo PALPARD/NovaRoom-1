@@ -8,7 +8,7 @@ import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { getCachedBlob, getOrCacheBlob, deleteCachedBlob } from '../utils/mediaCache';
 import { autoDownloadCookieKeys, isAutoDownloadEnabled } from '../utils/autoDownloadPrefs';
 
-interface FileMessageProps { file: FileMetadata; token: string; chatId: string; onMediaLoad?: () => void; onImageClick?: (imageUrl: string, file: FileMetadata) => void; onVideoClick?: (videoUrl: string, file: FileMetadata) => void; }
+interface FileMessageProps { file: FileMetadata; token: string; chatId: string; onMediaLoad?: () => void; onMediaError?: () => void; onImageClick?: (imageUrl: string, file: FileMetadata) => void; onVideoClick?: (videoUrl: string, file: FileMetadata) => void; }
 type DownloadState = 'idle' | 'downloading' | 'decrypting' | 'done' | 'error';
 type DownloadSubscriber = (state: DownloadState, progress: number) => void;
 type DownloadTask = {
@@ -21,7 +21,7 @@ type DownloadTask = {
 };
 const fileDownloadTasks = new Map<string, DownloadTask>();
 
-export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, onVideoClick }: FileMessageProps) {
+export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, onImageClick, onVideoClick }: FileMessageProps) {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewAspectRatio, setPreviewAspectRatio] = useState<number | null>(null);
@@ -306,9 +306,9 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onImageClick, on
         }
         if (!mediaUrl) void startDownload();
       }}>
-        {mediaUrl ? (isImage ? <img src={mediaUrl} alt={file.fileName} style={{ objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => onMediaLoad?.()} onClick={() => onImageClick?.(mediaUrl, file)} /> : <button type="button" className="file-video-thumb" onClick={() => onVideoClick?.(mediaUrl, file)}><video src={mediaUrl} preload="metadata" muted playsInline onLoadedMetadata={handleMediaRendered} onError={() => onMediaLoad?.()} style={{ width: '100%', height: '100%', objectFit: shouldContain ? 'contain' : 'cover', background: '#000' }} /><span className="file-video-duration">{formatDuration(mediaDuration)}</span><span className="file-video-play-badge"><Play size={20} fill="currentColor" /></span></button>) :
+        {mediaUrl ? (isImage ? <img src={mediaUrl} alt={file.fileName} style={{ objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} onClick={() => onImageClick?.(mediaUrl, file)} /> : <button type="button" className="file-video-thumb" onClick={() => onVideoClick?.(mediaUrl, file)}><video src={mediaUrl} preload="metadata" muted playsInline onLoadedMetadata={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} style={{ width: '100%', height: '100%', objectFit: shouldContain ? 'contain' : 'cover', background: '#000' }} /><span className="file-video-duration">{formatDuration(mediaDuration)}</span><span className="file-video-play-badge"><Play size={20} fill="currentColor" /></span></button>) :
           (<>
-            {previewUrl ? <img src={previewUrl} alt="preview" style={{ filter: 'blur(4px)', objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => onMediaLoad?.()} /> : <div style={{ width: '100%', height: '100%', background: '#000' }} />}
+            {previewUrl ? <img src={previewUrl} alt="preview" style={{ filter: 'blur(4px)', objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} /> : <div style={{ width: '100%', height: '100%', background: '#000' }} />}
             {isVideo && <button type="button" className="file-video-center-play" onClick={(e) => { e.stopPropagation(); startDownload(); }}><Play size={20} fill="currentColor" /></button>}
             {isVideo && <span className="file-video-duration file-video-duration--top">{formatDuration(mediaDuration || 0)}</span>}
             <div className={`manual-download-wrap ${isImage ? 'manual-download-wrap--center' : ''} ${isVideo ? 'manual-download-wrap--video' : ''}`}>

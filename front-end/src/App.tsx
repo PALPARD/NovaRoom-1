@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey } from './types';
 import { apiFetch } from './config/api';
@@ -23,6 +23,8 @@ import { useDarkMode } from './hooks/useDarkMode';
 import { BottomNavbar } from './components/BottomNavbar';
 import './App.css';
 
+
+const EMPTY_IDS: string[] = [];
 
 const normalizeTimestamp = (ts: unknown): number => {
     if (typeof ts === 'number' && Number.isFinite(ts)) return ts;
@@ -2480,7 +2482,7 @@ export function App() {
         setAIRespondingChatId(null);
     }, [stopAIGeneration]);
 
-    const getActiveContact = (): User => {
+    const getActiveContact = useCallback((): User => {
         if (pendingUser) return pendingUser;
 
         if (currentUser && activeChatId === `saved_messages_${currentUser.chatId}`) {
@@ -2525,7 +2527,9 @@ export function App() {
             online: false,
             verified: false,
         };
-    };
+    }, [pendingUser, currentUser, activeChatId, chats]);
+
+    const activeContact = useMemo(() => getActiveContact(), [getActiveContact]);
 
     useEffect(() => {
         if (!isAuthenticated) return;
@@ -2743,7 +2747,7 @@ export function App() {
                             <ChatRoom
                                 key={activeChatId || 'pending'}
                                 chatId={activeChatId || 'pending'}
-                                contact={getActiveContact()}
+                                contact={activeContact}
                                 messages={activeMessages}
                                 currentUserId={currentUser!.chatId}
                                 currentUser={currentUser}
@@ -2774,8 +2778,8 @@ export function App() {
                                 pendingForwardDraft={activeChatId ? (pendingForwardDrafts[activeChatId] || null) : null}
                                 onSetPendingForwardDraft={handleSetPendingForwardDraft}
                                 onClearPendingForwardDraft={handleClearPendingForwardDraft}
-                                typingUserIds={typingUserIdsByChat[activeChatId || 'pending'] || []}
-                                uploadingUserIds={uploadingUserIdsByChat[activeChatId || 'pending'] || []}
+                                typingUserIds={typingUserIdsByChat[activeChatId || 'pending'] || EMPTY_IDS}
+                                uploadingUserIds={uploadingUserIdsByChat[activeChatId || 'pending'] || EMPTY_IDS}
                                 onTypingChange={(targetChatId, isTyping) => sendTyping(targetChatId, isTyping)}
                                 onUploadStatusChange={(targetChatId, isUploading) => sendUploadStatus(targetChatId, isUploading)}
                                 isUserBlocked={isUserBlocked}

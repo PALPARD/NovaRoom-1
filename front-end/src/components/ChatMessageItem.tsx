@@ -1,0 +1,590 @@
+import { memo, useCallback, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react';
+import { Check, ChevronDown, Copy } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
+import type { FileMetadata, Message } from '../types';
+import { Avatar } from './Avatar';
+import { FileMessage } from './FileMessage';
+
+export type ReactionEntry = { emoji: string; count: number; userIds: string[] };
+
+type ChatMessageActions = {
+    openMenu: (messageId: string, targetEl: HTMLElement, clientX?: number, clientY?: number) => void;
+    openReactionMenu: (messageId: string, targetEl: HTMLElement) => void;
+    react: (messageId: string, emoji: string) => void;
+    deleteReaction: (messageId: string) => void;
+    reply: (message: Message) => void;
+    toggleSelect: (messageId: string) => void;
+    scrollToMessage: (messageId: string) => void;
+    openForwardSource: (message: Message) => void;
+    openMember: (memberId: string) => void;
+    toggleReasoning: (messageId: string) => void;
+    mediaReady: (messageId: string) => void;
+    openImage: (url: string, file: FileMetadata | null) => void;
+    openVideo: (url: string, file: FileMetadata | null) => void;
+    swipeLock: (locked: boolean) => void;
+    registerEl: (messageId: string, el: HTMLDivElement | null) => void;
+};
+
+export type ChatMessageItemProps = {
+    message: Message;
+    displayText: string;
+    isMine: boolean;
+    isGroupChat: boolean;
+    isOfficialChannel: boolean;
+    isSelectionModeActive: boolean;
+    canSwipeToReply: boolean;
+    currentUserId: string;
+    token: string;
+    chatId: string;
+    dayBreak: boolean;
+    dayLabel: string;
+    formattedTime: string;
+    shape: string;
+    isBigEmojiOnly: boolean;
+    emojiOnlyClass: string;
+    senderName: string;
+    senderAvatar: string;
+    replySenderName: string;
+    replyPreviewText: string;
+    reactions: ReactionEntry[];
+    isHighlighted: boolean;
+    isSelected: boolean;
+    showUnreadSeparator: boolean;
+    unreadCountForUi: number;
+    isMenuActive: boolean;
+    isSeenForUi: boolean;
+    messageSeenCount: number;
+    reasoningOpen: boolean;
+    unreadSeparatorRef: RefObject<HTMLDivElement | null>;
+    actions: ChatMessageActions;
+};
+
+const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+const toPersianDigits = (value: string | number): string => String(value).replace(/\d/g, (d) => PERSIAN_DIGITS[Number(d)] ?? d);
+const SENDER_COLORS = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50', '#FF5722', '#FF9800'];
+
+function normalizeMessageTextForRender(text: string): string {
+    let t = String(text || '').replace(/\\n/g, '\n');
+    t = t.replace(/\\\[/g, '$$$$');
+    t = t.replace(/\\\]/g, '$$$$');
+    t = t.replace(/\\\(/g, '$$');
+    t = t.replace(/\\\)/g, '$$');
+    return t;
+}
+
+const MemoMarkdown = memo(function MemoMarkdown({ text, components }: { text: string; components: Components }) {
+    return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+            {normalizeMessageTextForRender(text)}
+        </ReactMarkdown>
+    );
+});
+
+function CodeBlock({ className, children }: { className?: string; children?: React.ReactNode }) {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = async () => {
+        const code = typeof children === 'string' ? children : String(children ?? '');
+        try {
+            if (navigator.clipboard && (window as unknown as { isSecureContext?: boolean }).isSecureContext) {
+                await navigator.clipboard.writeText(code);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = code;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            return;
+        }
+    };
+
+    const lang = className?.replace('language-', '') ?? '';
+
+    return (
+        <div className="md-code-block-wrapper">
+            <div className="md-code-block-header">
+                {lang && <span className="md-code-lang">{lang}</span>}
+                <button
+                    type="button"
+                    className={copied ? 'md-code-copy-btn md-code-copy-btn--copied' : 'md-code-copy-btn'}
+                    onClick={handleCopy}
+                    aria-label="Copy code"
+                >
+                    {copied ? <Check size={13} /> : <Copy size={13} />}
+                </button>
+            </div>
+            <pre className="md-code-block">
+                <code className={className}>{children}</code>
+            </pre>
+        </div>
+    );
+}
+
+const markdownComponents: Components = {
+    code({ className, children, ...props }) {
+        const isInline = !('data-language' in props) && !className?.includes('language-');
+        if (!isInline) {
+            return <CodeBlock className={className}>{children}</CodeBlock>;
+        }
+        return <code className="md-code-inline">{children}</code>;
+    },
+    h1: ({ children }: { children?: React.ReactNode }) => <h1 className="md-h1">{children}</h1>,
+    h2: ({ children }: { children?: React.ReactNode }) => <h2 className="md-h2">{children}</h2>,
+    h3: ({ children }: { children?: React.ReactNode }) => <h3 className="md-h3">{children}</h3>,
+    h4: ({ children }: { children?: React.ReactNode }) => <h4 className="md-h4">{children}</h4>,
+    h5: ({ children }: { children?: React.ReactNode }) => <h5 className="md-h5">{children}</h5>,
+    h6: ({ children }: { children?: React.ReactNode }) => <h6 className="md-h6">{children}</h6>,
+    p: ({ children }: { children?: React.ReactNode }) => <p className="md-p">{children}</p>,
+    ul: ({ children }: { children?: React.ReactNode }) => <ul className="md-ul">{children}</ul>,
+    ol: ({ children }: { children?: React.ReactNode }) => <ol className="md-ol">{children}</ol>,
+    li: ({ children }: { children?: React.ReactNode }) => <li className="md-li">{children}</li>,
+    strong: ({ children }: { children?: React.ReactNode }) => <strong className="md-strong">{children}</strong>,
+    em: ({ children }: { children?: React.ReactNode }) => <em className="md-em">{children}</em>,
+    del: ({ children }: { children?: React.ReactNode }) => <del className="md-del">{children}</del>,
+    blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="md-blockquote">{children}</blockquote>,
+    a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+        <a className="md-link" href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+    ),
+};
+
+function hasMarkdownSyntax(text: string): boolean {
+    return /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)|(```|`[^`]+`|\[[^\]]+]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|\$\$?[\s\S]+?\$\$?|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/m.test(text);
+}
+
+function renderTextWithLinks(text: string): React.ReactNode {
+    const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+    const isUrl = (value: string) => /^(https?:\/\/[^\s]+|www\.[^\s]+)$/i.test(value);
+    const parts = text.split(urlRegex);
+    return parts.map((part, idx) => {
+        if (!part) return null;
+        if (isUrl(part)) {
+            const href = part.startsWith('http') ? part : `https://${part}`;
+            return <a key={`${part}-${idx}`} className="md-link" href={href} target="_blank" rel="noopener noreferrer">{part}</a>;
+        }
+        return <span key={`${idx}-${part.slice(0, 8)}`}>{part}</span>;
+    });
+}
+
+const MemoMessageTextContent = memo(function MemoMessageTextContent({
+    rawText,
+    isBigEmojiOnly,
+    emojiOnlyClass,
+}: {
+    rawText: string;
+    isBigEmojiOnly: boolean;
+    emojiOnlyClass: string;
+}) {
+    const normalized = useMemo(() => normalizeMessageTextForRender(rawText), [rawText]);
+    const isMarkdown = useMemo(() => hasMarkdownSyntax(normalized), [normalized]);
+    const linkedNodes = useMemo(() => (isMarkdown ? null : renderTextWithLinks(normalized)), [isMarkdown, normalized]);
+
+    if (isMarkdown) {
+        return (
+            <div className="message-text message-text--markdown">
+                <MemoMarkdown text={normalized} components={markdownComponents} />
+            </div>
+        );
+    }
+    return (
+        <div className={isBigEmojiOnly ? `message-text message-text--emoji-only ${emojiOnlyClass}` : 'message-text'}>
+            {linkedNodes}
+        </div>
+    );
+});
+
+function triggerHaptic() {
+    try { navigator.vibrate?.(10); } catch { return; }
+}
+
+function shallowRecordEqual(a: object, b: object) {
+    const aKeys = Object.keys(a);
+    if (aKeys.length !== Object.keys(b).length) return false;
+    return aKeys.every((key) => Object.is(
+        (a as Record<string, unknown>)[key],
+        (b as Record<string, unknown>)[key],
+    ));
+}
+
+function chatMessageItemPropsEqual(prev: ChatMessageItemProps, next: ChatMessageItemProps) {
+    if (prev.message !== next.message && !shallowRecordEqual(prev.message, next.message)) return false;
+    const keys = Object.keys(prev) as (keyof ChatMessageItemProps)[];
+    if (keys.length !== Object.keys(next).length) return false;
+    return keys.every((key) => key === 'message' || Object.is(prev[key], next[key]));
+}
+
+export const ChatMessageItem = memo(function ChatMessageItem({
+    message,
+    displayText,
+    isMine,
+    isGroupChat,
+    isOfficialChannel,
+    isSelectionModeActive,
+    canSwipeToReply,
+    currentUserId,
+    token,
+    chatId,
+    dayBreak,
+    dayLabel,
+    formattedTime,
+    shape,
+    isBigEmojiOnly,
+    emojiOnlyClass,
+    senderName,
+    senderAvatar,
+    replySenderName,
+    replyPreviewText,
+    reactions,
+    isHighlighted,
+    isSelected,
+    showUnreadSeparator,
+    unreadCountForUi,
+    isMenuActive,
+    isSeenForUi,
+    messageSeenCount,
+    reasoningOpen,
+    unreadSeparatorRef,
+    actions,
+}: ChatMessageItemProps) {
+    const bubbleRef = useRef<HTMLDivElement | null>(null);
+    const swipeRef = useRef({ startX: 0, startY: 0, active: false, captured: false, pointerId: null as number | null, blockClickUntil: 0 });
+
+    const setBubbleRef = useCallback((el: HTMLDivElement | null) => {
+        bubbleRef.current = el;
+        actions.registerEl(message.id, el);
+    }, [actions, message.id]);
+
+    const resetDrag = () => {
+        const el = bubbleRef.current;
+        if (el) {
+            el.style.transition = 'transform 140ms ease-out, box-shadow 220ms ease';
+            el.style.transform = '';
+            el.style.touchAction = '';
+        }
+        actions.swipeLock(false);
+    };
+
+    const applyDragOffset = (dx: number) => {
+        const el = bubbleRef.current;
+        if (!el) return;
+        el.style.transition = 'none';
+        el.style.touchAction = 'none';
+        el.style.transform = `translateX(${Math.max(0, Math.min(72, dx))}px)`;
+    };
+
+    const sortedReactions = useMemo(
+        () => reactions.slice().sort((a, b) => Number(b?.count || 0) - Number(a?.count || 0)),
+        [reactions],
+    );
+
+    const senderColor = useMemo(() => {
+        if (!message.senderId) return SENDER_COLORS[0];
+        const idx = Math.abs(String(message.senderId).split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % SENDER_COLORS.length;
+        return SENDER_COLORS[idx];
+    }, [message.senderId]);
+
+    return (
+        <div>
+            {dayBreak && (
+                <div className="chat-room__date-separator">
+                    <div className="chat-room__date-label">{dayLabel}</div>
+                </div>
+            )}
+
+            {showUnreadSeparator && (
+                <div ref={unreadSeparatorRef} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', justifyContent: 'center' }}>
+                    <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 999, padding: '6px 10px', fontFamily: 'Vazir, sans-serif' }}>
+                        پیام‌های خوانده نشده{unreadCountForUi > 0 ? ` (${toPersianDigits(unreadCountForUi)})` : ''}
+                    </div>
+                    <div style={{ height: 1, background: 'var(--border-primary)', flex: 1, opacity: 0.8 }} />
+                </div>
+            )}
+
+            <div
+                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isSelected ? 'message-row--selected' : ''}`}
+                onPointerDown={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+                    swipeRef.current = { ...swipeRef.current, startX: e.clientX, startY: e.clientY, active: true, captured: false, pointerId: e.pointerId };
+                }}
+                onPointerMove={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (e.pointerType !== 'mouse' || !swipeRef.current.active) return;
+                    const dx = e.clientX - swipeRef.current.startX;
+                    const dy = e.clientY - swipeRef.current.startY;
+                    if (!swipeRef.current.captured) {
+                        if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
+                        swipeRef.current.captured = true;
+                        actions.swipeLock(true);
+                        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { void 0; }
+                    }
+                    e.preventDefault();
+                    applyDragOffset(dx);
+                }}
+                onPointerUp={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (e.pointerType !== 'mouse' || !swipeRef.current.active) return;
+                    const dx = e.clientX - swipeRef.current.startX;
+                    const dy = e.clientY - swipeRef.current.startY;
+                    if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
+                    if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
+                        actions.reply(message);
+                        triggerHaptic();
+                    }
+                    resetDrag();
+                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                }}
+                onPointerCancel={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (e.pointerType !== 'mouse') return;
+                    resetDrag();
+                    swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
+                }}
+                onTouchStart={(e) => {
+                    if (!canSwipeToReply) return;
+                    const t = e.touches[0];
+                    swipeRef.current = { ...swipeRef.current, startX: t.clientX, startY: t.clientY, active: true, captured: false };
+                }}
+                onTouchMove={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (!swipeRef.current.active) return;
+                    const t = e.touches[0];
+                    const dx = t.clientX - swipeRef.current.startX;
+                    const dy = t.clientY - swipeRef.current.startY;
+                    if (!swipeRef.current.captured) {
+                        if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
+                        swipeRef.current.captured = true;
+                        actions.swipeLock(true);
+                    }
+                    applyDragOffset(dx);
+                }}
+                onTouchEnd={(e) => {
+                    if (!canSwipeToReply) return;
+                    if (!swipeRef.current.active) return;
+                    const t = e.changedTouches[0];
+                    const dx = t.clientX - swipeRef.current.startX;
+                    const dy = t.clientY - swipeRef.current.startY;
+                    if (swipeRef.current.captured) swipeRef.current.blockClickUntil = Date.now() + 280;
+                    if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
+                        actions.reply(message);
+                        triggerHaptic();
+                    }
+                    resetDrag();
+                    swipeRef.current = { ...swipeRef.current, active: false, captured: false };
+                }}
+                onTouchCancel={() => {
+                    if (!canSwipeToReply) return;
+                    resetDrag();
+                    swipeRef.current = { ...swipeRef.current, active: false, captured: false };
+                }}
+            >
+                {isSelectionModeActive && (
+                    <div
+                        className={`message-select-indicator ${isSelected ? 'message-select-indicator--selected' : ''}`}
+                        onClick={(e: ReactMouseEvent) => {
+                            e.stopPropagation();
+                            actions.toggleSelect(message.id);
+                        }}
+                        role="checkbox"
+                        aria-checked={isSelected}
+                        title={isSelected ? 'لغو انتخاب' : 'انتخاب پیام'}
+                    >
+                        {isSelected && <Check size={13} strokeWidth={3} />}
+                    </div>
+                )}
+
+                {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (
+                    <div style={{ position: 'absolute', left: 0, bottom: 0, cursor: 'pointer', zIndex: 1 }}
+                        onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}>
+                        <Avatar name={senderName} size="sm" src={senderAvatar} />
+                    </div>
+                )}
+
+                <div
+                    ref={setBubbleRef}
+                    className={isMine
+                        ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`
+                        : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (Date.now() < swipeRef.current.blockClickUntil) return;
+                        if (isSelectionModeActive) {
+                            actions.toggleSelect(message.id);
+                            return;
+                        }
+                        const ne = e.nativeEvent as MouseEvent;
+                        const hasPointer = typeof ne.clientX === 'number' && typeof ne.clientY === 'number' && (ne.clientX > 0 || ne.clientY > 0);
+                        actions.openMenu(message.id, e.currentTarget, hasPointer ? ne.clientX : undefined, hasPointer ? ne.clientY : undefined);
+                    }}
+                    role="button" tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') actions.openMenu(message.id, e.currentTarget); }}
+                    style={{
+                        cursor: 'pointer',
+                        transform: 'translateX(0px)',
+                        transition: 'transform 140ms ease-out, box-shadow 220ms ease',
+                        touchAction: 'auto',
+                        boxShadow: isMenuActive
+                            ? 'inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 36%, transparent)'
+                            : 'inset 0 0 0 2px rgba(0,0,0,0)',
+                    }}
+                >
+                    {isGroupChat && !isMine && !isBigEmojiOnly && (shape === 'msg-shape--single' || shape === 'msg-shape--first') && (
+                        <div onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}
+                            style={{ fontSize: 13, fontWeight: 700, color: senderColor, marginBottom: 3, cursor: 'pointer', fontFamily: "'Vazir', 'AppleEmoji', sans-serif", lineHeight: '1.2' }}>
+                            {senderName}
+                        </div>
+                    )}
+
+                    {message.forwardedFrom && (
+                        <button
+                            type="button"
+                            className="message-forwarded-label"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                actions.openForwardSource(message);
+                            }}
+                        >
+                            فوروارد شده از: {message.forwardedFrom.name || message.forwardedFrom.username || 'ناشناس'}
+                        </button>
+                    )}
+
+                    {message.replyTo && (
+                        <div onClick={(e) => { e.stopPropagation(); actions.scrollToMessage(message.replyTo!.id); }}
+                            role="button" tabIndex={0}
+                            onKeyDown={(e) => { if (e.key === 'Enter') actions.scrollToMessage(message.replyTo!.id); }}
+                            className="message-reply-box"
+                            style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 12, cursor: 'pointer' }}>
+                            <div className="message-reply-box__label">{isGroupChat ? replySenderName : 'پاسخ'}</div>
+                            <div className="message-reply-box__text">{replyPreviewText}</div>
+                        </div>
+                    )}
+
+                    {message.file && (
+                        <FileMessage
+                            file={message.file}
+                            token={token}
+                            chatId={chatId}
+                            onMediaLoad={() => actions.mediaReady(message.id)}
+                            onMediaError={() => actions.mediaReady(message.id)}
+                            onImageClick={(imageUrl, file) => actions.openImage(imageUrl, file)}
+                            onVideoClick={(videoUrl, file) => actions.openVideo(videoUrl, file)}
+                        />
+                    )}
+                    {message.reasoningEnabled && message.reasoningContent && (
+                        <div className="ai-reasoning-message-stack" style={{ width: '100%' }}>
+                            <button
+                                type="button"
+                                className="ai-reasoning-header"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    actions.toggleReasoning(message.id);
+                                }}
+                            >
+                                <span className="ai-reasoning-header-main">
+                                    <span className="ai-reasoning-static-title">روند استدلال</span>
+                                    <span className='ai-reasoning-timer'>
+                                        {`${toPersianDigits(Math.floor(Number(message.reasoningDurationSec || 0) / 60))}:${toPersianDigits(String(Number(message.reasoningDurationSec || 0) % 60).padStart(2, '0'))}`}
+                                    </span>
+                                </span>
+                                <ChevronDown size={15} className={reasoningOpen ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
+                            </button>
+                            {reasoningOpen && (
+                                <div className="ai-reasoning-body">
+                                    <div className="ai-reasoning-content">{message.reasoningContent}</div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {message.text && !(message.reasoningEnabled && message.reasoningContent) && (
+                        <MemoMessageTextContent
+                            rawText={displayText}
+                            isBigEmojiOnly={isBigEmojiOnly}
+                            emojiOnlyClass={emojiOnlyClass}
+                        />
+                    )}
+                    {message.text && message.reasoningEnabled && message.reasoningContent && (
+                        <div className="ai-reasoning-answer" style={{ marginTop: 0 }}>
+                            <MemoMessageTextContent
+                                rawText={displayText}
+                                isBigEmojiOnly={isBigEmojiOnly}
+                                emojiOnlyClass={emojiOnlyClass}
+                            />
+                        </div>
+                    )}
+
+                    {sortedReactions.length > 0 && (
+                        <div className="message-reactions">
+                            {sortedReactions.map((reaction, idx) => {
+                                const userIds = reaction.userIds || [];
+                                const isMyReaction = userIds.includes(currentUserId);
+                                return (
+                                    <button key={idx}
+                                        className={isMyReaction ? 'message-reaction message-reaction--active' : 'message-reaction'}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isMyReaction) actions.deleteReaction(message.id);
+                                            else actions.react(message.id, reaction.emoji);
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (!window.matchMedia?.('(pointer:fine)').matches) return;
+                                            e.stopPropagation();
+                                            actions.openReactionMenu(message.id, e.currentTarget);
+                                        }}
+                                        type="button"
+                                    >
+                                        <span className="message-reaction__emoji">{reaction.emoji}</span>
+                                        {reaction.count > 1 && (
+                                            <span className="message-reaction__count" style={{ fontFamily: 'Vazir, sans-serif' }}>
+                                                {toPersianDigits(reaction.count)}
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    <div className={isMine ? 'message-meta message-meta--mine' : 'message-meta message-meta--theirs'}>
+                        <span className="message-time">{formattedTime}</span>
+                        {message.edited && <span className="message-edited-label">ویرایش شده</span>}
+                        {message.aiModelName && <span className="message-ai-model-label">{message.aiModelName}</span>}
+                        {isOfficialChannel && (
+                            <span className="message-edited-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                                <span>{toPersianDigits(messageSeenCount)}</span>
+                                <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
+                                    <path
+                                        fillRule="evenodd"
+                                        clipRule="evenodd"
+                                        d="M12 5.5C5.3 5.5 1.5 12 1.5 12s3.8 6.5 10.5 6.5S22.5 12 22.5 12 18.7 5.5 12 5.5Zm0 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+                                        fill="currentColor"
+                                    />
+                                </svg>
+                            </span>
+                        )}
+                        {isMine && (
+                            message.deliveryStatus === 'sending'
+                                ? <span className="message-pending-indicator" aria-label="در حال ارسال">◷</span>
+                                : (
+                                    <span className={isSeenForUi ? 'message-seen message-seen--double' : 'message-seen message-seen--single'} aria-label={isSeenForUi ? 'seen' : 'sent'}>
+                                        <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--first" />
+                                        {isSeenForUi && <Check size={12} strokeWidth={2.5} className="message-seen__check message-seen__check--second" />}
+                                    </span>
+                                )
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}, chatMessageItemPropsEqual);
