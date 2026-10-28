@@ -182,7 +182,7 @@ function resolveAvatarUrl(rawAvatar: string): string {
     if (!avatar) return '';
     if (avatar.startsWith('blob:') || avatar.startsWith('data:')) return avatar;
     if (avatar.startsWith('http://') || avatar.startsWith('https://')) return avatar;
-    if (avatar.startsWith('/avatars/') || avatar === '/favicon.png') return avatar;
+    if (avatar.startsWith('/avatars/') || avatar === '/favicon.png' || avatar.startsWith('/logo/')) return avatar;
     if (API_BASE_URL && avatar.startsWith(API_BASE_URL)) return avatar;
     if (avatar.startsWith('/')) return `${API_BASE_URL}${avatar}`;
     return `${API_BASE_URL}/files/${avatar}`;
@@ -3181,7 +3181,7 @@ const [openedGroupAvatar, setOpenedGroupAvatar] = useState<{ url: string; fileId
                     <button
                         className="chat-room__header-clickable chat-room__header-clickable--full"
                         onClick={() => {
-                            if (isSavedMessages || isOfficialChannel) return;
+                            if (isSavedMessages) return;
                             maybeSaveScroll(chatId);
                             if (onOpenContactInfo && chatId !== 'pending') {
                                 onOpenContactInfo(chatId);

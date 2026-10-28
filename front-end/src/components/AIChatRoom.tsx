@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Menu, Pin, PinOff, MessageSquareDashed } from 'lucide-react';
+import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed } from 'lucide-react';
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -243,6 +243,12 @@ export function AIChatRoom({
     const reasoningStopAtRef = useRef<Record<string, number>>({});
     const autoClosedReasoningRef = useRef<Record<string, boolean>>({});
     const [aiChatActionMenu, setAIChatActionMenu] = useState<null | { chatId: string; top: number; left: number }>(null);
+    const aiChatActionMenuOpenedAtRef = useRef(0);
+    const aiChatActionMenuClosedAtRef = useRef(0);
+    const [aiChatMenuPressSuppressed, setAIChatMenuPressSuppressed] = useState(false);
+    const aiChatLastTouchAtRef = useRef(0);
+    const aiChatLongPressTimerRef = useRef<number | null>(null);
+    const aiChatIsLongPressTriggeredRef = useRef(false);
     const [pendingRenameChat, setPendingRenameChat] = useState<AIChatSummary | null>(null);
     const [renameTitleInput, setRenameTitleInput] = useState('');
     const [renameBusy, setRenameBusy] = useState(false);
@@ -548,16 +554,39 @@ export function AIChatRoom({
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
+            if (Date.now() - aiChatActionMenuOpenedAtRef.current < 250) return;
             const target = e.target as Node;
             if (aiChatActionMenuRef.current?.contains(target)) return;
             if (aiChatActionBtnRef.current?.contains(target)) return;
+            aiChatActionMenuClosedAtRef.current = Date.now();
             setAIChatActionMenu(null);
         };
+        let timerId: number | null = null;
         if (aiChatActionMenu) {
-            document.addEventListener('mousedown', onDocClick);
+            timerId = window.setTimeout(() => {
+                document.addEventListener('mousedown', onDocClick);
+            }, 50);
         }
-        return () => document.removeEventListener('mousedown', onDocClick);
+        return () => {
+            if (timerId) window.clearTimeout(timerId);
+            document.removeEventListener('mousedown', onDocClick);
+        };
     }, [aiChatActionMenu]);
+
+    useEffect(() => {
+        if (!aiChatMenuPressSuppressed) return;
+        const release = () => setAIChatMenuPressSuppressed(false);
+        window.addEventListener('pointerup', release);
+        window.addEventListener('pointercancel', release);
+        window.addEventListener('touchend', release);
+        window.addEventListener('mouseup', release);
+        return () => {
+            window.removeEventListener('pointerup', release);
+            window.removeEventListener('pointercancel', release);
+            window.removeEventListener('touchend', release);
+            window.removeEventListener('mouseup', release);
+        };
+    }, [aiChatMenuPressSuppressed]);
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
@@ -599,14 +628,56 @@ export function AIChatRoom({
         setAIChatActionMenu(null);
     };
 
-    const openAIChatActionMenu = (chatId: string, btnEl: HTMLElement) => {
-        const r = btnEl.getBoundingClientRect();
+    const openAIChatActionMenu = (chatId: string, el: HTMLElement, allowToggle = true) => {
+        aiChatActionBtnRef.current = el;
+        aiChatActionMenuOpenedAtRef.current = Date.now();
+        const r = el.getBoundingClientRect();
         const menuWidth = 180;
         const menuHeight = 140;
         const padding = 8;
-        const top = Math.max(padding, Math.min(r.bottom + 6, window.innerHeight - menuHeight - padding));
-        const left = Math.max(padding, Math.min(r.right - menuWidth, window.innerWidth - menuWidth - padding));
-        setAIChatActionMenu((prev) => (prev?.chatId === chatId ? null : { chatId, top, left }));
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+
+        const preferredTop = r.bottom + 4;
+        const preferredBottomTop = r.top - menuHeight - 4;
+        const top = preferredTop + menuHeight <= viewportHeight - padding
+            ? preferredTop
+            : Math.max(padding, preferredBottomTop);
+
+        const preferredLeft = r.right - menuWidth;
+        const left = Math.max(padding, Math.min(preferredLeft, viewportWidth - menuWidth - padding));
+
+        setAIChatActionMenu((prev) => {
+            if (prev?.chatId === chatId) {
+                return allowToggle && !aiChatIsLongPressTriggeredRef.current ? null : prev;
+            }
+            return { chatId, top, left };
+        });
+    };
+
+    const startAIChatLongPress = (chatId: string, el: HTMLElement) => {
+        if (aiChatLongPressTimerRef.current) window.clearTimeout(aiChatLongPressTimerRef.current);
+        aiChatIsLongPressTriggeredRef.current = false;
+        aiChatLongPressTimerRef.current = window.setTimeout(() => {
+            aiChatIsLongPressTriggeredRef.current = true;
+            window.setTimeout(() => {
+                aiChatIsLongPressTriggeredRef.current = false;
+            }, 800);
+            try {
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    navigator.vibrate(12);
+                }
+            } catch {
+            }
+            openAIChatActionMenu(chatId, el, false);
+        }, 500);
+    };
+
+    const cancelAIChatLongPress = () => {
+        if (aiChatLongPressTimerRef.current) {
+            window.clearTimeout(aiChatLongPressTimerRef.current);
+            aiChatLongPressTimerRef.current = null;
+        }
     };
 
     const sortedAIChats = [...aiChats].sort((a, b) => {
@@ -1092,24 +1163,44 @@ export function AIChatRoom({
                                             type="button"
                                             className={chat.id === activeAIChatId ? 'ai-chat-drawer__item-title ai-chat-drawer__item-title--active' : 'ai-chat-drawer__item-title'}
                                             onClick={() => {
+                                                if (aiChatActionMenu?.chatId === chat.id) {
+                                                    aiChatActionMenuClosedAtRef.current = Date.now();
+                                                    setAIChatActionMenu(null);
+                                                    return;
+                                                }
+                                                if (Date.now() - aiChatActionMenuClosedAtRef.current < 400) return;
                                                 onSelectAIChat(chat.id);
                                                 setAIChatsDrawerOpen(false);
+                                            }}
+                                            onMouseDown={(e) => {
+                                                if (aiChatActionMenu) {
+                                                    setAIChatMenuPressSuppressed(true);
+                                                    return;
+                                                }
+                                                if (Date.now() - aiChatLastTouchAtRef.current < 800) return;
+                                                startAIChatLongPress(chat.id, e.currentTarget);
+                                            }}
+                                            onMouseUp={cancelAIChatLongPress}
+                                            onMouseLeave={cancelAIChatLongPress}
+                                            onTouchStart={(e) => {
+                                                if (aiChatActionMenu) {
+                                                    setAIChatMenuPressSuppressed(true);
+                                                    return;
+                                                }
+                                                aiChatLastTouchAtRef.current = Date.now();
+                                                startAIChatLongPress(chat.id, e.currentTarget);
+                                            }}
+                                            onTouchEnd={cancelAIChatLongPress}
+                                            onTouchMove={cancelAIChatLongPress}
+                                            onContextMenu={(e) => {
+                                                e.preventDefault();
+                                                cancelAIChatLongPress();
+                                                openAIChatActionMenu(chat.id, e.currentTarget, !aiChatIsLongPressTriggeredRef.current);
                                             }}
                                         >
                                             {respondingAIChatId === chat.id && <span className="ai-chat-drawer__loader" />}
                                             {pinnedAIChatIds.includes(chat.id) && <Pin size={13} className="ai-chat-drawer__pin" style={{ fill: 'currentColor' }} />}
                                             {chat.title || 'گفتگوی جدید'}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="ai-chat-drawer__delete"
-                                            onClick={(e) => {
-                                                aiChatActionBtnRef.current = e.currentTarget;
-                                                openAIChatActionMenu(chat.id, e.currentTarget);
-                                            }}
-                                            aria-label="گزینه‌های گفتگو"
-                                        >
-                                            <Menu size={16} />
                                         </button>
                                     </div>
                                 ))}
