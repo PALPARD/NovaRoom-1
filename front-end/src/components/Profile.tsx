@@ -11,6 +11,7 @@ import { ImageMediaViewer } from './ImageMediaViewer';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
 import { screenVariants } from '../utils/screenMotion';
 import { useScrollFade } from '../hooks/useScrollFade';
+import { copyText } from '../utils/clipboard';
 
 interface ProfileProps {
     user: User;
@@ -62,7 +63,7 @@ export function Profile({ user, mode, onUpdateProfile, onEdit, onFinishEdit, onL
     };
 
     const handleCopy = (text: string, field: string) => {
-        navigator.clipboard.writeText(text).catch(() => { });
+        copyText(text).catch(() => { });
         setCopiedField(field);
         setTimeout(() => setCopiedField(null), 2000);
     };

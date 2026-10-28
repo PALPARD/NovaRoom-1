@@ -11,6 +11,7 @@ import { VerifiedBadge } from './VerifiedBadge';
 import { API_BASE_URL, apiFetch } from '../config/api';
 import { ImageMediaViewer } from './ImageMediaViewer';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
+import { copyText } from '../utils/clipboard';
 
 interface ContactInfoProps {
     user: User;
@@ -203,7 +204,7 @@ export function ContactInfo({
         const un = (user.username || '').trim();
         if (!un) return;
         const textToCopy = isInviteLink(un) ? un : `@${un}`;
-        navigator.clipboard.writeText(textToCopy).catch(() => { });
+        copyText(textToCopy).catch(() => { });
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
     };

@@ -416,7 +416,7 @@ export function ChatRoom({
     const forceInfoRouteActiveRef = useRef(false);
 
     useEffect(() => {
-        if (forceContactInfoOpen) {
+        if (forceContactInfoOpen && !isOfficialChannel) {
             forceInfoRouteActiveRef.current = true;
             restoringFromInfoRef.current = true;
             setOpenGroupEditorFromMembers(false);
@@ -430,7 +430,7 @@ export function ChatRoom({
             setViewingMemberId(null);
             setOpenGroupEditorFromMembers(false);
         }
-    }, [forceContactInfoOpen, chatId]);
+    }, [forceContactInfoOpen, chatId, isOfficialChannel]);
 
     const userHasScrolledRef = useRef(false);
 
@@ -2447,7 +2447,7 @@ export function ChatRoom({
                     <button
                         className="chat-room__header-clickable chat-room__header-clickable--full"
                         onClick={() => {
-                            if (isSavedMessages) return;
+                            if (isSavedMessages || isOfficialChannel) return;
                             maybeSaveScroll(chatId);
                             if (onOpenContactInfo && chatId !== 'pending') {
                                 onOpenContactInfo(chatId);
@@ -2456,9 +2456,9 @@ export function ChatRoom({
                             setOpenGroupEditorFromMembers(false);
                             setShowContactInfo(true);
                         }}
-                        aria-label={isSavedMessages ? '' : 'Open contact info'}
+                        aria-label={isSavedMessages || isOfficialChannel ? '' : 'Open contact info'}
                         type="button"
-                        style={isSavedMessages ? { cursor: 'default' } : undefined}
+                        style={isSavedMessages || isOfficialChannel ? { cursor: 'default' } : undefined}
                     >
                         <Avatar
                             name={contact.name}
