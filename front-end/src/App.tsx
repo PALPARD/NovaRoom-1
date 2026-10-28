@@ -564,17 +564,12 @@ export function App() {
                 });
                 return changed ? next : prev;
             });
-            setIsInitialChatsLoad((prev) => (prev ? false : prev));
+            setIsInitialChatsLoad(false);
         } catch (error) {
             console.error('Failed to load chats', error);
             setIsInitialChatsLoad(false);
         }
-    }, [isAuthenticated, isInitialChatsLoad, authToken]);
-
-    useEffect(() => {
-        if (!isAuthenticated) return;
-        void loadChats(false);
-    }, [blockedChatIds, isAuthenticated, loadChats]);
+    }, [isAuthenticated, authToken]);
 
     const handleLogout = useCallback(() => {
         const finalizeLogout = () => {
@@ -1350,20 +1345,29 @@ export function App() {
         return chunk.length;
     }, [authToken, currentUser?.chatId]);
 
+    const hasInitialWsConnectRef = useRef(false);
+    const prevWsConnectedRef = useRef(false);
+
     useEffect(() => {
+        const wasConnected = prevWsConnectedRef.current;
+        prevWsConnectedRef.current = wsConnected;
         if (!wsConnected || !isAuthenticated) return;
         setWsReconnectExhausted(false);
-        loadChats(false);
-
-        if (!activeChatId) return;
-        fetchPagedMessages(activeChatId, { direction: 'latest', mode: 'replace' })
-            .then(() => {
-                if (currentUser && activeChatId !== `saved_messages_${currentUser.chatId}`) {
-                    sendSeen(activeChatId);
-                }
-            })
-            .catch((err) => console.error('Failed to sync messages after reconnect', err));
-    }, [wsConnected, isAuthenticated, loadChats, activeChatId, currentUser, sendSeen, fetchPagedMessages]);
+        if (!wasConnected && hasInitialWsConnectRef.current) {
+            loadChats(false);
+            const currentActive = activeChatIdRef.current;
+            if (currentActive) {
+                fetchPagedMessages(currentActive, { direction: 'latest', mode: 'replace' })
+                    .then(() => {
+                        if (currentUser && currentActive !== `saved_messages_${currentUser.chatId}`) {
+                            sendSeen(currentActive);
+                        }
+                    })
+                    .catch((err) => console.error('Failed to sync messages after reconnect', err));
+            }
+        }
+        hasInitialWsConnectRef.current = true;
+    }, [wsConnected, isAuthenticated]);
 
     useEffect(() => {
         if (!isAuthenticated) return;
@@ -1402,8 +1406,9 @@ export function App() {
         };
 
         const intervalId = window.setInterval(() => {
+            if (wsConnected) return;
             void syncFromServer();
-        }, 4000);
+        }, 15000);
 
         const handleVisibilityOrFocus = () => {
             void syncFromServer();
@@ -1418,6 +1423,7 @@ export function App() {
         };
     }, [
         isAuthenticated,
+        wsConnected,
         loadChats,
         fetchPagedMessages,
         currentUser,
@@ -1527,9 +1533,7 @@ export function App() {
                 setMessagesLoading(prev => (prev[chatId] ? { ...prev, [chatId]: false } : prev));
             }
         }
-
-        loadChats(false);
-    }, [loadChats, sendSeen, currentUser, navigate, fetchPagedMessages]);
+    }, [sendSeen, currentUser, navigate, fetchPagedMessages]);
 
     const handleDragHoverChat = useCallback((chatId: string) => {
         if (!chatId) return;
@@ -2638,7 +2642,7 @@ export function App() {
                 )}
 
                 {showAIChat && (
-                    <div className="app__main app__main--full">
+                    <main className="app__main app__main--full">
                         <AIChatRoom
                             messages={aiMessages}
                             currentUserId={currentUser!.chatId}
@@ -2668,7 +2672,7 @@ export function App() {
                             temporaryMode={temporaryAIChat}
                             currentUserVerified={Boolean((currentUser as any)?.verified)}
                         />
-                    </div>
+                    </main>
                 )}
 
                 {!showAIChat && (
@@ -2686,7 +2690,7 @@ export function App() {
                 )}
 
                 {!showAIChat && (
-                    <div className={cx('app__main', view === 'chatList' && 'app__main--hidden-mobile')} style={{ position: 'relative' }}>
+                    <main className={cx('app__main', view === 'chatList' && 'app__main--hidden-mobile')} style={{ position: 'relative' }}>
                         {view === 'newChat' ? (
                             <NewChatModal
                                 onClose={handleCloseNewChat}
@@ -2743,7 +2747,7 @@ export function App() {
                                     />
                                 )}
                             </>
-                        ) : view === 'chatRoom' && (activeChat || pendingUser || isSavedMessagesActive) ? (
+                        ) : view === 'chatRoom' && (activeChat || pendingUser || isSavedMessagesActive || activeChatId) ? (
                             <ChatRoom
                                 key={activeChatId || 'pending'}
                                 chatId={activeChatId || 'pending'}
@@ -2756,7 +2760,7 @@ export function App() {
                                 onBack={handleBack}
                                 onCloseChat={handleCloseChat}
                                 onChatDeleted={handleChatDeleted}
-                                loading={activeMessagesLoading}
+                                loading={activeMessagesLoading || (!activeChat && !pendingUser && !isSavedMessagesActive)}
                                 chats={chats}
                                 onSelectChat={handleSelectChat}
                                 onOpenDirectChat={(user) => handleUserSelectedFromModal(user)}
@@ -2800,7 +2804,7 @@ export function App() {
                         ) : (
                             <EmptyState />
                         )}
-                    </div>
+                    </main>
                 )}
             </div>
             <MiniMusicPlayer />

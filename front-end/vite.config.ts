@@ -29,5 +29,15 @@ export default defineConfig({
     build: {
         outDir: 'dist',
         emptyOutDir: true,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+                    'vendor-motion': ['framer-motion'],
+                    'vendor-icons': ['lucide-react'],
+                    'vendor-markdown': ['react-markdown', 'remark-gfm', 'remark-breaks'],
+                }
+            }
+        }
     }
 })

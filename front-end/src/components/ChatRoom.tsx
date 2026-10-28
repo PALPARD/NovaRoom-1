@@ -389,7 +389,7 @@ export function ChatRoom({
     const [openGroupEditorFromMembers, setOpenGroupEditorFromMembers] = useState(false);
     const [externalFileUploadHandler, setExternalFileUploadHandler] = useState<((file: File) => void) | null>(null);
     const [dragUploadActive, setDragUploadActive] = useState(false);
-    const [chatContentReady, setChatContentReady] = useState(true);
+    const [chatContentReady, setChatContentReady] = useState(false);
     const isAtBottomRef = useRef(true);
 
     const prevLenRef = useRef(0);
@@ -823,7 +823,7 @@ export function ChatRoom({
     };
 
     const openMember = (memberId: string) => {
-        if (!memberId) return;
+        if (!memberId || isOfficialChannel) return;
         maybeSaveScroll(chatId);
         restoringFromInfoRef.current = true;
         if (memberId === currentUserId) {
@@ -1503,11 +1503,15 @@ export function ChatRoom({
             if (!container) return;
             const mem = scrollMemoryRef.current[chatId];
             if (userHasScrolledRef.current || (mem && mem.userInteracted && !mem.atBottom)) return;
-            container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-            stableFrames = container.scrollHeight === lastHeight ? stableFrames + 1 : 0;
-            lastHeight = container.scrollHeight;
+            if (container.scrollHeight !== lastHeight) {
+                lastHeight = container.scrollHeight;
+                container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+                stableFrames = 0;
+            } else {
+                stableFrames += 1;
+            }
             frames += 1;
-            if (stableFrames >= 2 || frames >= 24) return;
+            if (stableFrames >= 2 || frames >= 10) return;
             raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
@@ -1554,14 +1558,11 @@ export function ChatRoom({
     }, [showContactInfo, forwardSourceUser, viewingMemberId, showMembersList, chatId]);
 
     useLayoutEffect(() => {
-        if (!chatContentReady) return;
         const container = messagesContainerRef.current;
         if (!container) { prevLenRef.current = messages.length; return; }
 
         if (!initialScrollDoneRef.current) {
             if (messages.length > 0 && !loading) {
-                
-                
                 if (initialMediaFollowupDoneRef.current && initialMediaPendingIdsRef.current.size === 0) {
                     const pendingIds = collectInitialMediaPendingIds();
                     if (pendingIds.size > 0) {
@@ -1571,13 +1572,17 @@ export function ChatRoom({
                 }
                 applyInitialScroll();
                 initialScrollDoneRef.current = true;
+                setChatContentReady(true);
                 prevLenRef.current = messages.length;
                 return;
+            }
+            if (!loading && messages.length === 0) {
+                setChatContentReady(true);
             }
             prevLenRef.current = messages.length;
             return;
         }
-    }, [chatId, loading, messages.length, displayUnreadCount, chatContentReady]);
+    }, [chatId, loading, messages.length, displayUnreadCount]);
 
     useEffect(() => {
         if (!chatContentReady) return;
@@ -2227,7 +2232,7 @@ export function ChatRoom({
         messageActions,
     ]);
 
-    if (showContactInfo) {
+    if (showContactInfo && !isOfficialChannel) {
         const infoUser: any = isGroupChat ? { ...contact, chatId, isGroup: true } : contact;
         return (
             <ContactInfo
@@ -2388,7 +2393,7 @@ export function ChatRoom({
             }}
         >
             {!isSelectionModeActive && (
-                <div className={cx('header-fade', 'header-fade--room', messagesScrolled && 'header-fade--visible')} aria-hidden="true" />
+                <div className="header-fade header-fade--room header-fade--visible" aria-hidden="true" />
             )}
             {isSelectionModeActive ? (
                 <div className="chat-room__header chat-room__header--selection">
@@ -2600,7 +2605,7 @@ export function ChatRoom({
                     ) : (
                         <>
                             {!chatContentReady && <ChatMessagesSkeleton />}
-                            <div className="messages-list-visible-wrap" style={{ display: chatContentReady ? 'contents' : 'none' }}>
+                            <div className="messages-list-visible-wrap" style={{ display: 'contents', visibility: chatContentReady ? 'visible' : 'hidden' }}>
                                 {(loadingOlderMessages || localLoadingOlder) && (
                                     <div className="chat-range-loader-wrap chat-range-loader-wrap--top">
                                         <span className="chat-range-loader chat-range-loader--active" />
@@ -2869,7 +2874,7 @@ export function ChatRoom({
             />
 
             {!isSelectionModeActive && (
-                <div className={cx('header-fade', 'header-fade--bottom', messagesScrolled && 'header-fade--visible')} aria-hidden="true" />
+                <div className="header-fade header-fade--bottom header-fade--visible" aria-hidden="true" />
             )}
 
             <ForwardModal
