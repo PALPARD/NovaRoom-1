@@ -24,11 +24,11 @@ interface DevicesProps {
 type ConfirmAction = null | { kind: 'one'; session: DeviceSession } | { kind: 'others' };
 
 const toPersianDigits = (value: string | number): string => String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
+const jalaliDateFormatter = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' });
+const tehranTimeFormatter = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', hour12: false });
 const toJalaliTehran = (timestamp: number): string => {
     const dt = new Date(timestamp);
-    const date = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(dt);
-    const time = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', hour12: false }).format(dt);
-    return `${date} • ${time}`;
+    return `${jalaliDateFormatter.format(dt)} • ${tehranTimeFormatter.format(dt)}`;
 };
 
 export function Devices({ onBack, onOpenLogs, hasUnseenLoginLogs }: DevicesProps) {

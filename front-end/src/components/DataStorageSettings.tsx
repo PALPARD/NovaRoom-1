@@ -118,8 +118,8 @@ export function DataStorageSettings({ onBack }: Props) {
         </div>
 
         <div className="profile__content" onScroll={handleScroll} style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingInline: 14, paddingTop: 68, flex: '0 0 auto' }}>
-            <div style={{ border: panelBorder, borderRadius: 20, overflow: 'hidden', background: panelBg, backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)' }}>
-                <button type="button" className="popover__item" onClick={() => setShowClearModal(true)} style={{ width: '100%', minHeight: 56, justifyContent: 'space-between', direction: 'rtl', padding: '10px 14px', borderRadius: 0 }}>
+            <div style={{ border: panelBorder, borderRadius: 9999, overflow: 'hidden', background: panelBg, backdropFilter: 'var(--glass-blur)', WebkitBackdropFilter: 'var(--glass-blur)', boxShadow: 'var(--shadow-xs), var(--glass-specular)' }}>
+                <button type="button" className="popover__item" onClick={() => setShowClearModal(true)} style={{ width: '100%', minHeight: 56, justifyContent: 'space-between', direction: 'rtl', padding: '10px 20px', borderRadius: 9999 }}>
                     <span style={{ fontWeight: 600 }}>رسانه‌های کش شده</span>
                     <span style={{ color: 'var(--accent-primary)', fontWeight: 700, direction: 'ltr' }}>{humanSize}</span>
                 </button>
