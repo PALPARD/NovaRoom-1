@@ -18,12 +18,24 @@ const TOGGLE_ZOOM_SCALE = 2;
 export function ImageMediaViewer({ imageUrl, onClose, downloadFile, token: _token = '', chatId = '' }: ImageMediaViewerProps) {
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const scaleRef = useRef(1);
+    const offsetRef = useRef({ x: 0, y: 0 });
     const pinchDistanceRef = useRef<number | null>(null);
     const pinchStartScaleRef = useRef(1);
+    const pinchStartOffsetRef = useRef({ x: 0, y: 0 });
+    const pinchStartCenterRef = useRef({ x: 0, y: 0 });
     const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+    const hasMovedRef = useRef(false);
     const stageRef = useRef<HTMLDivElement | null>(null);
     const imageRef = useRef<HTMLImageElement | null>(null);
     const [controlsVisible, setControlsVisible] = useState(true);
+
+    const updateTransform = (nextScale: number, nextOffset: { x: number; y: number }) => {
+        scaleRef.current = nextScale;
+        offsetRef.current = nextOffset;
+        setScale(nextScale);
+        setOffset(nextOffset);
+    };
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -34,7 +46,8 @@ export function ImageMediaViewer({ imageUrl, onClose, downloadFile, token: _toke
     }, [onClose]);
 
     const clampScale = (next: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
-    const clampOffset = (nextX: number, nextY: number, nextScale = scale) => {
+
+    const clampOffset = (nextX: number, nextY: number, nextScale = scaleRef.current) => {
         const stageEl = stageRef.current;
         const imageEl = imageRef.current;
         if (!stageEl || !imageEl) return { x: nextX, y: nextY };
@@ -48,36 +61,150 @@ export function ImageMediaViewer({ imageUrl, onClose, downloadFile, token: _toke
             y: Math.min(maxY, Math.max(-maxY, nextY)),
         };
     };
-    const applyScale = (next: number) => {
-        const clampedScale = clampScale(next);
-        setScale(clampedScale);
-        setOffset((prev) => clampOffset(prev.x, prev.y, clampedScale));
+
+    useEffect(() => {
+        const stage = stageRef.current;
+        if (!stage) return;
+
+        const onTouchStart = (e: TouchEvent) => {
+            if ((e.target as HTMLElement | null)?.closest('.image-media-viewer__controls')) return;
+
+            if (e.touches.length >= 2) {
+                e.preventDefault();
+                const t1 = e.touches[0];
+                const t2 = e.touches[1];
+                pinchDistanceRef.current = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                pinchStartScaleRef.current = scaleRef.current;
+                pinchStartOffsetRef.current = offsetRef.current;
+                pinchStartCenterRef.current = {
+                    x: (t1.clientX + t2.clientX) / 2,
+                    y: (t1.clientY + t2.clientY) / 2,
+                };
+                dragStartRef.current = null;
+                hasMovedRef.current = true;
+                return;
+            }
+
+            if (e.touches.length === 1) {
+                hasMovedRef.current = false;
+                if (scaleRef.current > 1) {
+                    const t = e.touches[0];
+                    dragStartRef.current = { x: t.clientX, y: t.clientY, offsetX: offsetRef.current.x, offsetY: offsetRef.current.y };
+                }
+            }
+        };
+
+        const onTouchMove = (e: TouchEvent) => {
+            if ((e.target as HTMLElement | null)?.closest('.image-media-viewer__controls')) return;
+
+            if (e.touches.length >= 2 && pinchDistanceRef.current != null) {
+                e.preventDefault();
+                hasMovedRef.current = true;
+                const t1 = e.touches[0];
+                const t2 = e.touches[1];
+                const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                if (distance <= 0) return;
+                const factor = distance / pinchDistanceRef.current;
+                const targetScale = clampScale(pinchStartScaleRef.current * factor);
+
+                const stageEl = stageRef.current;
+                if (!stageEl) {
+                    updateTransform(targetScale, offsetRef.current);
+                    return;
+                }
+
+                const stageRect = stageEl.getBoundingClientRect();
+                const startCenterX = pinchStartCenterRef.current.x - (stageRect.left + stageRect.width / 2);
+                const startCenterY = pinchStartCenterRef.current.y - (stageRect.top + stageRect.height / 2);
+                const currentCenterX = (t1.clientX + t2.clientX) / 2 - (stageRect.left + stageRect.width / 2);
+                const currentCenterY = (t1.clientY + t2.clientY) / 2 - (stageRect.top + stageRect.height / 2);
+
+                const ratio = targetScale / (pinchStartScaleRef.current || 1);
+                const nextOffsetX = startCenterX - (startCenterX - pinchStartOffsetRef.current.x) * ratio + (currentCenterX - startCenterX);
+                const nextOffsetY = startCenterY - (startCenterY - pinchStartOffsetRef.current.y) * ratio + (currentCenterY - startCenterY);
+
+                updateTransform(targetScale, clampOffset(nextOffsetX, nextOffsetY, targetScale));
+                return;
+            }
+
+            if (e.touches.length === 1 && dragStartRef.current && scaleRef.current > 1) {
+                e.preventDefault();
+                hasMovedRef.current = true;
+                const t = e.touches[0];
+                const dx = t.clientX - dragStartRef.current.x;
+                const dy = t.clientY - dragStartRef.current.y;
+                const next = clampOffset(dragStartRef.current.offsetX + dx, dragStartRef.current.offsetY + dy, scaleRef.current);
+                updateTransform(scaleRef.current, next);
+            }
+        };
+
+        const onTouchEnd = (e: TouchEvent) => {
+            if (e.touches.length < 2 && pinchDistanceRef.current != null) {
+                pinchDistanceRef.current = null;
+                pinchStartScaleRef.current = scaleRef.current;
+            }
+            if (e.touches.length === 1 && scaleRef.current > 1) {
+                const t = e.touches[0];
+                dragStartRef.current = { x: t.clientX, y: t.clientY, offsetX: offsetRef.current.x, offsetY: offsetRef.current.y };
+            } else if (e.touches.length === 0) {
+                dragStartRef.current = null;
+                if (scaleRef.current <= 1) {
+                    updateTransform(1, { x: 0, y: 0 });
+                }
+            }
+        };
+
+        const preventGesture = (e: Event) => {
+            e.preventDefault();
+        };
+
+        stage.addEventListener('touchstart', onTouchStart, { passive: false });
+        stage.addEventListener('touchmove', onTouchMove, { passive: false });
+        stage.addEventListener('touchend', onTouchEnd);
+        stage.addEventListener('touchcancel', onTouchEnd);
+        document.addEventListener('gesturestart', preventGesture);
+        document.addEventListener('gesturechange', preventGesture);
+
+        return () => {
+            stage.removeEventListener('touchstart', onTouchStart);
+            stage.removeEventListener('touchmove', onTouchMove);
+            stage.removeEventListener('touchend', onTouchEnd);
+            stage.removeEventListener('touchcancel', onTouchEnd);
+            document.removeEventListener('gesturestart', preventGesture);
+            document.removeEventListener('gesturechange', preventGesture);
+        };
+    }, []);
+
+    const zoomIn = () => {
+        const nextScale = clampScale(scaleRef.current + 0.25);
+        updateTransform(nextScale, clampOffset(offsetRef.current.x, offsetRef.current.y, nextScale));
     };
-    const applyScaleAtPoint = (next: number, clientX: number, clientY: number) => {
+
+    const zoomOut = () => {
+        const nextScale = clampScale(scaleRef.current - 0.25);
+        updateTransform(nextScale, clampOffset(offsetRef.current.x, offsetRef.current.y, nextScale));
+    };
+
+    const toggleZoomAtPoint = (clientX: number, clientY: number) => {
         const stageEl = stageRef.current;
-        const clampedScale = clampScale(next);
+        const nextScale = scaleRef.current > MIN_SCALE ? MIN_SCALE : TOGGLE_ZOOM_SCALE;
+        const clampedScale = clampScale(nextScale);
         if (!stageEl) {
-            setScale(clampedScale);
+            updateTransform(clampedScale, offsetRef.current);
             return;
         }
         const stageRect = stageEl.getBoundingClientRect();
         const pointX = clientX - (stageRect.left + stageRect.width / 2);
         const pointY = clientY - (stageRect.top + stageRect.height / 2);
-        const ratio = clampedScale / scale;
+        const ratio = clampedScale / (scaleRef.current || 1);
         const nextOffset = clampOffset(
-            pointX - (pointX - offset.x) * ratio,
-            pointY - (pointY - offset.y) * ratio,
+            pointX - (pointX - offsetRef.current.x) * ratio,
+            pointY - (pointY - offsetRef.current.y) * ratio,
             clampedScale,
         );
-        setScale(clampedScale);
-        setOffset(nextOffset);
+        updateTransform(clampedScale, nextOffset);
     };
-    const zoomIn = () => applyScale(scale + 0.25);
-    const zoomOut = () => applyScale(scale - 0.25);
-    const toggleZoomAtPoint = (clientX: number, clientY: number) => {
-        const nextScale = scale > MIN_SCALE ? MIN_SCALE : TOGGLE_ZOOM_SCALE;
-        applyScaleAtPoint(nextScale, clientX, clientY);
-    };
+
     const downloadImage = async () => {
         try {
             const fileId = downloadFile?.fileId;
@@ -113,59 +240,23 @@ export function ImageMediaViewer({ imageUrl, onClose, downloadFile, token: _toke
                 className="image-media-viewer__stage"
                 onClick={(e) => {
                     e.stopPropagation();
+                    if (hasMovedRef.current) {
+                        hasMovedRef.current = false;
+                        return;
+                    }
                     setControlsVisible((prev) => !prev);
                 }}
                 onMouseMove={(e) => {
-                    if (!dragStartRef.current || scale <= 1) return;
+                    if (!dragStartRef.current || scaleRef.current <= 1) return;
                     const dx = e.clientX - dragStartRef.current.x;
                     const dy = e.clientY - dragStartRef.current.y;
-                    const next = clampOffset(dragStartRef.current.offsetX + dx, dragStartRef.current.offsetY + dy);
-                    setOffset(next);
+                    const next = clampOffset(dragStartRef.current.offsetX + dx, dragStartRef.current.offsetY + dy, scaleRef.current);
+                    updateTransform(scaleRef.current, next);
                 }}
                 onMouseUp={() => {
                     dragStartRef.current = null;
                 }}
                 onMouseLeave={() => {
-                    dragStartRef.current = null;
-                }}
-                onTouchStart={(e) => {
-                    if (e.touches.length === 2) {
-                        const [t1, t2] = Array.from(e.touches);
-                        pinchDistanceRef.current = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-                        pinchStartScaleRef.current = scale;
-                        dragStartRef.current = null;
-                        return;
-                    }
-                    if (e.touches.length === 1 && scale > 1) {
-                        const [t] = Array.from(e.touches);
-                        dragStartRef.current = { x: t.clientX, y: t.clientY, offsetX: offset.x, offsetY: offset.y };
-                    }
-                }}
-                onTouchMove={(e) => {
-                    if (e.touches.length !== 2 || pinchDistanceRef.current == null) return;
-                    e.preventDefault();
-                    const [t1, t2] = Array.from(e.touches);
-                    const distance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-                    const ratio = distance / pinchDistanceRef.current;
-                    const midX = (t1.clientX + t2.clientX) / 2;
-                    const midY = (t1.clientY + t2.clientY) / 2;
-                    applyScaleAtPoint(pinchStartScaleRef.current * ratio, midX, midY);
-                }}
-                onTouchMoveCapture={(e) => {
-                    if (e.touches.length !== 1 || !dragStartRef.current || scale <= 1) return;
-                    e.preventDefault();
-                    const [t] = Array.from(e.touches);
-                    const dx = t.clientX - dragStartRef.current.x;
-                    const dy = t.clientY - dragStartRef.current.y;
-                    const next = clampOffset(dragStartRef.current.offsetX + dx, dragStartRef.current.offsetY + dy);
-                    setOffset(next);
-                }}
-                onTouchEnd={() => {
-                    if (pinchDistanceRef.current != null) {
-                        pinchDistanceRef.current = null;
-                        pinchStartScaleRef.current = scale;
-                    }
-                    if (scale <= 1) setOffset({ x: 0, y: 0 });
                     dragStartRef.current = null;
                 }}
             >
@@ -193,8 +284,8 @@ export function ImageMediaViewer({ imageUrl, onClose, downloadFile, token: _toke
                     className="image-media-viewer__image"
                     onDoubleClick={(e) => toggleZoomAtPoint(e.clientX, e.clientY)}
                     onMouseDown={(e) => {
-                        if (scale <= 1) return;
-                        dragStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y };
+                        if (scaleRef.current <= 1) return;
+                        dragStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offsetRef.current.x, offsetY: offsetRef.current.y };
                     }}
                     style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
                     draggable={false}
