@@ -565,11 +565,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background 0.15s ease, transform 0.12s ease;
-}
-
-.image-media-viewer__btn:hover {
-    background: rgba(255, 255, 255, 0.2);
+    transition: transform 0.12s ease;
 }
 
 .image-media-viewer__btn:active {
@@ -706,6 +702,11 @@
     justify-content: center;
     cursor: pointer;
     pointer-events: auto;
+    transition: transform 0.12s ease;
+}
+
+.video-media-viewer__play-btn:active {
+    transform: scale(0.94);
 }
 
 .video-media-viewer__seek {
@@ -836,6 +837,11 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    transition: transform 0.12s ease;
+}
+
+.video-media-viewer__fullscreen-btn:active {
+    transform: scale(0.94);
 }
 
 .image-media-viewer button,

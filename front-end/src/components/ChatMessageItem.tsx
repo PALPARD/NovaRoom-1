@@ -338,7 +338,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             )}
 
             <div
-                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isSelected ? 'message-row--selected' : ''} ${isSelectionModeActive ? 'message-row--selecting' : ''}`}
+                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isHighlighted ? 'message-row--flash' : ''} ${isSelected ? 'message-row--selected' : ''} ${isSelectionModeActive ? 'message-row--selecting' : ''}`}
                 onClick={(e) => {
                     if (!isSelectionModeActive) return;
                     if (consumeSuppressedClick()) return;
@@ -462,8 +462,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                 <div
                     ref={setBubbleRef}
                     className={isMine
-                        ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`
-                        : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`}
+                        ? `message-bubble message-bubble--mine ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isSelected ? 'message-bubble--selected' : ''}`
+                        : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isSelected ? 'message-bubble--selected' : ''}`}
                     onClick={(e) => {
                         e.stopPropagation();
                         if (consumeSuppressedClick()) return;

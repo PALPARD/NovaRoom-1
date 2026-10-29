@@ -2132,6 +2132,9 @@ async def get_chat_list(
     my_id = current_user["chatId"]
     session_token = str(current_user.get("_session_token") or "")
     my_blocked_ids = set(_get_blocked_from_user_doc(current_user))
+    hidden_pinned_map = (current_user.get("settings") or {}).get(
+        "hiddenPinnedMessages"
+    ) or {}
     chats = (
         await cl_chats.find({"participants": my_id}).sort("updatedAt", -1).to_list(50)
     )
@@ -2203,7 +2206,12 @@ async def get_chat_list(
             }
 
         pinned_msg = chat.get("pinnedMessage")
-        if isinstance(pinned_msg, dict) and pinned_msg.get("id"):
+        hidden_pin_id = hidden_pinned_map.get(chat.get("_id"))
+        if (
+            isinstance(pinned_msg, dict)
+            and pinned_msg.get("id")
+            and pinned_msg.get("id") != hidden_pin_id
+        ):
             chat_scope = f"chat:{chat.get('_id', '')}"
             pinned_msg = {
                 **pinned_msg,
@@ -3257,6 +3265,10 @@ async def pin_message(
             raise HTTPException(status_code=404, detail="Chat not found")
         if user_id not in (chat_doc.get("participants", []) or []):
             raise HTTPException(status_code=403, detail="Forbidden")
+        if chat_doc.get("chatType") == "group" and not bool(
+            current_user.get("verified", False)
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden")
 
     oid = await try_object_id(message_id)
     if not oid:
@@ -3284,6 +3296,10 @@ async def pin_message(
         await cl_chats.update_one(
             {"_id": chat_id},
             {"$set": {"pinnedMessage": pinned_doc, "updatedAt": utc_now()}},
+        )
+        await cl_users.update_one(
+            {"chatId": user_id},
+            {"$unset": {f"settings.hiddenPinnedMessages.{chat_id}": ""}},
         )
     elif is_saved:
         await cl_users.update_one(
@@ -3336,6 +3352,17 @@ async def unpin_message(
             raise HTTPException(status_code=404, detail="Chat not found")
         if user_id not in (chat_doc.get("participants", []) or []):
             raise HTTPException(status_code=403, detail="Forbidden")
+
+    is_group = bool(chat_doc and chat_doc.get("chatType") == "group")
+    if is_group and not bool(current_user.get("verified", False)):
+        current_pinned = chat_doc.get("pinnedMessage") or {}
+        pinned_id = current_pinned.get("id") if isinstance(current_pinned, dict) else None
+        if pinned_id:
+            await cl_users.update_one(
+                {"chatId": user_id},
+                {"$set": {f"settings.hiddenPinnedMessages.{chat_id}": pinned_id}},
+            )
+        return {"ok": True, "personalOnly": True}
 
     if not is_saved and not is_official:
         await cl_chats.update_one(

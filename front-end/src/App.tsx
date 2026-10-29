@@ -910,6 +910,34 @@ export function App() {
     }, []);
 
     const [targetScrollMessage, setTargetScrollMessage] = useState<{ chatId: string; messageId: string; timestamp: number } | null>(null);
+    const [jumpLoading, setJumpLoading] = useState<{ chatId: string; messageId: string } | null>(null);
+    const jumpAbortRef = useRef<AbortController | null>(null);
+    const jumpRequestIdRef = useRef(0);
+    const jumpRangeChatIdsRef = useRef<Set<string>>(new Set());
+
+    const handleJumpToMessageSettled = useCallback(() => {
+        setJumpLoading(null);
+        setTargetScrollMessage(null);
+    }, []);
+
+    const handleCancelJumpToMessage = useCallback(() => {
+        jumpRequestIdRef.current += 1;
+        jumpAbortRef.current?.abort();
+        jumpAbortRef.current = null;
+        setJumpLoading(null);
+        setTargetScrollMessage(null);
+    }, []);
+
+    const previousActiveChatIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (previousActiveChatIdRef.current === activeChatId) return;
+        previousActiveChatIdRef.current = activeChatId;
+        jumpRequestIdRef.current += 1;
+        jumpAbortRef.current?.abort();
+        jumpAbortRef.current = null;
+        setJumpLoading(null);
+    }, [activeChatId]);
 
     const handleJumpToMessage = useCallback(async (chatId: string, messageId: string) => {
         if (!chatId || !messageId) return;
@@ -922,17 +950,27 @@ export function App() {
             return;
         }
 
+        jumpAbortRef.current?.abort();
+        const controller = new AbortController();
+        jumpAbortRef.current = controller;
+        const requestId = jumpRequestIdRef.current + 1;
+        jumpRequestIdRef.current = requestId;
+        setJumpLoading({ chatId, messageId });
+        let settled = false;
+
         try {
             const qs = new URLSearchParams({
                 around_id: messageId,
                 limit: String(MESSAGE_PAGE_SIZE),
                 include_meta: 'true',
             });
-            const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/messages?${qs.toString()}`);
+            const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/messages?${qs.toString()}`, { signal: controller.signal });
             const rawChunk: Message[] = Array.isArray(res?.messages) ? res.messages : [];
             const chunk: Message[] = await Promise.all(
                 rawChunk.map((message) => decryptMessageClientSide(message, authToken || '', chatId))
             );
+
+            if (requestId !== jumpRequestIdRef.current) return;
 
             if (chunk.length > 0) {
                 setMessages((prev) => ({
@@ -953,9 +991,21 @@ export function App() {
                 }));
 
                 setTargetScrollMessage({ chatId, messageId, timestamp: Date.now() });
+                jumpRangeChatIdsRef.current.add(chatId);
+                settled = true;
+                if (!chunk.some((message) => message.id === messageId)) {
+                    setJumpLoading(null);
+                }
             }
-        } catch (err) {
-            console.error('Failed to jump to message around_id:', err);
+        } catch (err: any) {
+            if (err?.name !== 'AbortError') {
+                console.error('Failed to jump to message around_id:', err);
+            }
+        } finally {
+            jumpAbortRef.current = null;
+            if (!settled && requestId === jumpRequestIdRef.current) {
+                setJumpLoading(null);
+            }
         }
     }, [messages, authToken]);
 
@@ -1359,6 +1409,10 @@ export function App() {
             },
         }));
 
+        if (direction === 'latest' && mode === 'replace') {
+            jumpRangeChatIdsRef.current.delete(chatId);
+        }
+
         if (params?.finalizeInitialLoad && chunk.length > 0) {
             setMessagesLoadedOnce((prev) => (prev[chatId] ? prev : { ...prev, [chatId]: true }));
             setMessagesLoading((prev) => (prev[chatId] ? { ...prev, [chatId]: false } : prev));
@@ -1517,19 +1571,35 @@ export function App() {
             return prev.map((c) => (c.id === chatId ? { ...c, unreadCount: 0 } : c));
         });
 
-        const inMemory = messagesRef.current[chatId] || [];
+        const cachedMessages = messagesRef.current[chatId] || [];
+        const lastKnownMessageId = chatsRef.current.find(c => c.id === chatId)?.lastMessage?.id;
+        const cachedLastMessageId = cachedMessages[cachedMessages.length - 1]?.id;
+        const jumpedRange = jumpRangeChatIdsRef.current.has(chatId);
+        const hasNewerRange = jumpedRange
+            || Boolean(messageRangeStateRef.current[chatId]?.hasNewer)
+            || Boolean(lastKnownMessageId && cachedLastMessageId && lastKnownMessageId !== cachedLastMessageId);
+        if (hasNewerRange) {
+            setMessages(prev => (prev[chatId]?.length ? { ...prev, [chatId]: [] } : prev));
+            setMessagesLoadedOnce(prev => (prev[chatId] ? { ...prev, [chatId]: false } : prev));
+        }
+
+        const inMemory = hasNewerRange ? [] : cachedMessages;
         let hasImmediateMessages = inMemory.length > 0;
 
-        const shouldShowSkeleton = !messagesLoadedOnceRef.current[chatId] && !hasImmediateMessages;
+        const shouldShowSkeleton = hasNewerRange || (!messagesLoadedOnceRef.current[chatId] && !hasImmediateMessages);
         if (shouldShowSkeleton) {
-            const cached = await getChatSnapshot(chatId);
-            if (chatLoadRequestRef.current !== requestId) return;
-            if (cached && cached.length > 0) {
-                hasImmediateMessages = true;
-                setMessages(prev => (prev[chatId]?.length ? prev : { ...prev, [chatId]: cached }));
-                setMessagesLoadedOnce(prev => (prev[chatId] ? prev : { ...prev, [chatId]: true }));
-            } else {
+            if (hasNewerRange) {
                 setMessagesLoading(prev => ({ ...prev, [chatId]: true }));
+            } else {
+                const cached = await getChatSnapshot(chatId);
+                if (chatLoadRequestRef.current !== requestId) return;
+                if (cached && cached.length > 0) {
+                    hasImmediateMessages = true;
+                    setMessages(prev => (prev[chatId]?.length ? prev : { ...prev, [chatId]: cached }));
+                    setMessagesLoadedOnce(prev => (prev[chatId] ? prev : { ...prev, [chatId]: true }));
+                } else {
+                    setMessagesLoading(prev => ({ ...prev, [chatId]: true }));
+                }
             }
         }
 
@@ -2829,6 +2899,9 @@ export function App() {
                                 onUnpinMessage={handleUnpinMessage}
                                 onJumpToMessage={handleJumpToMessage}
                                 targetScrollMessage={targetScrollMessage}
+                                jumpingToMessage={Boolean(jumpLoading && jumpLoading.chatId === (activeChatId || 'pending'))}
+                                onJumpToMessageSettled={handleJumpToMessageSettled}
+                                onCancelJumpToMessage={handleCancelJumpToMessage}
                             />
                         ) : (
                             <EmptyState />

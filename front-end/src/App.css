@@ -1820,29 +1820,6 @@ body,
     overflow: visible;
 }
 
-@keyframes message-highlight-fade {
-    0% {
-        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
-    }
-
-    10% {
-        box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.7);
-    }
-
-    85% {
-        box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.7);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
-    }
-}
-
-.message-bubble--highlighted {
-    animation: message-highlight-fade 1.5s ease-in-out forwards !important;
-    z-index: 2;
-}
-
 @media (min-width: 640px) {
     .message-bubble {
         max-width: 75%;
@@ -2672,6 +2649,15 @@ body,
     box-shadow: none;
     color: var(--text-tertiary);
     cursor: default;
+}
+
+.chat-room__scroll-btn-spinner {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.38);
+    border-top-color: #ffffff;
+    animation: chatRangeSpin 0.85s linear infinite;
 }
 
 .chat-room__scroll-badge {
@@ -5434,7 +5420,7 @@ body[data-music-player='active'] .app {
 }
 
 .chat-room__pinned-bar:hover {
-    background: var(--glass-surface-elevated);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--glass-surface));
 }
 
 .chat-room__pinned-bar:active {
@@ -5498,8 +5484,61 @@ body[data-music-player='active'] .app {
 }
 
 .chat-room__pinned-bar__unpin:hover {
-    background: rgba(239, 68, 68, 0.12);
-    color: #ef4444;
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+.chat-room__jump-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.42);
+    cursor: pointer;
+    animation: overlay-soft-in var(--motion-fast) var(--motion-ease-standard);
+}
+
+.chat-room__jump-box {
+    width: 112px;
+    height: 112px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    background: var(--glass-surface);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-specular);
+    cursor: default;
+    animation: jump-box-in 0.18s var(--motion-ease-standard);
+}
+
+@keyframes jump-box-in {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+html.no-blur-effect .chat-room__jump-box {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+}
+
+.chat-room__jump-spinner {
+    width: 30px;
+    height: 30px;
+    border-width: 3px;
 }
 
 .chat-room__header--selection {
@@ -5661,6 +5700,39 @@ body[data-music-player='active'] .app {
 .message-row--selected {
     isolation: isolate;
     content-visibility: visible;
+}
+
+.message-row--flash {
+    isolation: isolate;
+    content-visibility: visible;
+}
+
+.message-row--flash::before {
+    content: '';
+    position: absolute;
+    inset: 0 -100px;
+    background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+    pointer-events: none;
+    z-index: -1;
+    animation: message-row-flash 1.5s ease-in-out forwards;
+}
+
+@keyframes message-row-flash {
+    0% {
+        opacity: 0;
+    }
+
+    12% {
+        opacity: 1;
+    }
+
+    78% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+    }
 }
 
 .message-row--selected::before {
