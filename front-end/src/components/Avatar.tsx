@@ -137,6 +137,16 @@ export const getAvatarDisplayUrl = async (src: string): Promise<string> => {
   return fetchAvatar(key);
 };
 
+export function extractFileIdFromAvatar(rawAvatar: string): string {
+  const avatar = String(rawAvatar || '').trim();
+  if (!avatar) return '';
+  const withoutOrigin = avatar.startsWith(API_BASE_URL) ? avatar.slice(API_BASE_URL.length) : avatar;
+  const match = withoutOrigin.match(/\/(?:files|avatars)\/([^/?#]+)/);
+  if (match?.[1]) return decodeURIComponent(match[1]);
+  if (!avatar.startsWith('http://') && !avatar.startsWith('https://') && !avatar.startsWith('/')) return avatar;
+  return '';
+}
+
 export function Avatar({ name, size = 'md', online, savedMessages = false, src = '' }: AvatarProps) {
   const [resolvedSrc, setResolvedSrc] = useState<string>(() => {
     if (!src) return '';

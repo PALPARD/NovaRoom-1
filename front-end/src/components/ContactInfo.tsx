@@ -6,12 +6,13 @@ import { cx } from '../utils/cx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { User } from '../types';
-import { Avatar, getAvatarDisplayUrl } from './Avatar';
+import { Avatar, extractFileIdFromAvatar, getAvatarDisplayUrl } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
-import { API_BASE_URL, apiFetch } from '../config/api';
+import { apiFetch } from '../config/api';
 import { ImageMediaViewer } from './ImageMediaViewer';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
 import { copyText } from '../utils/clipboard';
+import { resolveVerified, toPersianDigits } from '../utils/format';
 
 interface ContactInfoProps {
     user: User;
@@ -30,25 +31,6 @@ const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 function extractUploadedFileId(res: any): string {
     const file = res?.file || {};
     return String(file.fileId || file.id || file.file_id || file.path || '').trim();
-}
-
-function resolveVerified(val: any): boolean {
-    if (val === null || val === undefined) return false;
-    if (val === false || val === 0 || val === 'false' || val === '0') return false;
-    return true;
-}
-function toPersianDigits(value: string | number): string {
-    return String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
-}
-
-function extractFileIdFromAvatar(rawAvatar: string): string {
-    const avatar = String(rawAvatar || '').trim();
-    if (!avatar) return '';
-    const withoutOrigin = avatar.startsWith(API_BASE_URL) ? avatar.slice(API_BASE_URL.length) : avatar;
-    const match = withoutOrigin.match(/\/(?:files|avatars)\/([^/?#]+)/);
-    if (match?.[1]) return decodeURIComponent(match[1]);
-    if (!avatar.startsWith('http://') && !avatar.startsWith('https://') && !avatar.startsWith('/')) return avatar;
-    return '';
 }
 
 export function ContactInfo({

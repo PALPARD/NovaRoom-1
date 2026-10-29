@@ -6,6 +6,9 @@ import type { Components } from 'react-markdown';
 import type { FileMetadata, Message } from '../types';
 import { Avatar } from './Avatar';
 import { FileMessage } from './FileMessage';
+import { toPersianDigits } from '../utils/format';
+import { triggerHaptic } from '../utils/haptics';
+import { copyText } from '../utils/clipboard';
 
 export type ReactionEntry = { emoji: string; count: number; userIds: string[] };
 
@@ -61,8 +64,6 @@ export type ChatMessageItemProps = {
     actions: ChatMessageActions;
 };
 
-const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
-const toPersianDigits = (value: string | number): string => String(value).replace(/\d/g, (d) => PERSIAN_DIGITS[Number(d)] ?? d);
 const SENDER_COLORS = ['#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#00BCD4', '#009688', '#4CAF50', '#FF5722', '#FF9800'];
 
 function normalizeMessageTextForRender(text: string): string {
@@ -88,20 +89,7 @@ function CodeBlock({ className, children }: { className?: string; children?: Rea
     const handleCopy = async () => {
         const code = typeof children === 'string' ? children : String(children ?? '');
         try {
-            if (navigator.clipboard && (window as unknown as { isSecureContext?: boolean }).isSecureContext) {
-                await navigator.clipboard.writeText(code);
-            } else {
-                const ta = document.createElement('textarea');
-                ta.value = code;
-                ta.style.position = 'fixed';
-                ta.style.left = '-9999px';
-                ta.style.top = '0';
-                document.body.appendChild(ta);
-                ta.focus();
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-            }
+            await copyText(code);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch {
@@ -202,10 +190,6 @@ const MemoMessageTextContent = memo(function MemoMessageTextContent({
         </div>
     );
 });
-
-function triggerHaptic() {
-    try { navigator.vibrate?.(10); } catch { return; }
-}
 
 function shallowRecordEqual(a: object, b: object) {
     const aKeys = Object.keys(a);

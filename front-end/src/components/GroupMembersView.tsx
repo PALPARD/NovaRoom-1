@@ -1,15 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Copy, Pencil, Search, Users } from 'lucide-react';
 import type { User } from '../types';
-import { Avatar } from './Avatar';
+import { Avatar, extractFileIdFromAvatar, getAvatarDisplayUrl } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { ImageMediaViewer } from './ImageMediaViewer';
-import { API_BASE_URL } from '../config/api';
-import { decryptAvatarBytesClientSide, decryptFileBytesClientSide } from '../utils/e2ee';
-import { getOrCacheBlob } from '../utils/mediaCache';
 import { screenVariants } from '../utils/screenMotion';
+import { resolveVerified, toPersianDigits } from '../utils/format';
+import { copyText } from '../utils/clipboard';
 
 export type GroupMember = {
     name: string;
@@ -35,36 +34,6 @@ type GroupMembersViewProps = {
     onViewMember: (memberId: string) => void;
 };
 
-const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
-const toPersianDigits = (value: string | number): string => String(value).replace(/\d/g, (d) => PERSIAN_DIGITS[Number(d)] ?? d);
-
-function resolveVerified(val: unknown): boolean {
-    if (val === null || val === undefined) return false;
-    if (val === false || val === 0 || val === 'false' || val === '0') return false;
-    return true;
-}
-
-function resolveAvatarUrl(rawAvatar: string): string {
-    const avatar = String(rawAvatar || '').trim();
-    if (!avatar) return '';
-    if (avatar.startsWith('blob:') || avatar.startsWith('data:')) return avatar;
-    if (avatar.startsWith('http://') || avatar.startsWith('https://')) return avatar;
-    if (avatar.startsWith('/avatars/') || avatar === '/favicon.png' || avatar.startsWith('/logo/')) return avatar;
-    if (API_BASE_URL && avatar.startsWith(API_BASE_URL)) return avatar;
-    if (avatar.startsWith('/')) return `${API_BASE_URL}${avatar}`;
-    return `${API_BASE_URL}/files/${avatar}`;
-}
-
-function extractFileIdFromAvatar(rawAvatar: string): string {
-    const avatar = String(rawAvatar || '').trim();
-    if (!avatar) return '';
-    const withoutOrigin = avatar.startsWith(API_BASE_URL) ? avatar.slice(API_BASE_URL.length) : avatar;
-    const match = withoutOrigin.match(/\/(?:files|avatars)\/([^/?#]+)/);
-    if (match?.[1]) return decodeURIComponent(match[1]);
-    if (!avatar.startsWith('http://') && !avatar.startsWith('https://') && !avatar.startsWith('/')) return avatar;
-    return '';
-}
-
 export function GroupMembersView({
     contact,
     currentUserId,
@@ -83,37 +52,16 @@ export function GroupMembersView({
     const navigate = useNavigate();
     const location = useLocation();
 
-    useEffect(() => () => {
-        if (openedGroupAvatar) URL.revokeObjectURL(openedGroupAvatar.url);
-    }, [openedGroupAvatar]);
-
     const isAvatarRoute = new URLSearchParams(location.search).get('avatar') === '1';
 
     const openGroupAvatarViewer = async () => {
         const rawAvatar = String(contact.avatar || '').trim();
-        if (!rawAvatar) return;
-        const avatarUrl = resolveAvatarUrl(rawAvatar);
-        if (!avatarUrl || !token) return;
-
+        if (!rawAvatar || !token) return;
         try {
-            const blob = await getOrCacheBlob({
-                cacheKey: `avatar:viewer:${rawAvatar}`,
-                loadBlob: async () => {
-                    const response = await fetch(avatarUrl, {
-                        headers: { Authorization: `Bearer ${token}` },
-                    });
-                    if (!response.ok) throw new Error('Failed to load group avatar');
-                    const encryptedBytes = new Uint8Array(await response.arrayBuffer());
-                    let plainBytes = await decryptFileBytesClientSide(encryptedBytes, token, 'profile_avatar_shared');
-                    if (plainBytes === encryptedBytes) {
-                        plainBytes = await decryptAvatarBytesClientSide(encryptedBytes, token);
-                    }
-                    return new Blob([new Uint8Array(plainBytes)], { type: response.headers.get('content-type') || 'image/*' });
-                },
-            });
-            const objectUrl = URL.createObjectURL(blob);
+            const avatarUrl = await getAvatarDisplayUrl(rawAvatar);
+            if (!avatarUrl) return;
             setOpenedGroupAvatar({
-                url: objectUrl,
+                url: avatarUrl,
                 fileId: extractFileIdFromAvatar(rawAvatar),
                 fileName: `${contact.name || 'group'}.jpg`,
             });
@@ -202,7 +150,7 @@ export function GroupMembersView({
                                 <Users size={14} style={{ opacity: 0.6, flexShrink: 0 }} />
                                 {inviteLink}
                             </div>
-                            <button type="button" className="icon-btn" style={{ flexShrink: 0 }} onClick={() => navigator.clipboard.writeText(inviteLink).catch(() => { })}>
+                            <button type="button" className="icon-btn" style={{ flexShrink: 0 }} onClick={() => void copyText(inviteLink).catch(() => { })}>
                                 <Copy size={18} />
                             </button>
                         </div>

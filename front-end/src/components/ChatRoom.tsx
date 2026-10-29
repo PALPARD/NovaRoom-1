@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Copy, Eye, MoreVertical, Pencil, Smile, Trash2, X, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
 import { AnimatePresence, motion } from "framer-motion";
@@ -18,6 +18,9 @@ import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { screenVariants } from '../utils/screenMotion';
 import { cacheTextValue, deleteCachedBlob, deleteCachedText, getCachedBlob, getCachedTextValue, getOrCacheBlob } from '../utils/mediaCache';
 import { pendingUploadedFileByChat } from '../utils/pendingUploads';
+import { formatDayLabel, formatMessageTime, resolveVerified, sameDay, toPersianDigits } from '../utils/format';
+import { copyText } from '../utils/clipboard';
+import { triggerHaptic } from '../utils/haptics';
 import { ChatMessageItem, type ReactionEntry } from './ChatMessageItem';
 import { ChatComposer, type ChatComposerSendPayload } from './ChatComposer';
 import { GroupMembersView, type GroupMember } from './GroupMembersView';
@@ -25,6 +28,7 @@ import './FileComponents.css';
 
 const persistedTextKeys = new Set<string>();
 const EMPTY_REACTIONS: ReactionEntry[] = [];
+const MAX_SELECTED_MESSAGES = 20;
 
 interface ChatRoomProps {
     chatId: string;
@@ -74,96 +78,41 @@ interface ChatRoomProps {
     targetScrollMessage?: { chatId: string; messageId: string; timestamp: number } | null;
 }
 
-const TEHRAN_TZ = 'Asia/Tehran';
-const tehranYmdFmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TEHRAN_TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-});
-
-const persianJalaliDayMonthFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-    timeZone: TEHRAN_TZ,
-    month: 'long',
-    day: 'numeric',
-});
-const persianJalaliFullSlashFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-    timeZone: TEHRAN_TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-});
-const persianJalaliYearFmt = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-    timeZone: TEHRAN_TZ,
-    year: 'numeric',
-});
-const persianWeekdayFmt = new Intl.DateTimeFormat('fa-IR', {
-    timeZone: TEHRAN_TZ,
-    weekday: 'long',
-});
-const persianTimeFmt = new Intl.DateTimeFormat('fa-IR', {
-    timeZone: TEHRAN_TZ,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-});
-
-function normalizeTs(ts: any): number {
-    if (ts == null) return Date.now();
-    if (typeof ts === 'string') {
-        const n = Date.parse(ts);
-        return Number.isFinite(n) ? n : Date.now();
-    }
-    if (typeof ts === 'number') {
-        return ts < 1_000_000_000_000 ? ts * 1000 : ts;
-    }
-    if (ts instanceof Date) return ts.getTime();
-    return Date.now();
-}
-
-function iranYMD(ts: any): string {
-    return tehranYmdFmt.format(new Date(normalizeTs(ts)));
-}
-
-function iranDayNumber(ts: any): number {
-    return Math.floor(Date.parse(`${iranYMD(ts)}T00:00:00Z`) / 86400000);
-}
-
-function toPersianDigits(value: string | number): string {
-    return String(value).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d);
-}
-
-function sameDay(a: any, b: any) {
-    return iranYMD(a) === iranYMD(b);
-}
-
-function formatDayLabel(ts: any) {
-    const today = iranDayNumber(Date.now());
-    const thatDay = iranDayNumber(ts);
-    const diffDays = today - thatDay;
-    if (diffDays === 0) return 'امروز';
-    if (diffDays === 1) return 'دیروز';
-    if (diffDays <= 6) {
-        return persianWeekdayFmt.format(new Date(normalizeTs(ts)));
-    }
-    const currentJalaliYear = persianJalaliYearFmt.format(new Date());
-    const targetJalaliYear = persianJalaliYearFmt.format(new Date(normalizeTs(ts)));
-    if (currentJalaliYear === targetJalaliYear) {
-        return persianJalaliDayMonthFmt.format(new Date(normalizeTs(ts)));
-    }
-    return persianJalaliFullSlashFmt.format(new Date(normalizeTs(ts)));
-}
-
-function formatMessageTime(ts: any) {
-    return persianTimeFmt.format(new Date(normalizeTs(ts)));
-}
-
 function bubbleShape(prevSameSender: boolean, nextSameSender: boolean) {
     if (!prevSameSender && !nextSameSender) return 'msg-shape--single';
     if (!prevSameSender && nextSameSender) return 'msg-shape--first';
     if (prevSameSender && nextSameSender) return 'msg-shape--middle';
     if (prevSameSender && !nextSameSender) return 'msg-shape--last';
     return 'msg-shape--single';
+}
+
+function ConfirmDialog({
+    title,
+    text,
+    confirmLabel,
+    onCancel,
+    onConfirm,
+    overlayRef,
+}: {
+    title: string;
+    text: string;
+    confirmLabel: string;
+    onCancel: () => void;
+    onConfirm: () => void;
+    overlayRef?: RefObject<HTMLDivElement | null>;
+}) {
+    return (
+        <motion.div className="chat-room-modal-overlay" ref={overlayRef} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
+            <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
+                <h3 className="chat-room-confirm-modal__title">{title}</h3>
+                <p className="chat-room-confirm-modal__text">{text}</p>
+                <div className="chat-room-confirm-modal__actions">
+                    <button className="chat-room-confirm-modal__btn" onClick={onCancel} type="button">لغو</button>
+                    <button className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger" onClick={onConfirm} type="button">{confirmLabel}</button>
+                </div>
+            </motion.div>
+        </motion.div>
+    );
 }
 
 function getPureEmojiCount(input: string): number {
@@ -178,12 +127,6 @@ function getPureEmojiCount(input: string): number {
     return emojiMatches.length;
 }
 
-function resolveVerified(val: any): boolean {
-    if (val === null || val === undefined) return false;
-    if (val === false || val === 0 || val === 'false' || val === '0') return false;
-    return true;
-}
-
 type SeenByUser = {
     chatId: string;
     name: string;
@@ -194,34 +137,21 @@ type SeenByUser = {
 
 
 
-function applyOptimisticReact(
+function applyOptimisticReactions(
     reactions: ReactionEntry[] | undefined,
     userId: string,
-    emoji: string,
-): ReactionEntry[] {
-    const base: ReactionEntry[] = (reactions || []).map((r) => ({ ...r, userIds: [...r.userIds] }));
-    
-    base.forEach((r) => {
-        const idx = r.userIds.indexOf(userId);
-        if (idx !== -1) { r.userIds.splice(idx, 1); r.count = Math.max(0, r.count - 1); }
-    });
-    
-    const existing = base.find((r) => r.emoji === emoji);
-    if (existing) { existing.userIds.push(userId); existing.count += 1; }
-    else base.push({ emoji, count: 1, userIds: [userId] });
-    
-    return base.filter((r) => r.count > 0);
-}
-
-function applyOptimisticDeleteReaction(
-    reactions: ReactionEntry[] | undefined,
-    userId: string,
+    emoji?: string,
 ): ReactionEntry[] {
     const base: ReactionEntry[] = (reactions || []).map((r) => ({ ...r, userIds: [...r.userIds] }));
     base.forEach((r) => {
         const idx = r.userIds.indexOf(userId);
         if (idx !== -1) { r.userIds.splice(idx, 1); r.count = Math.max(0, r.count - 1); }
     });
+    if (emoji) {
+        const existing = base.find((r) => r.emoji === emoji);
+        if (existing) { existing.userIds.push(userId); existing.count += 1; }
+        else base.push({ emoji, count: 1, userIds: [userId] });
+    }
     return base.filter((r) => r.count > 0);
 }
 
@@ -253,11 +183,6 @@ function membersEqual(a: Record<string, GroupMember>, b: Record<string, GroupMem
             && left.verified === right.verified
             && left.online === right.online;
     });
-}
-
-
-function triggerHaptic() {
-    try { navigator.vibrate?.(10); } catch {  }
 }
 
 
@@ -308,7 +233,6 @@ export function ChatRoom({
     onJumpToMessage,
     targetScrollMessage = null,
 }: ChatRoomProps) {
-    const MAX_SELECTED_MESSAGES = 20;
     const currentChat = useMemo(
         () => chats.find((c) => c.id === chatId) || null,
         [chats, chatId]
@@ -363,10 +287,7 @@ export function ChatRoom({
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const roomRef = useRef<HTMLDivElement | null>(null);
     const topSentinelRef = useRef<HTMLDivElement | null>(null);
-    const messagesScrolledRef = useRef(false);
-    const showScrollBtnRef = useRef(false);
     const hydratedMessageIdsRef = useRef<Set<string>>(new Set());
-    const hydratedChatIdRef = useRef('');
 
     const messageElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
     const unreadSeparatorRef = useRef<HTMLDivElement | null>(null);
@@ -402,7 +323,6 @@ export function ChatRoom({
     const initialMediaPendingIdsRef = useRef<Set<string>>(new Set());
     const initialMediaFollowupDoneRef = useRef(false);
     const initialMediaReadyTimeoutRef = useRef<number | null>(null);
-    const unreadConsumedInSessionRef = useRef(false);
     const restoringFromInfoRef = useRef(false);
     const restoreTopAfterInfoRef = useRef<number | null>(null);
     const restoreBottomAfterInfoRef = useRef(false);
@@ -648,6 +568,8 @@ export function ChatRoom({
 
     const scrollToUnreadAnchor = (messageId: string) => scrollToMessageTop(messageId, 12, true);
 
+    const messagesById = useMemo(() => new Map(messages.map((msg) => [msg.id, msg])), [messages]);
+
     const getUnseenIncomingMessages = () => messages.filter((m: any) => m.senderId !== currentUserId && m.seen === false);
 
     const computeUnreadAnchorId = (unreadCount: number): string | null => {
@@ -675,7 +597,7 @@ export function ChatRoom({
 
     const isUnreadAnchorValid = (messageId: string | null): boolean => {
         if (!messageId) return false;
-        const message = messages.find((m) => m.id === messageId);
+        const message = messagesById.get(messageId);
         if (!message) return false;
         if (message.senderId === currentUserId) return false;
         return true;
@@ -739,8 +661,6 @@ export function ChatRoom({
         if (c.scrollTop < 20) scrollToBottom(false);
     };
 
-    const messagesById = useMemo(() => new Map(messages.map((msg) => [msg.id, msg])), [messages]);
-
     const getReplySenderName = (reply: MessageReplyType | null | undefined) => {
         if (!reply) return 'کاربر';
         const repliedMessage = messagesById.get(reply.id);
@@ -756,35 +676,28 @@ export function ChatRoom({
         return senderId;
     };
 
+    const filePreviewLabel = (mimeType?: string) => {
+        const fileMime = (mimeType || '').toLowerCase();
+        if (fileMime.startsWith('image/')) return '🖼️ تصویر';
+        if (fileMime.startsWith('video/')) return '🎥 ویدیو';
+        if (fileMime.startsWith('audio/')) return '🎵 آهنگ';
+        return '📎 فایل';
+    };
+
     const getReplyPreviewText = (reply: MessageReplyType | null | undefined) => {
         if (!reply) return '';
         const repliedMessage = messagesById.get(reply.id);
-        const repliedFile = repliedMessage?.file;
-        const fileMime = (repliedFile?.mimeType || '').toLowerCase();
         const fallbackText = (reply.text || '').trim();
-
-        if (!repliedFile) return fallbackText;
-
-        let prefix = '📎 فایل';
-        if (fileMime.startsWith('image/')) prefix = '🖼️ تصویر';
-        else if (fileMime.startsWith('video/')) prefix = '🎥 ویدیو';
-        else if (fileMime.startsWith('audio/')) prefix = '🎵 آهنگ';
-
+        if (!repliedMessage?.file) return fallbackText;
+        const prefix = filePreviewLabel(repliedMessage.file.mimeType);
         return fallbackText ? `${prefix} • ${fallbackText}` : prefix;
     };
 
     const getForwardPreviewText = (draft: { previewText?: string; previewFile?: FileMetadata | null } | null | undefined) => {
         if (!draft) return '';
         const fallbackText = (draft.previewText || '').trim();
-        const fileMime = (draft.previewFile?.mimeType || '').toLowerCase();
-
         if (!draft.previewFile) return fallbackText || 'پیام';
-
-        let prefix = '📎 فایل';
-        if (fileMime.startsWith('image/')) prefix = '🖼️ تصویر';
-        else if (fileMime.startsWith('video/')) prefix = '🎥 ویدیو';
-        else if (fileMime.startsWith('audio/')) prefix = '🎵 آهنگ';
-
+        const prefix = filePreviewLabel(draft.previewFile.mimeType);
         return fallbackText ? `${prefix} • ${fallbackText}` : prefix;
     };
 
@@ -1028,20 +941,7 @@ export function ChatRoom({
     };
 
     const doCopyMessage = async (m: Message) => {
-        const value = m.text ?? '';
-        try {
-            if (navigator.clipboard && (window as any).isSecureContext) {
-                await navigator.clipboard.writeText(value);
-            } else {
-                const ta = document.createElement('textarea');
-                ta.value = value;
-                ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-                document.body.appendChild(ta);
-                ta.focus(); ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-            }
-        } catch {  }
+        await copyText(m.text ?? '').catch(() => { });
         setMsgMenu(null);
     };
 
@@ -1049,7 +949,7 @@ export function ChatRoom({
     const handleReact = async (messageId: string, emoji: string) => {
         setReactionMenu(null); setMsgMenu(null);
         
-        const msg = messages.find((m) => m.id === messageId);
+        const msg = messagesById.get(messageId);
         const currentReactions = optimisticReactions[messageId] ?? (msg?.reactions as ReactionEntry[] | undefined);
         
         const alreadyReacted = (currentReactions || []).some(
@@ -1058,7 +958,7 @@ export function ChatRoom({
         
         setOptimisticReactions((prev) => ({
             ...prev,
-            [messageId]: applyOptimisticReact(currentReactions, currentUserId, emoji),
+            [messageId]: applyOptimisticReactions(currentReactions, currentUserId, emoji),
         }));
         
         if (!alreadyReacted) triggerHaptic();
@@ -1081,12 +981,12 @@ export function ChatRoom({
 
     const handleDeleteReaction = async (messageId: string) => {
         setReactionMenu(null); setMsgMenu(null);
-        const msg = messages.find((m) => m.id === messageId);
+        const msg = messagesById.get(messageId);
         const currentReactions = optimisticReactions[messageId] ?? (msg?.reactions as ReactionEntry[] | undefined);
         
         setOptimisticReactions((prev) => ({
             ...prev,
-            [messageId]: applyOptimisticDeleteReaction(currentReactions, currentUserId),
+            [messageId]: applyOptimisticReactions(currentReactions, currentUserId),
         }));
         try {
             if (onUnreactMessage) {
@@ -1113,7 +1013,7 @@ export function ChatRoom({
             const next = { ...prev };
             let changed = false;
             Object.keys(prev).forEach((messageId) => {
-                const msg = messages.find((m) => m.id === messageId);
+                const msg = messagesById.get(messageId);
                 if (!msg) {
                     delete next[messageId];
                     changed = true;
@@ -1130,17 +1030,18 @@ export function ChatRoom({
         });
     }, [messages]);
 
+    const forwardOne = (sourceChatId: string, messageId: string, targetChatId: string) => {
+        if (onForwardMessage) return onForwardMessage(sourceChatId, messageId, targetChatId);
+        return apiFetch('/messages/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, messageId, targetChatId }) });
+    };
+
     const handleForwardMessage = async (sourceChatId: string, messageId: string, targetChatId: string) => {
         if (forwardingInFlightRef.current) return;
         forwardingInFlightRef.current = true;
         const draftSnapshot = pendingForwardDraft;
         onClearPendingForwardDraft?.(targetChatId);
         try {
-            if (onForwardMessage) {
-                await onForwardMessage(sourceChatId, messageId, targetChatId);
-            } else {
-                await apiFetch('/messages/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, messageId, targetChatId }) });
-            }
+            await forwardOne(sourceChatId, messageId, targetChatId);
         } catch (e) {
             if (draftSnapshot) onSetPendingForwardDraft?.(targetChatId, draftSnapshot);
             console.error('Failed to forward:', e);
@@ -1164,7 +1065,7 @@ export function ChatRoom({
 
         if (idsToForward.length === 1 && !forwardingMessageIds.length) {
             const singleId = idsToForward[0];
-            const sourceMessage = messages.find((m) => m.id === singleId);
+            const sourceMessage = messagesById.get(singleId);
             onSetPendingForwardDraft?.(targetChatId, {
                 sourceChatId: chatId,
                 messageId: singleId,
@@ -1179,13 +1080,7 @@ export function ChatRoom({
             .filter((m) => idsToForward.includes(m.id))
             .sort((a, b) => a.timestamp - b.timestamp);
 
-        await Promise.allSettled(sortedMsgs.map((msg) => {
-            if (onForwardMessage) return onForwardMessage(chatId, msg.id, targetChatId);
-            return apiFetch('/messages/forward', {
-                method: 'POST',
-                body: JSON.stringify({ sourceChatId: chatId, messageId: msg.id, targetChatId }),
-            });
-        }));
+        await Promise.allSettled(sortedMsgs.map((msg) => forwardOne(chatId, msg.id, targetChatId)));
 
         onSelectChat?.(targetChatId);
     };
@@ -1223,7 +1118,7 @@ export function ChatRoom({
 
         if (textLines.length > 0) {
             try {
-                await navigator.clipboard.writeText(textLines.join('\n\n'));
+                await copyText(textLines.join('\n\n'));
                 setCopyToast('متن پیام‌ها کپی شد');
                 window.setTimeout(() => setCopyToast(null), 2000);
             } catch {
@@ -1241,7 +1136,7 @@ export function ChatRoom({
 
     const deletableSelectedIds = useMemo(() => {
         return selectedMessageIds.filter((id: string) => {
-            const msg = messages.find((m) => m.id === id);
+            const msg = messagesById.get(id);
             if (!msg) return false;
             return msg.senderId === currentUserId || (isGroupChat && isVerifiedUser);
         });
@@ -1288,10 +1183,6 @@ export function ChatRoom({
 
     useEffect(() => {
         let cancelled = false;
-        if (hydratedChatIdRef.current !== chatId) {
-            hydratedChatIdRef.current = chatId;
-            hydratedMessageIdsRef.current = new Set();
-        }
         if (persistedTextKeys.size > 2000) persistedTextKeys.clear();
         const pendingIds: string[] = [];
         for (const message of messages) {
@@ -1375,14 +1266,6 @@ export function ChatRoom({
     }, [chatId]);
 
     useEffect(() => {
-        const activeMessageIds = new Set(messages.map((m) => m.id));
-        messageElsRef.current.forEach((_, id) => {
-            if (!activeMessageIds.has(id)) messageElsRef.current.delete(id);
-        });
-        if (initialMediaReadyTimeoutRef.current != null) {
-            window.clearTimeout(initialMediaReadyTimeoutRef.current);
-            initialMediaReadyTimeoutRef.current = null;
-        }
         const mem = scrollMemoryRef.current[chatId];
         const preserveExactScroll = Boolean(mem?.userInteracted && !mem?.atBottom);
         if (preserveExactScroll) {
@@ -1414,37 +1297,9 @@ export function ChatRoom({
                 });
             });
         } else {
-            setChatContentReady((prev) => (prev ? prev : true));
+            setChatContentReady(true);
         }
-        openedAtRef.current = Date.now();
-        initialScrollDoneRef.current = false;
         prevLenRef.current = messages.length;
-        userReadingOlderRef.current = false;
-        isAtBottomRef.current = true;
-        setShowContactInfo(false);
-        setMsgMenu(null); setReactionMenu(null); setSeenByMenu(null);
-        setReplyTo(null); setEditingId(null);
-        startTransition(() => {
-            setNewMsgCount(0); setShowScrollBtn(false);
-            setHideScrollBtnUntilBottom(false);
-            setShowMembersList(false);
-            setViewingMemberId(null);
-            setForwardSourceUser(null);
-            setUnreadAnchorId(null);
-            setOptimisticReactions((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-            setReasoningPanelByMessage((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-            setSeenByLoadingMessageId(null);
-            setDisplayUnreadCount(initialUnreadCount);
-        });
-        autoJumpedToUnreadRef.current = false;
-        userScrolledAfterAutoJumpRef.current = false;
-        programmaticScrollEventsRef.current = 0;
-        consumedInitialUnreadRef.current = false;
-        userHasScrolledRef.current = false;
-        unreadConsumedInSessionRef.current = false;
-        restoringFromInfoRef.current = false;
-        restoreTopAfterInfoRef.current = null;
-        restoreBottomAfterInfoRef.current = false;
         return () => {
             if (firstRaf) cancelAnimationFrame(firstRaf);
             if (secondRaf) cancelAnimationFrame(secondRaf);
@@ -1462,18 +1317,6 @@ export function ChatRoom({
         }
     }, [initialUnreadCount, displayUnreadCount]);
 
-    useEffect(() => {
-        setLocalLoadingOlder(false);
-        setLocalLoadingNewer(false);
-        pendingOlderAdjustRef.current = null;
-        pendingRangeLoadTypeRef.current = null;
-        lastScrollTopRef.current = 0;
-        prevFirstMessageIdRef.current = messages[0]?.id || null;
-        prevLastMessageIdRef.current = messages[messages.length - 1]?.id || null;
-    }, [chatId]);
-
-    
-    
     useEffect(() => {
         if (isUnreadAnchorValid(unreadAnchorId)) return;
         const id = computeUnreadAnchorId(displayUnreadCount);
@@ -1683,18 +1526,6 @@ export function ChatRoom({
         });
     };
 
-    const setScrolledUi = (next: boolean) => {
-        if (messagesScrolledRef.current === next) return;
-        messagesScrolledRef.current = next;
-        setMessagesScrolled(next);
-    };
-
-    const setShowScrollBtnUi = (next: boolean) => {
-        if (showScrollBtnRef.current === next) return;
-        showScrollBtnRef.current = next;
-        setShowScrollBtn(next);
-    };
-
     const triggerLoadOlderMessages = () => {
         const container = messagesContainerRef.current;
         if (!container || !hasOlderMessages || loadingOlderMessages || localLoadingOlder) return;
@@ -1732,7 +1563,7 @@ export function ChatRoom({
         const container = messagesContainerRef.current;
         if (!container) return;
         const currentTop = container.scrollTop;
-        setScrolledUi(isElementScrolled(container));
+        setMessagesScrolled(isElementScrolled(container));
         const lastTop = lastScrollTopRef.current;
         const scrollingDown = currentTop > lastTop + 1;
         lastScrollTopRef.current = currentTop;
@@ -1760,12 +1591,12 @@ export function ChatRoom({
         }
         if (nearBottom) {
             setNewMsgCount(0);
-            setShowScrollBtnUi(false);
+            setShowScrollBtn(false);
             setHideScrollBtnUntilBottom(false);
         } else if (hideScrollBtnUntilBottom) {
-            setShowScrollBtnUi(false);
+            setShowScrollBtn(false);
         } else {
-            setShowScrollBtnUi(distanceToBottom > 180);
+            setShowScrollBtn(distanceToBottom > 180);
         }
 
         userHasScrolledRef.current = true;
@@ -1873,7 +1704,6 @@ export function ChatRoom({
     const jumpToLatest = async () => {
         setHideScrollBtnUntilBottom(true);
         setNewMsgCount(0);
-        showScrollBtnRef.current = false;
         setShowScrollBtn(false);
         const container = messagesContainerRef.current;
         const targetBottom = container ? Math.max(0, container.scrollHeight - container.clientHeight) : 0;
@@ -1970,7 +1800,7 @@ export function ChatRoom({
         const relX = x - roomRect.left;
         const relY = y - roomRect.top;
 
-        const message = messages.find((m) => m.id === messageId);
+        const message = messagesById.get(messageId);
         let isFileDownloaded = false;
         if (message?.file?.fileId) {
             const blob = await getCachedBlob(`chat:${chatId}:file:${message.file.fileId}`);
@@ -1988,66 +1818,22 @@ export function ChatRoom({
 
     
     useLayoutEffect(() => {
-        if (!msgMenu) return;
         const room = roomRef.current;
-        const menu = msgMenuRef.current;
-        if (!room || !menu) return;
-
+        if (!room) return;
         const rr = room.getBoundingClientRect();
-        const mr = menu.getBoundingClientRect();
-
-        const padding = 12;
-        const minTop = 64;
-
-        const maxLeft = rr.width - mr.width - padding;
-        const maxTop = rr.height - mr.height - padding;
-
-        const clampedLeft = Math.min(Math.max(msgMenu.left, padding), Math.max(padding, maxLeft));
-        const clampedTop = Math.min(Math.max(msgMenu.top, minTop), Math.max(minTop, maxTop));
-
-        if (clampedLeft !== msgMenu.left || clampedTop !== msgMenu.top) {
-            setMsgMenu((s) => (s ? { ...s, left: clampedLeft, top: clampedTop } : s));
-        }
-        
-    }, [msgMenu?.id, msgMenu?.top, msgMenu?.left, msgMenu?.isFileDownloaded]);
-
-    useLayoutEffect(() => {
-        if (!reactionMenu) return;
-        const room = roomRef.current;
-        const menu = reactionMenuRef.current;
-        if (!room || !menu) return;
-
-        const rr = room.getBoundingClientRect();
-        const mr = menu.getBoundingClientRect();
-        const padding = 12;
-        const minTop = 64;
-        const maxLeft = rr.width - mr.width - padding;
-        const maxTop = rr.height - mr.height - padding;
-        const clampedLeft = Math.min(Math.max(reactionMenu.left, padding), Math.max(padding, maxLeft));
-        const clampedTop = Math.min(Math.max(reactionMenu.top, minTop), Math.max(minTop, maxTop));
-        if (clampedLeft !== reactionMenu.left || clampedTop !== reactionMenu.top) {
-            setReactionMenu((s) => (s ? { ...s, left: clampedLeft, top: clampedTop } : s));
-        }
-    }, [reactionMenu?.id, reactionMenu?.top, reactionMenu?.left]);
-
-    useLayoutEffect(() => {
-        if (!seenByMenu) return;
-        const room = roomRef.current;
-        const menu = seenByMenuRef.current;
-        if (!room || !menu) return;
-
-        const rr = room.getBoundingClientRect();
-        const mr = menu.getBoundingClientRect();
-        const padding = 12;
-        const minTop = 64;
-        const maxLeft = rr.width - mr.width - padding;
-        const maxTop = rr.height - mr.height - padding;
-        const clampedLeft = Math.min(Math.max(seenByMenu.left, padding), Math.max(padding, maxLeft));
-        const clampedTop = Math.min(Math.max(seenByMenu.top, minTop), Math.max(minTop, maxTop));
-        if (clampedLeft !== seenByMenu.left || clampedTop !== seenByMenu.top) {
-            setSeenByMenu((s) => (s ? { ...s, left: clampedLeft, top: clampedTop } : s));
-        }
-    }, [seenByMenu?.id, seenByMenu?.top, seenByMenu?.left]);
+        const clamp = <T extends { top: number; left: number }>(menu: T | null, el: HTMLDivElement | null): T | null => {
+            if (!menu || !el) return menu;
+            const mr = el.getBoundingClientRect();
+            const padding = 12;
+            const minTop = 64;
+            const left = Math.min(Math.max(menu.left, padding), Math.max(padding, rr.width - mr.width - padding));
+            const top = Math.min(Math.max(menu.top, minTop), Math.max(minTop, rr.height - mr.height - padding));
+            return left === menu.left && top === menu.top ? menu : { ...menu, left, top };
+        };
+        setMsgMenu((menu) => clamp(menu, msgMenuRef.current));
+        setReactionMenu((menu) => clamp(menu, reactionMenuRef.current));
+        setSeenByMenu((menu) => clamp(menu, seenByMenuRef.current));
+    }, [msgMenu?.id, msgMenu?.top, msgMenu?.left, msgMenu?.isFileDownloaded, reactionMenu?.id, reactionMenu?.top, reactionMenu?.left, seenByMenu?.id, seenByMenu?.top, seenByMenu?.left]);
 
     const openReactionMenu = (messageId: string, targetEl: HTMLElement, anchor?: { top: number; left: number }) => {
         const room = roomRef.current;
@@ -2082,7 +1868,7 @@ export function ChatRoom({
     };
 
     const cleanupMessageCache = (messageId: string) => {
-        const msg = messages.find((m) => m.id === messageId);
+        const msg = messagesById.get(messageId);
         void deleteCachedText(`chat:${chatId}:message:${messageId}:text`);
         if (msg?.file?.fileId) void deleteCachedBlob(`chat:${chatId}:file:${msg.file.fileId}`);
     };
@@ -2093,6 +1879,10 @@ export function ChatRoom({
             cleanupMessageCache(confirmDeleteMsg);
             setConfirmDeleteMsg(null);
         }
+    };
+
+    const toggleReasoning = (messageId: string) => {
+        setReasoningPanelByMessage((prev) => ({ ...prev, [messageId]: !prev[messageId] }));
     };
 
     const messageHandlerStateRef = useRef({
@@ -2109,9 +1899,7 @@ export function ChatRoom({
         openImageViewer,
         openVideoViewer,
         setReplySwipeLocked,
-        toggleReasoning: (messageId: string) => {
-            setReasoningPanelByMessage((prev) => ({ ...prev, [messageId]: !prev[messageId] }));
-        },
+        toggleReasoning,
     });
     messageHandlerStateRef.current = {
         openMessageMenu,
@@ -2127,7 +1915,7 @@ export function ChatRoom({
         openImageViewer,
         openVideoViewer,
         setReplySwipeLocked,
-        toggleReasoning: messageHandlerStateRef.current.toggleReasoning,
+        toggleReasoning,
     };
 
     const messageActions = useMemo(() => ({
@@ -2232,15 +2020,16 @@ export function ChatRoom({
         messageActions,
     ]);
 
-    if (showContactInfo && !isOfficialChannel) {
-        const infoUser: any = isGroupChat ? { ...contact, chatId, isGroup: true } : contact;
-        return (
-            <ContactInfo
-                user={infoUser}
-                isBlocked={!isGroupChat && Boolean(isUserBlocked?.(infoUser))}
-                hideOnlineStatus={!isGroupChat && (Boolean((infoUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(infoUser)))}
-                onToggleBlock={!isGroupChat ? onToggleBlockUser : undefined}
-                onBack={() => {
+    const contactView = (() => {
+        if (showContactInfo && !isOfficialChannel) {
+            const infoUser: any = isGroupChat ? { ...contact, chatId, isGroup: true } : contact;
+            const blocked = Boolean(isUserBlocked?.(infoUser));
+            return {
+                user: infoUser,
+                isBlocked: !isGroupChat && blocked,
+                hideOnlineStatus: !isGroupChat && (Boolean(infoUser?.blockedByOther) || blocked),
+                onToggleBlock: !isGroupChat ? onToggleBlockUser : undefined,
+                onBack: () => {
                     setShowContactInfo(false);
                     if (forceContactInfoOpen && onCloseForcedContactInfo) {
                         onCloseForcedContactInfo(chatId);
@@ -2250,15 +2039,15 @@ export function ChatRoom({
                         setShowMembersList(true);
                         setOpenGroupEditorFromMembers(false);
                     }
-                }}
-                onOpenMembers={isGroupChat ? () => {
+                },
+                onOpenMembers: isGroupChat ? () => {
                     setOpenGroupEditorFromMembers(false);
                     setShowContactInfo(false);
                     setShowMembersList(true);
-                } : undefined}
-                autoOpenMembers={!openGroupEditorFromMembers}
-                startInEditMode={openGroupEditorFromMembers}
-                onOpenChat={(u) => {
+                } : undefined,
+                autoOpenMembers: !openGroupEditorFromMembers,
+                startInEditMode: openGroupEditorFromMembers,
+                onOpenChat: (u: User) => {
                     if (u.chatId === currentUserId) {
                         onOpenProfile?.();
                         setShowContactInfo(false);
@@ -2266,20 +2055,20 @@ export function ChatRoom({
                     }
                     onOpenDirectChat?.(u);
                     setShowContactInfo(false);
-                }}
-            />
-        );
-    }
-
-    if (forwardSourceUser) {
-        return (
-            <ContactInfo
-                user={forwardSourceUser}
-                isBlocked={Boolean(isUserBlocked?.(forwardSourceUser))}
-                hideOnlineStatus={Boolean((forwardSourceUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(forwardSourceUser))}
-                onToggleBlock={onToggleBlockUser}
-                onBack={() => setForwardSourceUser(null)}
-                onOpenChat={(u) => {
+                },
+            };
+        }
+        if (forwardSourceUser) {
+            return {
+                user: forwardSourceUser,
+                isBlocked: Boolean(isUserBlocked?.(forwardSourceUser)),
+                hideOnlineStatus: Boolean((forwardSourceUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(forwardSourceUser)),
+                onToggleBlock: onToggleBlockUser,
+                onBack: () => setForwardSourceUser(null),
+                onOpenMembers: undefined,
+                autoOpenMembers: true,
+                startInEditMode: false,
+                onOpenChat: (u: User) => {
                     if (u.chatId === currentUserId) {
                         onOpenProfile?.();
                         setForwardSourceUser(null);
@@ -2287,24 +2076,24 @@ export function ChatRoom({
                     }
                     onOpenDirectChat?.(u);
                     setForwardSourceUser(null);
-                }}
-            />
-        );
-    }
-
-    if (viewingMemberId) {
-        const memberData = groupMembers[viewingMemberId];
-        const memberUser: any = memberData
-            ? { chatId: memberData.chatId || viewingMemberId, name: memberData.name || viewingMemberId, username: memberData.username || '', avatar: memberData.avatar || '', bio: memberData.bio || '', online: memberData.online ?? false, verified: memberData.verified || false }
-            : { chatId: viewingMemberId, name: viewingMemberId, username: '', avatar: '', bio: '', online: false };
-        return (
-            <ContactInfo
-                user={memberUser}
-                isBlocked={Boolean(isUserBlocked?.(memberUser))}
-                hideOnlineStatus={Boolean((memberUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(memberUser))}
-                onToggleBlock={onToggleBlockUser}
-                onBack={() => setViewingMemberId(null)}
-                onOpenChat={(u) => {
+                },
+            };
+        }
+        if (viewingMemberId) {
+            const memberData = groupMembers[viewingMemberId];
+            const memberUser: any = memberData
+                ? { chatId: memberData.chatId || viewingMemberId, name: memberData.name || viewingMemberId, username: memberData.username || '', avatar: memberData.avatar || '', bio: memberData.bio || '', online: memberData.online ?? false, verified: memberData.verified || false }
+                : { chatId: viewingMemberId, name: viewingMemberId, username: '', avatar: '', bio: '', online: false };
+            return {
+                user: memberUser,
+                isBlocked: Boolean(isUserBlocked?.(memberUser)),
+                hideOnlineStatus: Boolean((memberUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(memberUser)),
+                onToggleBlock: onToggleBlockUser,
+                onBack: () => setViewingMemberId(null),
+                onOpenMembers: undefined,
+                autoOpenMembers: true,
+                startInEditMode: false,
+                onOpenChat: (u: User) => {
                     if (u.chatId === currentUserId) {
                         onOpenProfile?.();
                         setViewingMemberId(null);
@@ -2312,10 +2101,13 @@ export function ChatRoom({
                     }
                     onOpenDirectChat?.(u);
                     setViewingMemberId(null);
-                }}
-            />
-        );
-    }
+                },
+            };
+        }
+        return null;
+    })();
+
+    if (contactView) return <ContactInfo {...contactView} />;
 
     if (showMembersList) {
         return (
@@ -2625,7 +2417,7 @@ export function ChatRoom({
             </div>
 
             {msgMenu && (() => {
-                const activeMsg = messages.find((mm) => mm.id === msgMenu.id);
+                const activeMsg = messagesById.get(msgMenu.id);
                 if (!activeMsg) return null;
                 const activeMsgIsMine = activeMsg.senderId === currentUserId;
                 const canDeleteActiveMsg = activeMsgIsMine || (isGroupChat && isVerifiedUser);
@@ -2751,7 +2543,7 @@ export function ChatRoom({
             )}
 
             {reactionMenu && (() => {
-                const reactionMsg = messages.find((mm) => mm.id === reactionMenu.id);
+                const reactionMsg = messagesById.get(reactionMenu.id);
                 if (!reactionMsg) return null;
 
                 const reactionRows = optimisticReactions[reactionMsg.id] ?? reactionMsg.reactions ?? [];
@@ -2900,32 +2692,21 @@ export function ChatRoom({
 
             <AnimatePresence>
                 {confirmDeleteSelected && (
-                    <motion.div className="chat-room-modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
-                        <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
-                            <h3 className="chat-room-confirm-modal__title">حذف {toPersianDigits(deletableSelectedIds.length)} پیام؟</h3>
-                            <p className="chat-room-confirm-modal__text">
-                                آیا از حذف {toPersianDigits(deletableSelectedIds.length)} پیام انتخاب‌شده اطمینان دارید؟ پیام‌ها برای همه حذف خواهند شد.
-                            </p>
-                            <div className="chat-room-confirm-modal__actions">
-                                <button className="chat-room-confirm-modal__btn" onClick={() => setConfirmDeleteSelected(false)} type="button">لغو</button>
-                                <button
-                                    className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger"
-                                    onClick={() => {
-                                        setConfirmDeleteSelected(false);
-                                        const idsToDelete = [...deletableSelectedIds];
-                                        setSelectedMessageIds([]);
-                                        for (const id of idsToDelete) {
-                                            onDeleteMessage(id);
-                                            cleanupMessageCache(id);
-                                        }
-                                    }}
-                                    type="button"
-                                >
-                                    حذف
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+                    <ConfirmDialog
+                        title={`حذف ${toPersianDigits(deletableSelectedIds.length)} پیام؟`}
+                        text={`آیا از حذف ${toPersianDigits(deletableSelectedIds.length)} پیام انتخاب‌شده اطمینان دارید؟ پیام‌ها برای همه حذف خواهند شد.`}
+                        confirmLabel="حذف"
+                        onCancel={() => setConfirmDeleteSelected(false)}
+                        onConfirm={() => {
+                            setConfirmDeleteSelected(false);
+                            const idsToDelete = [...deletableSelectedIds];
+                            setSelectedMessageIds([]);
+                            for (const id of idsToDelete) {
+                                onDeleteMessage(id);
+                                cleanupMessageCache(id);
+                            }
+                        }}
+                    />
                 )}
             </AnimatePresence>
 
@@ -2940,48 +2721,40 @@ export function ChatRoom({
 
             <AnimatePresence>
                 {confirmDeleteChat && (
-                    <motion.div className="chat-room-modal-overlay" ref={confirmDeleteChatRef} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
-                        <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
-                            <h3 className="chat-room-confirm-modal__title">{isGroupChat ? 'گروه حذف شود؟' : 'گفتگو حذف شود؟'}</h3>
-                            <p className="chat-room-confirm-modal__text">
-                                {isGroupChat ? 'گروه و تمام پیام‌ها برای همه حذف خواهد شد.' : 'این عمل گفتگو و تمام پیام‌ها را برای هر دو کاربر حذف خواهد کرد.'}
-                            </p>
-                            <div className="chat-room-confirm-modal__actions">
-                                <button className="chat-room-confirm-modal__btn" onClick={() => setConfirmDeleteChat(false)} type="button">لغو</button>
-                                <button className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger" onClick={doDeleteChat} type="button">حذف</button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+                    <ConfirmDialog
+                        overlayRef={confirmDeleteChatRef}
+                        title={isGroupChat ? 'گروه حذف شود؟' : 'گفتگو حذف شود؟'}
+                        text={isGroupChat ? 'گروه و تمام پیام‌ها برای همه حذف خواهد شد.' : 'این عمل گفتگو و تمام پیام‌ها را برای هر دو کاربر حذف خواهد کرد.'}
+                        confirmLabel="حذف"
+                        onCancel={() => setConfirmDeleteChat(false)}
+                        onConfirm={doDeleteChat}
+                    />
                 )}
             </AnimatePresence>
 
             <AnimatePresence>
                 {confirmLeaveGroup && (
-                    <motion.div className="chat-room-modal-overlay" ref={confirmLeaveGroupRef} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
-                        <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
-                            <h3 className="chat-room-confirm-modal__title">خروج از گروه؟</h3>
-                            <p className="chat-room-confirm-modal__text">آیا می‌خواهید از گروه خارج شوید؟ گروه برای شما حذف خواهد شد.</p>
-                            <div className="chat-room-confirm-modal__actions">
-                                <button className="chat-room-confirm-modal__btn" onClick={() => setConfirmLeaveGroup(false)} type="button">لغو</button>
-                                <button className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger" onClick={doLeaveGroup} type="button">خروج</button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+                    <ConfirmDialog
+                        overlayRef={confirmLeaveGroupRef}
+                        title="خروج از گروه؟"
+                        text="آیا می‌خواهید از گروه خارج شوید؟ گروه برای شما حذف خواهد شد."
+                        confirmLabel="خروج"
+                        onCancel={() => setConfirmLeaveGroup(false)}
+                        onConfirm={doLeaveGroup}
+                    />
                 )}
             </AnimatePresence>
 
             <AnimatePresence>
                 {confirmDeleteMsg && (
-                    <motion.div className="chat-room-modal-overlay" ref={confirmDeleteMsgRef} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: 'easeOut' }}>
-                        <motion.div className="chat-room-confirm-modal" initial={{ opacity: 0, y: 12, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.985 }} transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}>
-                            <h3 className="chat-room-confirm-modal__title">این پیام حذف شود؟</h3>
-                            <p className="chat-room-confirm-modal__text">این عمل پیام را کامل حذف میکند.</p>
-                            <div className="chat-room-confirm-modal__actions">
-                                <button className="chat-room-confirm-modal__btn" onClick={() => setConfirmDeleteMsg(null)} type="button">لغو</button>
-                                <button className="chat-room-confirm-modal__btn chat-room-confirm-modal__btn--danger" onClick={confirmDeleteMessage} type="button">حذف</button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+                    <ConfirmDialog
+                        overlayRef={confirmDeleteMsgRef}
+                        title="این پیام حذف شود؟"
+                        text="این عمل پیام را کامل حذف میکند."
+                        confirmLabel="حذف"
+                        onCancel={() => setConfirmDeleteMsg(null)}
+                        onConfirm={confirmDeleteMessage}
+                    />
                 )}
             </AnimatePresence>
 
