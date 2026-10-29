@@ -49,7 +49,9 @@ export type ChatMessageItemProps = {
     emojiOnlyClass: string;
     senderName: string;
     senderAvatar: string;
+    senderPending: boolean;
     replySenderName: string;
+    replySenderPending: boolean;
     replyPreviewText: string;
     reactions: ReactionEntry[];
     isHighlighted: boolean;
@@ -226,7 +228,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     emojiOnlyClass,
     senderName,
     senderAvatar,
+    senderPending,
     replySenderName,
+    replySenderPending,
     replyPreviewText,
     reactions,
     isHighlighted,
@@ -391,7 +395,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                 {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (
                     <div style={{ position: 'absolute', left: 0, bottom: 0, cursor: 'pointer', zIndex: 1 }}
                         onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}>
-                        <Avatar name={senderName} size="sm" src={senderAvatar} />
+                        {senderPending
+                            ? <span className="skeleton-glass skeleton-glass--avatar" aria-hidden />
+                            : <Avatar name={senderName} size="sm" src={senderAvatar} />}
                     </div>
                 )}
 
@@ -424,9 +430,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     }}
                 >
                     {isGroupChat && !isMine && !isBigEmojiOnly && (shape === 'msg-shape--single' || shape === 'msg-shape--first') && (
-                        <div onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}
-                            style={{ fontSize: 13, fontWeight: 700, color: senderColor, marginBottom: 3, cursor: 'pointer', fontFamily: "'Vazir', 'AppleEmoji', sans-serif", lineHeight: '1.2' }}>
-                            {senderName}
+                        <div className="message-sender-name" onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}
+                            style={{ color: senderColor }}>
+                            {senderPending
+                                ? <span className="skeleton-glass skeleton-glass--name" aria-hidden />
+                                : senderName}
                         </div>
                     )}
 
@@ -449,7 +457,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                             onKeyDown={(e) => { if (e.key === 'Enter') actions.scrollToMessage(message.replyTo!.id); }}
                             className="message-reply-box"
                             style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 12, cursor: 'pointer' }}>
-                            <div className="message-reply-box__label">{isGroupChat ? replySenderName : 'پاسخ'}</div>
+                            <div className="message-reply-box__label">
+                                {replySenderPending
+                                    ? <span className="skeleton-glass skeleton-glass--reply-name" aria-hidden />
+                                    : (isGroupChat ? replySenderName : 'پاسخ')}
+                            </div>
                             <div className="message-reply-box__text">{replyPreviewText}</div>
                         </div>
                     )}

@@ -1,8 +1,14 @@
+import type { Message } from '../types';
+
 const MEDIA_DB_NAME = 'novaroom_media_cache_v1';
 const MEDIA_STORE_NAME = 'media_assets';
 
 const TEXT_DB_NAME = 'novaroom_text_cache_v1';
 const TEXT_STORE_NAME = 'text_messages';
+
+const SNAPSHOT_DB_NAME = 'novaroom_chat_snapshots_v1';
+const SNAPSHOT_STORE_NAME = 'chat_snapshots';
+const SNAPSHOT_MAX_MESSAGES = 50;
 
 type CacheRecord = {
     cacheKey: string;
@@ -17,19 +23,29 @@ type TextCacheRecord = {
     updatedAt: number;
 };
 
+type ChatSnapshotRecord = {
+    chatId: string;
+    messages: Message[];
+    updatedAt: number;
+};
+
 let mediaDbPromise: Promise<IDBDatabase | null> | null = null;
 let textDbPromise: Promise<IDBDatabase | null> | null = null;
+let snapshotDbPromise: Promise<IDBDatabase | null> | null = null;
 
 const openDb = (
     dbName: string,
     storeName: string,
-    dbPromiseRef: 'media' | 'text',
+    dbPromiseRef: 'media' | 'text' | 'snapshot',
+    keyPath = 'cacheKey',
 ): Promise<IDBDatabase | null> => {
     if (typeof window === 'undefined' || !('indexedDB' in window)) {
         return Promise.resolve(null);
     }
 
-    const currentPromise = dbPromiseRef === 'media' ? mediaDbPromise : textDbPromise;
+    const currentPromise = dbPromiseRef === 'media'
+        ? mediaDbPromise
+        : dbPromiseRef === 'text' ? textDbPromise : snapshotDbPromise;
     if (currentPromise) return currentPromise;
 
     const nextPromise = new Promise<IDBDatabase | null>((resolve) => {
@@ -38,7 +54,7 @@ const openDb = (
         request.onupgradeneeded = () => {
             const db = request.result;
             if (!db.objectStoreNames.contains(storeName)) {
-                db.createObjectStore(storeName, { keyPath: 'cacheKey' });
+                db.createObjectStore(storeName, { keyPath });
             }
         };
 
@@ -47,13 +63,15 @@ const openDb = (
     });
 
     if (dbPromiseRef === 'media') mediaDbPromise = nextPromise;
-    else textDbPromise = nextPromise;
+    else if (dbPromiseRef === 'text') textDbPromise = nextPromise;
+    else snapshotDbPromise = nextPromise;
 
     return nextPromise;
 };
 
 const openMediaDb = () => openDb(MEDIA_DB_NAME, MEDIA_STORE_NAME, 'media');
 const openTextDb = () => openDb(TEXT_DB_NAME, TEXT_STORE_NAME, 'text');
+const openSnapshotDb = () => openDb(SNAPSHOT_DB_NAME, SNAPSHOT_STORE_NAME, 'snapshot', 'chatId');
 
 const readBlobFromCache = async (cacheKey: string): Promise<Blob | null> => {
     const db = await openMediaDb();
@@ -158,6 +176,68 @@ const deleteTextCacheKey = async (cacheKey: string): Promise<void> => {
     });
 };
 
+const saveChatSnapshotRecord = async (chatId: string, messages: Message[]): Promise<void> => {
+    const db = await openSnapshotDb();
+    if (!db || !chatId) return;
+
+    const record: ChatSnapshotRecord = {
+        chatId,
+        messages: messages.slice(-SNAPSHOT_MAX_MESSAGES),
+        updatedAt: Date.now(),
+    };
+
+    await new Promise<void>((resolve) => {
+        const tx = db.transaction(SNAPSHOT_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(SNAPSHOT_STORE_NAME);
+        const req = store.put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+    });
+};
+
+const readChatSnapshotRecord = async (chatId: string): Promise<Message[] | null> => {
+    const db = await openSnapshotDb();
+    if (!db || !chatId) return null;
+
+    return new Promise((resolve) => {
+        const tx = db.transaction(SNAPSHOT_STORE_NAME, 'readonly');
+        const store = tx.objectStore(SNAPSHOT_STORE_NAME);
+        const req = store.get(chatId);
+
+        req.onsuccess = () => {
+            const record = req.result as ChatSnapshotRecord | undefined;
+            resolve(Array.isArray(record?.messages) ? record.messages : null);
+        };
+        req.onerror = () => resolve(null);
+    });
+};
+
+const clearChatSnapshotRecords = async (): Promise<void> => {
+    const db = await openSnapshotDb();
+    if (!db) return;
+
+    await new Promise<void>((resolve) => {
+        const tx = db.transaction(SNAPSHOT_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(SNAPSHOT_STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+    });
+};
+
+const clearTextCacheRecords = async (): Promise<void> => {
+    const db = await openTextDb();
+    if (!db) return;
+
+    await new Promise<void>((resolve) => {
+        const tx = db.transaction(TEXT_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(TEXT_STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+    });
+};
+
 interface GetOrCacheBlobParams {
     cacheKey: string;
     loadBlob: () => Promise<Blob>;
@@ -180,6 +260,11 @@ export const deleteCachedBlob = async (cacheKey: string): Promise<void> => delet
 export const cacheTextValue = async (cacheKey: string, text: string): Promise<void> => saveTextCache(cacheKey, text);
 export const getCachedTextValue = async (cacheKey: string): Promise<string | null> => readTextCache(cacheKey);
 export const deleteCachedText = async (cacheKey: string): Promise<void> => deleteTextCacheKey(cacheKey);
+
+export const saveChatSnapshot = async (chatId: string, messages: Message[]): Promise<void> => saveChatSnapshotRecord(chatId, messages);
+export const getChatSnapshot = async (chatId: string): Promise<Message[] | null> => readChatSnapshotRecord(chatId);
+export const clearChatSnapshots = async (): Promise<void> => clearChatSnapshotRecords();
+export const clearCachedTextValues = async (): Promise<void> => clearTextCacheRecords();
 
 export const getMediaCacheUsageBytes = async (): Promise<number> => {
     const db = await openMediaDb();

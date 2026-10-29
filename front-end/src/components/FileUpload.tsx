@@ -45,6 +45,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
     const onFileUploadedRef = useRef(onFileUploaded);
     const onUploadStateChangeRef = useRef(onUploadStateChange);
     const onRegisterUploadFileRef = useRef(onRegisterUploadFile);
+    const taskHandlerRef = useRef<((task: UploadTask) => void) | null>(null);
 
     useEffect(() => {
         onFileUploadedRef.current = onFileUploaded;
@@ -83,10 +84,6 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
 
     useEffect(() => {
         const existingTask = uploadTasksByChat.get(chatId);
-        if (!existingTask) {
-            setUploading(false);
-            return;
-        }
 
         const handleTask = (task: UploadTask) => {
             setUploading(task.status === 'uploading');
@@ -103,11 +100,18 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             }
         };
 
-        existingTask.listeners.add(handleTask);
-        handleTask(existingTask);
+        taskHandlerRef.current = handleTask;
+
+        if (existingTask) {
+            existingTask.listeners.add(handleTask);
+            handleTask(existingTask);
+        } else {
+            setUploading(false);
+        }
 
         return () => {
-            existingTask.listeners.delete(handleTask);
+            existingTask?.listeners.delete(handleTask);
+            if (taskHandlerRef.current === handleTask) taskHandlerRef.current = null;
         };
     }, [chatId]);
 
@@ -216,6 +220,7 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             phase: (file.type || '').startsWith('image/') ? 'preview' : 'upload',
         };
         uploadTasksByChat.set(chatId, task);
+        if (taskHandlerRef.current) task.listeners.add(taskHandlerRef.current);
 
         let uploadWarmupTimer: number | null = null;
         try {

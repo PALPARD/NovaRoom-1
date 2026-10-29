@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { SendHorizontal, X } from 'lucide-react';
 import type { FileMetadata, MessageReply } from '../types';
 import { apiFetch } from '../config/api';
@@ -39,7 +39,6 @@ type ChatComposerProps = {
     onCancelForward: () => void;
     onTypingChange?: (chatId: string, isTyping: boolean) => void;
     onUploadStatusChange?: (chatId: string, isUploading: boolean) => void;
-    onStackCountChange: (count: number) => void;
     onRegisterUploadFile: (handler: ((file: File) => void) | null) => void;
     onInputFocus: () => void;
 };
@@ -58,7 +57,7 @@ function isMobileKeyboardInput() {
     return Boolean(coarse || /Android|iPhone|iPad|iPod|Mobile/i.test(ua));
 }
 
-export function ChatComposer({
+export const ChatComposer = memo(function ChatComposer({
     chatId,
     token,
     isContactBlocked,
@@ -76,7 +75,6 @@ export function ChatComposer({
     onCancelForward,
     onTypingChange,
     onUploadStatusChange,
-    onStackCountChange,
     onRegisterUploadFile,
     onInputFocus,
 }: ChatComposerProps) {
@@ -172,14 +170,6 @@ export function ChatComposer({
     }, [text]);
 
     const displayedUploadedFile = uploadedFile ?? pendingUploadedFileByChat[chatId] ?? null;
-    const stackCount = (replyTo || editingId ? 1 : 0)
-        + (uploadComposerState.isUploading ? 1 : 0)
-        + (displayedUploadedFile ? 1 : 0)
-        + (pendingForwardDraft ? 1 : 0);
-
-    useEffect(() => {
-        onStackCountChange(stackCount);
-    }, [stackCount, onStackCountChange]);
 
     const handleFileUploaded = useCallback((file: FileMetadata) => {
         pendingUploadedFileByChat[chatId] = file;
@@ -370,4 +360,4 @@ export function ChatComposer({
             </div>
         </div>
     );
-}
+});

@@ -64,6 +64,10 @@ export function sameDay(a: unknown, b: unknown): boolean {
     return iranYMD(a) === iranYMD(b);
 }
 
+export function messageDayKey(ts: unknown): number {
+    return iranDayNumber(ts);
+}
+
 export function formatDayLabel(ts: unknown): string {
     const today = iranDayNumber(Date.now());
     const thatDay = iranDayNumber(ts);

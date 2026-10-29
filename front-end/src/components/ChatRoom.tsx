@@ -18,7 +18,7 @@ import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { screenVariants } from '../utils/screenMotion';
 import { cacheTextValue, deleteCachedBlob, deleteCachedText, getCachedBlob, getCachedTextValue, getOrCacheBlob } from '../utils/mediaCache';
 import { pendingUploadedFileByChat } from '../utils/pendingUploads';
-import { formatDayLabel, formatMessageTime, resolveVerified, sameDay, toPersianDigits } from '../utils/format';
+import { formatDayLabel, formatMessageTime, messageDayKey, resolveVerified, toPersianDigits } from '../utils/format';
 import { copyText } from '../utils/clipboard';
 import { triggerHaptic } from '../utils/haptics';
 import { ChatMessageItem, type ReactionEntry } from './ChatMessageItem';
@@ -29,6 +29,32 @@ import './FileComponents.css';
 const persistedTextKeys = new Set<string>();
 const EMPTY_REACTIONS: ReactionEntry[] = [];
 const MAX_SELECTED_MESSAGES = 20;
+
+// shortcut: group member cache skips payloads over 200KB; move it to IndexedDB when huge groups show up.
+const groupMemberCacheKey = (chatId: string) => `novaroom:group-members:v1:${chatId}`;
+
+function readCachedGroupMembers(chatId: string): Record<string, GroupMember> {
+    if (!chatId) return {};
+    try {
+        const raw = localStorage.getItem(groupMemberCacheKey(chatId));
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed as Record<string, GroupMember> : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeCachedGroupMembers(chatId: string, members: Record<string, GroupMember>) {
+    if (!chatId) return;
+    try {
+        const raw = JSON.stringify(members);
+        if (raw.length > 200_000) return;
+        localStorage.setItem(groupMemberCacheKey(chatId), raw);
+    } catch {
+        return;
+    }
+}
 
 interface ChatRoomProps {
     chatId: string;
@@ -246,7 +272,6 @@ export function ChatRoom({
     const blockedByOther = Boolean((contact as any)?.blockedByOther);
     const isContactBlocked = isDirectChat && !chatId.startsWith('saved_messages_') && (blockedByOther || Boolean(isUserBlocked?.(contact)));
 
-    const [composerStackCount, setComposerStackCount] = useState(0);
     const [chatMenuOpen, setChatMenuOpen] = useState(false);
     const [confirmDeleteChat, setConfirmDeleteChat] = useState(false);
     const [confirmLeaveGroup, setConfirmLeaveGroup] = useState(false);
@@ -271,6 +296,9 @@ export function ChatRoom({
     const [seenByUsersByMessage, setSeenByUsersByMessage] = useState<Record<string, SeenByUser[]>>({});
     const [seenByLoadingMessageId, setSeenByLoadingMessageId] = useState<string | null>(null);
     const [reasoningPanelByMessage, setReasoningPanelByMessage] = useState<Record<string, boolean>>({});
+    const [composerHeight, setComposerHeight] = useState(0);
+    const [selectionShake, setSelectionShake] = useState(0);
+    const composerHostRef = useRef<HTMLDivElement | null>(null);
 
     
     const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ReactionEntry[]>>({});
@@ -303,14 +331,16 @@ export function ChatRoom({
     const [localLoadingOlder, setLocalLoadingOlder] = useState(false);
     const [localLoadingNewer, setLocalLoadingNewer] = useState(false);
     const [chatStats, setChatStats] = useState<{ totalMembers: number; onlineMembers: number } | null>(null);
-    const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember>>({});
+    const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember>>(() => (isGroupChat ? readCachedGroupMembers(chatId) : {}));
+    const groupMembersSnapshotRef = useRef<Record<string, GroupMember> | null>(null);
+    const [membersResolved, setMembersResolved] = useState(false);
     const [membersLoading, setMembersLoading] = useState(false);
     const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
     const [showMembersList, setShowMembersList] = useState(false);
     const [openGroupEditorFromMembers, setOpenGroupEditorFromMembers] = useState(false);
     const [externalFileUploadHandler, setExternalFileUploadHandler] = useState<((file: File) => void) | null>(null);
     const [dragUploadActive, setDragUploadActive] = useState(false);
-    const [chatContentReady, setChatContentReady] = useState(false);
+    const [chatContentReady, setChatContentReady] = useState(true);
     const isAtBottomRef = useRef(true);
 
     const prevLenRef = useRef(0);
@@ -520,6 +550,14 @@ export function ChatRoom({
         if (!container) return true;
         return container.scrollHeight - container.scrollTop - container.clientHeight < 120;
     };
+
+    useLayoutEffect(() => {
+        if (!initialScrollDoneRef.current) return;
+        if (!isAtBottomRef.current) return;
+        if (unreadAnchorId) return;
+        if (autoJumpedToUnreadRef.current && !userScrolledAfterAutoJumpRef.current) return;
+        pinToBottomSync();
+    }, [composerHeight]);
 
     const saveScroll = (id: string) => {
         const container = messagesContainerRef.current;
@@ -799,12 +837,19 @@ export function ChatRoom({
                             online: id === currentUserId ? true : Boolean(m.online),
                         };
                     });
+                    if (!membersEqual(groupMembersSnapshotRef.current ?? {}, map)) {
+                        writeCachedGroupMembers(chatId, map);
+                    }
+                    groupMembersSnapshotRef.current = map;
                     setGroupMembers((prev) => (membersEqual(prev, map) ? prev : map));
                 }
             } catch { }
             finally {
                 initialLoad = false;
-                if (!cancelled) setMembersLoading((prev) => (prev ? false : prev));
+                if (!cancelled) {
+                    setMembersLoading((prev) => (prev ? false : prev));
+                    setMembersResolved(true);
+                }
             }
         };
         loadMembers();
@@ -816,7 +861,18 @@ export function ChatRoom({
 
     const isSavedMessages = contact.chatId === 'saved';
     const canDeleteChat = chatId !== 'pending' && !isSavedMessages;
-    const token = localStorage.getItem('token') || '';
+    const [token] = useState(() => localStorage.getItem('token') || '');
+
+    useLayoutEffect(() => {
+        const host = composerHostRef.current;
+        const el = host?.firstElementChild;
+        if (!(el instanceof HTMLElement)) return;
+        const update = () => setComposerHeight(el.offsetHeight);
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [chatId, editingId, showContactInfo, forwardSourceUser, viewingMemberId, showMembersList]);
 
 
     useEffect(() => {
@@ -1030,12 +1086,12 @@ export function ChatRoom({
         });
     }, [messages]);
 
-    const forwardOne = (sourceChatId: string, messageId: string, targetChatId: string) => {
+    const forwardOne = useCallback((sourceChatId: string, messageId: string, targetChatId: string) => {
         if (onForwardMessage) return onForwardMessage(sourceChatId, messageId, targetChatId);
         return apiFetch('/messages/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, messageId, targetChatId }) });
-    };
+    }, [onForwardMessage]);
 
-    const handleForwardMessage = async (sourceChatId: string, messageId: string, targetChatId: string) => {
+    const handleForwardMessage = useCallback(async (sourceChatId: string, messageId: string, targetChatId: string) => {
         if (forwardingInFlightRef.current) return;
         forwardingInFlightRef.current = true;
         const draftSnapshot = pendingForwardDraft;
@@ -1049,7 +1105,7 @@ export function ChatRoom({
         } finally {
             forwardingInFlightRef.current = false;
         }
-    };
+    }, [pendingForwardDraft, onClearPendingForwardDraft, onSetPendingForwardDraft, forwardOne]);
 
     const handleForwardFromModal = async (targetChatId: string) => {
         const idsToForward = forwardingMessageIds.length > 0
@@ -1088,18 +1144,17 @@ export function ChatRoom({
     const isSelectionModeActive = selectedMessageIds.length > 0;
 
     const toggleMessageSelection = useCallback((messageId: string) => {
-        setSelectedMessageIds((prev: string[]) => {
-            if (prev.includes(messageId)) {
-                return prev.filter((id: string) => id !== messageId);
-            }
-            if (prev.length >= MAX_SELECTED_MESSAGES) {
-                setCopyToast(`حداکثر ${toPersianDigits(MAX_SELECTED_MESSAGES)} پیام می‌توانید انتخاب کنید`);
-                window.setTimeout(() => setCopyToast(null), 2000);
-                return prev;
-            }
-            return [...prev, messageId];
-        });
-    }, []);
+        if (!selectedMessageIds.includes(messageId) && selectedMessageIds.length >= MAX_SELECTED_MESSAGES) {
+            triggerHaptic();
+            setSelectionShake((value) => value + 1);
+            return;
+        }
+        setSelectedMessageIds((prev: string[]) => (
+            prev.includes(messageId)
+                ? prev.filter((id: string) => id !== messageId)
+                : [...prev, messageId]
+        ));
+    }, [selectedMessageIds]);
 
     const handleCopySelected = async () => {
         if (selectedMessageIds.length === 0) return;
@@ -1278,31 +1333,9 @@ export function ChatRoom({
                 initialMediaFollowupDoneRef.current = true;
             }
         }
-        let firstRaf = 0;
-        let secondRaf = 0;
-        if (initialMediaPendingIdsRef.current.size > 0) {
-            setChatContentReady(false);
-            firstRaf = requestAnimationFrame(() => {
-                secondRaf = requestAnimationFrame(() => {
-                    if (initialMediaPendingIdsRef.current.size === 0) {
-                        setChatContentReady(true);
-                    } else {
-                        initialMediaReadyTimeoutRef.current = window.setTimeout(() => {
-                            initialMediaFollowupDoneRef.current = true;
-                            initialMediaPendingIdsRef.current.clear();
-                            setChatContentReady(true);
-                            initialMediaReadyTimeoutRef.current = null;
-                        }, 1400);
-                    }
-                });
-            });
-        } else {
-            setChatContentReady(true);
-        }
+        setChatContentReady(true);
         prevLenRef.current = messages.length;
         return () => {
-            if (firstRaf) cancelAnimationFrame(firstRaf);
-            if (secondRaf) cancelAnimationFrame(secondRaf);
             if (initialMediaReadyTimeoutRef.current != null) {
                 window.clearTimeout(initialMediaReadyTimeoutRef.current);
                 initialMediaReadyTimeoutRef.current = null;
@@ -1634,22 +1667,50 @@ export function ChatRoom({
         }
     };
 
+    const messageMetaCache = useMemo(() => new Map<string, { ts: unknown; text: string; time: string; dayKey: number; isBigEmojiOnly: boolean; emojiOnlyClass: string }>(), []);
+
     const items = useMemo(() => {
+        const cache = messageMetaCache;
+        if (cache.size > 4000) cache.clear();
+        const readMeta = (msg: Message) => {
+            const text = msg.text || '';
+            const cached = cache.get(msg.id);
+            if (cached && cached.ts === msg.timestamp && cached.text === text) return cached;
+            const pureEmojiCount = text ? getPureEmojiCount(text) : 0;
+            const hasEmojiOnlyStickerStyle = pureEmojiCount >= 1 && pureEmojiCount <= 5 && !msg.file;
+            const next = {
+                ts: msg.timestamp,
+                text,
+                time: formatMessageTime(msg.timestamp),
+                dayKey: messageDayKey(msg.timestamp),
+                isBigEmojiOnly: hasEmojiOnlyStickerStyle,
+                emojiOnlyClass: hasEmojiOnlyStickerStyle ? `message-text--emoji-only-${Math.min(5, pureEmojiCount)}` : '',
+            };
+            cache.set(msg.id, next);
+            return next;
+        };
+
         return messages.map((m, idx) => {
             const prev = idx > 0 ? messages[idx - 1] : null;
             const next = idx < messages.length - 1 ? messages[idx + 1] : null;
+            const meta = readMeta(m);
             const isMine = m.senderId === currentUserId;
-            const pureEmojiCount = m.text ? getPureEmojiCount(m.text) : 0;
-            const hasEmojiOnlyStickerStyle = pureEmojiCount >= 1 && pureEmojiCount <= 5 && !m.file;
-            const emojiOnlyClass = hasEmojiOnlyStickerStyle ? `message-text--emoji-only-${Math.min(5, pureEmojiCount)}` : "";
-            const prevSameSender = prev ? prev.senderId === m.senderId : false;
-            const nextSameSender = next ? next.senderId === m.senderId : false;
-            const dayBreak = !prev || !sameDay(prev.timestamp, m.timestamp);
+            const prevSameSender = Boolean(prev) && prev!.senderId === m.senderId;
+            const nextSameSender = Boolean(next) && next!.senderId === m.senderId;
+            const dayBreak = !prev || readMeta(prev).dayKey !== meta.dayKey;
             const dayLabel = dayBreak ? formatDayLabel(m.timestamp) : '';
-            const formattedTime = formatMessageTime(m.timestamp);
-            return { m, isMine, dayBreak, dayLabel, formattedTime, shape: bubbleShape(prevSameSender, nextSameSender), isBigEmojiOnly: hasEmojiOnlyStickerStyle, emojiOnlyClass };
+            return {
+                m,
+                isMine,
+                dayBreak,
+                dayLabel,
+                formattedTime: meta.time,
+                shape: bubbleShape(prevSameSender, nextSameSender),
+                isBigEmojiOnly: meta.isBigEmojiOnly,
+                emojiOnlyClass: meta.emojiOnlyClass,
+            };
         });
-    }, [messages, currentUserId]);
+    }, [messages, currentUserId, messageMetaCache]);
 
     const unreadAnchorForUi = useMemo(
         () => unreadAnchorId || computeUnreadAnchorId(displayUnreadCount),
@@ -1699,7 +1760,7 @@ export function ChatRoom({
         return uploadingStatusLabel;
     }, [typingStatusLabel, uploadingStatusLabel]);
 
-    const scrollButtonBottom = 68 + (composerStackCount * 56);
+    const scrollButtonBottom = composerHeight + 18;
 
     const jumpToLatest = async () => {
         setHideScrollBtnUntilBottom(true);
@@ -1726,7 +1787,7 @@ export function ChatRoom({
         }, 320);
     };
 
-    const handleComposerSend = (payload: ChatComposerSendPayload) => {
+    const handleComposerSend = useCallback((payload: ChatComposerSendPayload) => {
         if (isContactBlocked || !canSendInOfficialChannel) return false;
         if (!payload.text.trim() && !payload.file && (!pendingForwardDraft || Boolean(editingId))) return false;
         if (payload.text || payload.file) {
@@ -1744,13 +1805,30 @@ export function ChatRoom({
         setEditingId(null);
         requestAnimationFrame(() => scrollToBottom(true));
         return true;
-    };
+    }, [isContactBlocked, canSendInOfficialChannel, pendingForwardDraft, editingId, onSendMessage, handleForwardMessage, chatId]);
 
-    const handleInputFocus = () => {
+    const handleInputFocus = useCallback(() => {
         window.setTimeout(() => {
             if (computeNearBottom()) scrollToBottom(false);
         }, 80);
-    };
+    }, []);
+
+    const handleCancelReplyEdit = useCallback(() => {
+        setReplyTo(null);
+        setEditingId(null);
+    }, []);
+
+    const handleCancelForward = useCallback(() => {
+        onClearPendingForwardDraft?.(chatId);
+    }, [onClearPendingForwardDraft, chatId]);
+
+    const handleTypingChange = useCallback((targetChatId: string, isTyping: boolean) => {
+        onTypingChange?.(targetChatId, isTyping);
+    }, [onTypingChange]);
+
+    const handleUploadStatusChange = useCallback((targetChatId: string, isUploading: boolean) => {
+        onUploadStatusChange?.(targetChatId, isUploading);
+    }, [onUploadStatusChange]);
 
     const doDeleteChat = async () => {
         try {
@@ -1960,6 +2038,9 @@ export function ChatRoom({
         const messageSeenCountRaw = Number((m as any).seenCount || 0);
         const messageSeenCount = Math.max(1, seenByCountForMessage, messageSeenByRaw, messageSeenCountRaw);
         const sender = groupMembers[m.senderId];
+        const senderPending = isGroupChat && !isMine && !sender && !membersResolved;
+        const replySenderId = m.replyTo ? String(messagesById.get(m.replyTo.id)?.senderId || m.replyTo.senderId || '') : '';
+        const replySenderPending = isGroupChat && !membersResolved && Boolean(replySenderId) && !groupMembers[replySenderId];
         const reactionsForMessage = (optimisticReactions[m.id] ?? m.reactions ?? EMPTY_REACTIONS) as unknown as ReactionEntry[];
 
         return (
@@ -1983,7 +2064,9 @@ export function ChatRoom({
                 emojiOnlyClass={emojiOnlyClass}
                 senderName={sender?.name || m.senderId || 'ناشناس'}
                 senderAvatar={sender?.avatar || ''}
+                senderPending={senderPending}
                 replySenderName={m.replyTo ? getReplySenderName(m.replyTo) : ''}
+                replySenderPending={replySenderPending}
                 replyPreviewText={m.replyTo ? getReplyPreviewText(m.replyTo) : ''}
                 reactions={reactionsForMessage}
                 isHighlighted={highlightId === m.id}
@@ -2011,6 +2094,8 @@ export function ChatRoom({
         optimisticReactions,
         canSwipeToReply,
         groupMembers,
+        membersResolved,
+        messagesById,
         cachedTextByMessageId,
         token,
         chatId,
@@ -2199,7 +2284,10 @@ export function ChatRoom({
                         >
                             <X size={20} />
                         </button>
-                        <span className="chat-room__selection-count">
+                        <span
+                            key={selectionShake}
+                            className={cx('chat-room__selection-count', selectionShake > 0 && 'chat-room__selection-count--shake')}
+                        >
                             {toPersianDigits(selectedMessageIds.length)} پیام انتخاب شده
                         </span>
                     </div>
@@ -2388,33 +2476,35 @@ export function ChatRoom({
                 style={{
                     overflowX: 'hidden',
                     overflowY: replySwipeLocked ? 'hidden' : 'auto',
+                    paddingBottom: composerHeight + 26,
                 }}
             >
                 <div className="chat-room__messages-inner">
                     <div ref={topSentinelRef} />
-                    {loading ? (
-                        <ChatMessagesSkeleton />
-                    ) : (
-                        <>
-                            {!chatContentReady && <ChatMessagesSkeleton />}
-                            <div className="messages-list-visible-wrap" style={{ display: 'contents', visibility: chatContentReady ? 'visible' : 'hidden' }}>
-                                {(loadingOlderMessages || localLoadingOlder) && (
-                                    <div className="chat-range-loader-wrap chat-range-loader-wrap--top">
-                                        <span className="chat-range-loader chat-range-loader--active" />
-                                    </div>
-                                )}
-                                {renderedMessageItems}
-                                {(loadingNewerMessages || localLoadingNewer) && (
-                                    <div className="chat-range-loader-wrap chat-range-loader-wrap--bottom">
-                                        <span className="chat-range-loader chat-range-loader--active" />
-                                    </div>
-                                )}
-                            </div>
-                        </>
+                    {!loading && (
+                        <div className="messages-list-visible-wrap" style={{ display: 'contents', visibility: chatContentReady ? 'visible' : 'hidden' }}>
+                            {(loadingOlderMessages || localLoadingOlder) && (
+                                <div className="chat-range-loader-wrap chat-range-loader-wrap--top">
+                                    <span className="chat-range-loader chat-range-loader--active" />
+                                </div>
+                            )}
+                            {renderedMessageItems}
+                            {(loadingNewerMessages || localLoadingNewer) && (
+                                <div className="chat-range-loader-wrap chat-range-loader-wrap--bottom">
+                                    <span className="chat-range-loader chat-range-loader--active" />
+                                </div>
+                            )}
+                        </div>
                     )}
                     <div ref={messagesEndRef} />
                 </div>
             </div>
+
+            {loading && (
+                <div className="chat-room__skeleton-layer">
+                    <ChatMessagesSkeleton />
+                </div>
+            )}
 
             {msgMenu && (() => {
                 const activeMsg = messagesById.get(msgMenu.id);
@@ -2629,7 +2719,7 @@ export function ChatRoom({
                         initial={{ opacity: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.14, ease: 'easeOut' }}
-                        style={{ position: 'absolute', right: 12, bottom: `calc(${scrollButtonBottom}px + env(safe-area-inset-bottom, 0px))`, zIndex: 12, color: '#ffffff', cursor: 'pointer' }}>
+                        style={{ position: 'absolute', right: 12, bottom: scrollButtonBottom, zIndex: 12, color: '#ffffff', cursor: 'pointer' }}>
                         <ChevronDown size={20} />
                         {newMsgCount > 0 && (
                             <span className="chat-room__scroll-badge">{toPersianDigits(newMsgCount)}</span>
@@ -2638,32 +2728,30 @@ export function ChatRoom({
                 )}
             </AnimatePresence>
 
-            <ChatComposer
-                key={`${chatId}:${editingId ?? 'compose'}`}
-                chatId={chatId}
-                token={token}
-                isContactBlocked={isContactBlocked}
-                canSend={canSendInOfficialChannel}
-                blockedMessage={isUserBlocked?.(contact) ? 'شما این کاربر را بلاک کرده‌اید.' : 'این کاربر شما را بلاک کرده است.'}
-                replyTo={replyTo}
-                editingId={editingId}
-                editDraft={editingId ? (cachedTextByMessageId[editingId] ?? messagesById.get(editingId)?.text ?? '') : ''}
-                replyPreviewText={replyTo ? getReplyPreviewText(replyTo) : ''}
-                pendingForwardDraft={pendingForwardDraft}
-                forwardPreviewText={getForwardPreviewText(pendingForwardDraft)}
-                uploadFile={externalFileUploadHandler}
-                onSend={handleComposerSend}
-                onCancelReplyEdit={() => {
-                    setReplyTo(null);
-                    setEditingId(null);
-                }}
-                onCancelForward={() => onClearPendingForwardDraft?.(chatId)}
-                onTypingChange={onTypingChange}
-                onUploadStatusChange={onUploadStatusChange}
-                onStackCountChange={setComposerStackCount}
-                onRegisterUploadFile={handleRegisterUploadFile}
-                onInputFocus={handleInputFocus}
-            />
+            <div className="chat-room__composer-host" ref={composerHostRef}>
+                <ChatComposer
+                    key={`${chatId}:${editingId ?? 'compose'}`}
+                    chatId={chatId}
+                    token={token}
+                    isContactBlocked={isContactBlocked}
+                    canSend={canSendInOfficialChannel}
+                    blockedMessage={isUserBlocked?.(contact) ? 'شما این کاربر را بلاک کرده‌اید.' : 'این کاربر شما را بلاک کرده است.'}
+                    replyTo={replyTo}
+                    editingId={editingId}
+                    editDraft={editingId ? (cachedTextByMessageId[editingId] ?? messagesById.get(editingId)?.text ?? '') : ''}
+                    replyPreviewText={replyTo ? getReplyPreviewText(replyTo) : ''}
+                    pendingForwardDraft={pendingForwardDraft}
+                    forwardPreviewText={getForwardPreviewText(pendingForwardDraft)}
+                    uploadFile={externalFileUploadHandler}
+                    onSend={handleComposerSend}
+                    onCancelReplyEdit={handleCancelReplyEdit}
+                    onCancelForward={handleCancelForward}
+                    onTypingChange={handleTypingChange}
+                    onUploadStatusChange={handleUploadStatusChange}
+                    onRegisterUploadFile={handleRegisterUploadFile}
+                    onInputFocus={handleInputFocus}
+                />
+            </div>
 
             {!isSelectionModeActive && (
                 <div className="header-fade header-fade--bottom header-fade--visible" aria-hidden="true" />

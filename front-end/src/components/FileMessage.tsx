@@ -2,7 +2,7 @@ import type { FileMetadata } from '../types';
 import { formatFileSize, getFileIcon, isImageFile } from '../utils/fileUtils';
 import { Play, Pause, Download, X, LockOpen } from 'lucide-react';
 import { API_BASE_URL } from '../config/api';
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMusicPlayer } from '../contexts/MusicPlayerContext';
 import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { getCachedBlob, getOrCacheBlob, deleteCachedBlob } from '../utils/mediaCache';
@@ -21,6 +21,26 @@ type DownloadTask = {
 };
 const fileDownloadTasks = new Map<string, DownloadTask>();
 
+const visibilityCallbacks = new WeakMap<Element, (visible: boolean) => void>();
+let sharedVisibilityObserver: IntersectionObserver | null = null;
+const observeVisibility = (el: Element, cb: (visible: boolean) => void) => {
+  if (typeof IntersectionObserver === 'undefined') {
+    cb(true);
+    return () => undefined;
+  }
+  if (!sharedVisibilityObserver) {
+    sharedVisibilityObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) visibilityCallbacks.get(entry.target)?.(entry.isIntersecting);
+    }, { rootMargin: '400px 0px' });
+  }
+  visibilityCallbacks.set(el, cb);
+  sharedVisibilityObserver.observe(el);
+  return () => {
+    visibilityCallbacks.delete(el);
+    sharedVisibilityObserver?.unobserve(el);
+  };
+};
+
 export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, onImageClick, onVideoClick }: FileMessageProps) {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -30,6 +50,9 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [cacheChecked, setCacheChecked] = useState(false);
   const [resolvedAudioDuration, setResolvedAudioDuration] = useState(0);
+  const [nearViewport, setNearViewport] = useState(false);
+  const [mediaLoaded, setMediaLoaded] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const musicPlayer = useMusicPlayer();
   const isImage = isImageFile(file.mimeType); const isAudio = (file.mimeType || '').startsWith('audio/'); const isVideo = (file.mimeType || '').startsWith('video/');
   const cacheKey = `chat:${chatId}:file:${file.fileId}`;
@@ -113,6 +136,15 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
   };
 
   useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    return observeVisibility(el, (visible) => {
+      if (visible) setNearViewport(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!nearViewport) return;
     setCacheChecked(false);
     const activeTask = fileDownloadTasks.get(file.fileId);
     if (activeTask && (activeTask.state === 'downloading' || activeTask.state === 'decrypting')) {
@@ -133,7 +165,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
       }
       setCacheChecked(true);
     });
-  }, [cacheKey, file.fileId]);
+  }, [cacheKey, file.fileId, nearViewport]);
 
   useEffect(() => {
     const taskKey = file.fileId;
@@ -156,6 +188,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
   }, [cacheChecked, mediaUrl, downloadState, isImage, isVideo, isAudio]);
 
   useEffect(() => {
+    if (!nearViewport) return;
     if (!(isImage || isVideo) || !previewDirectUrl) return;
     let cancelled = false;
     const absolutePreviewUrl = previewDirectUrl.startsWith('http') ? previewDirectUrl : `${API_BASE_URL}${previewDirectUrl}`;
@@ -184,7 +217,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
         URL.revokeObjectURL(previewUrl);
       }
     };
-  }, [isImage, isVideo, previewDirectUrl, token, chatId, file.fileId]);
+  }, [isImage, isVideo, previewDirectUrl, token, chatId, file.fileId, nearViewport]);
 
   const actionIcon = downloadState === 'downloading' ? <X size={16} /> : downloadState === 'decrypting' ? <LockOpen size={16} /> : <Download size={16} />;
 
@@ -197,6 +230,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
     setPreviewAspectRatio(null);
     setActualAspectRatio(null);
     setResolvedAudioDuration(0);
+    setMediaLoaded(false);
 
     return () => {
       if (oldMediaUrl && oldMediaUrl.startsWith('blob:')) URL.revokeObjectURL(oldMediaUrl);
@@ -274,14 +308,20 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
         }
       }
     }
+    setMediaLoaded(true);
     onMediaLoad?.();
+  };
+
+  const handleMediaFailed = () => {
+    setMediaLoaded(true);
+    (onMediaError ?? onMediaLoad)?.();
   };
 
   
   const maxWidth = 280;
   const maxHeight = 440;
   const containerStyle: React.CSSProperties = {
-    background: isVideo ? '#000' : 'transparent',
+    background: 'transparent',
     aspectRatio: String(effectiveAspectRatio),
     maxWidth: '100%',
   };
@@ -296,7 +336,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
     containerStyle.height = `${Math.round(maxWidth / effectiveAspectRatio)}px`;
   }
 
-  return <div className="file-message">
+  return <div className="file-message" ref={rootRef}>
     {(isImage || isVideo) && (
       <div className="file-image-preview" style={containerStyle} onClick={(e) => {
         e.stopPropagation();
@@ -305,9 +345,10 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
         }
         if (!mediaUrl) void startDownload();
       }}>
-        {mediaUrl ? (isImage ? <img src={mediaUrl} alt={file.fileName} style={{ objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} onClick={() => onImageClick?.(mediaUrl, file)} /> : <button type="button" className="file-video-thumb" onClick={() => onVideoClick?.(mediaUrl, file)}><video src={mediaUrl} preload="metadata" muted playsInline onLoadedMetadata={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} style={{ width: '100%', height: '100%', objectFit: shouldContain ? 'contain' : 'cover', background: '#000' }} /><span className="file-video-duration">{formatDuration(mediaDuration)}</span><span className="file-video-play-badge"><Play size={20} fill="currentColor" /></span></button>) :
+        {!mediaLoaded && <div className="media-skeleton skeleton-glass" aria-hidden />}
+        {mediaUrl ? (isImage ? <img src={mediaUrl} alt={file.fileName} style={{ objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={handleMediaFailed} onClick={() => onImageClick?.(mediaUrl, file)} /> : <button type="button" className="file-video-thumb" onClick={() => onVideoClick?.(mediaUrl, file)}><video src={mediaUrl} preload="metadata" muted playsInline onLoadedData={handleMediaRendered} onError={handleMediaFailed} style={{ width: '100%', height: '100%', objectFit: shouldContain ? 'contain' : 'cover', background: 'transparent' }} /><span className="file-video-duration">{formatDuration(mediaDuration)}</span><span className="file-video-play-badge"><Play size={20} fill="currentColor" /></span></button>) :
           (<>
-            {previewUrl ? <img src={previewUrl} alt="preview" style={{ filter: 'blur(4px)', objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={() => (onMediaError ?? onMediaLoad)?.()} /> : <div style={{ width: '100%', height: '100%', background: '#000' }} />}
+            {previewUrl ? <img src={previewUrl} alt="preview" style={{ filter: 'blur(4px)', objectFit: shouldContain ? 'contain' : 'cover' }} onLoad={handleMediaRendered} onError={handleMediaFailed} /> : <div className="media-skeleton skeleton-glass" aria-hidden />}
             {isVideo && <button type="button" className="file-video-center-play" onClick={(e) => { e.stopPropagation(); startDownload(); }}><Play size={20} fill="currentColor" /></button>}
             {isVideo && <span className="file-video-duration file-video-duration--top">{formatDuration(mediaDuration || 0)}</span>}
             <div className={`manual-download-wrap ${isImage ? 'manual-download-wrap--center' : ''} ${isVideo ? 'manual-download-wrap--video' : ''}`}>

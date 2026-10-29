@@ -930,9 +930,7 @@ export function AIChatRoom({
                 onScroll={onMessagesScroll}
             >
                 <div className="chat-room__messages-inner">
-                    {loading ? (
-                        <ChatMessagesSkeleton />
-                    ) : messages.length === 0 && !isResponding && !isTyping ? (
+                    {loading ? null : messages.length === 0 && !isResponding && !isTyping ? (
                         <div className="ai-chat-empty-state">
                             {temporaryMode ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
@@ -1086,6 +1084,12 @@ export function AIChatRoom({
                     <div ref={messagesEndRef} />
                 </div>
             </div>
+
+            {loading && (
+                <div className="chat-room__skeleton-layer">
+                    <ChatMessagesSkeleton />
+                </div>
+            )}
 
             <AnimatePresence>
                 {aiChatsDrawerOpen && (
@@ -1444,7 +1448,9 @@ export function AIChatRoom({
                 )}
             </AnimatePresence>
 
-            <div className="chat-room__input-area">
+            <div
+                className="chat-room__input-area"
+            >
                 <div className="chat-room__input-wrapper">
                     <button
                         type="button"

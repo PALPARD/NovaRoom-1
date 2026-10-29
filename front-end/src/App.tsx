@@ -19,6 +19,7 @@ import { cx } from './utils/cx';
 import { NotificationCenter } from './components/NotificationCenter';
 import { notify } from './utils/notificationBus';
 import { decryptBioClientSide, decryptMessageClientSide, encryptChatTextClientSide } from './utils/e2ee';
+import { clearCachedTextValues, clearChatSnapshots, getChatSnapshot, saveChatSnapshot } from './utils/mediaCache';
 import { useDarkMode } from './hooks/useDarkMode';
 import { BottomNavbar } from './components/BottomNavbar';
 import './App.css';
@@ -118,6 +119,16 @@ export function App() {
     useEffect(() => {
         messagesRef.current = messages;
     }, [messages]);
+
+    useEffect(() => {
+        if (!isAuthenticated || !activeChatId) return;
+        const list = messages[activeChatId];
+        if (!list || list.length === 0) return;
+        const timer = window.setTimeout(() => {
+            void saveChatSnapshot(activeChatId, list.filter((m) => m.deliveryStatus !== 'sending'));
+        }, 800);
+        return () => window.clearTimeout(timer);
+    }, [messages, activeChatId, isAuthenticated]);
 
     const [messageRangeState, setMessageRangeState] = useState<Record<string, {
         hasOlder: boolean;
@@ -604,6 +615,8 @@ export function App() {
             userPresenceRef.current = {};
             setTypingUserIdsByChat({});
             setUploadingUserIdsByChat({});
+            void clearChatSnapshots();
+            void clearCachedTextValues();
             navigate('/login', { replace: true });
         };
 
@@ -1004,25 +1017,30 @@ export function App() {
     const handleMessagesSeen = useCallback((chatId: string, byUserId?: string) => {
         if (chatId === 'official-channel' && byUserId) {
             setMessages(prev => {
-                if (!prev[chatId]) return prev;
-                return {
-                    ...prev,
-                    [chatId]: prev[chatId].map((m: any) => {
-                        const existing = Array.isArray(m.seenBy) ? m.seenBy : [];
-                        if (String(m.senderId || '') === byUserId || existing.includes(byUserId)) return m;
-                        const nextSeenBy = [...existing, byUserId];
-                        return { ...m, seenBy: nextSeenBy, seenCount: Math.max(1, nextSeenBy.length) };
-                    })
-                };
+                const list = prev[chatId];
+                if (!list) return prev;
+                let changed = false;
+                const next = list.map((m: any) => {
+                    const existing = Array.isArray(m.seenBy) ? m.seenBy : [];
+                    if (String(m.senderId || '') === byUserId || existing.includes(byUserId)) return m;
+                    changed = true;
+                    const nextSeenBy = [...existing, byUserId];
+                    return { ...m, seenBy: nextSeenBy, seenCount: Math.max(1, nextSeenBy.length) };
+                });
+                return changed ? { ...prev, [chatId]: next } : prev;
             });
             return;
         }
         setMessages(prev => {
-            if (!prev[chatId]) return prev;
-            return {
-                ...prev,
-                [chatId]: prev[chatId].map(m => ({ ...m, seen: true }))
-            };
+            const list = prev[chatId];
+            if (!list) return prev;
+            let changed = false;
+            const next = list.map(m => {
+                if (m.seen) return m;
+                changed = true;
+                return { ...m, seen: true };
+            });
+            return changed ? { ...prev, [chatId]: next } : prev;
         });
         setChats(prev => prev.map(c => (c.id === chatId ? { ...c, unreadCount: 0 } : c)));
     }, []);
@@ -1031,10 +1049,11 @@ export function App() {
         setMessages(prev => {
             const arr = prev[chatId];
             if (!arr) return prev;
-            return {
-                ...prev,
-                [chatId]: arr.map(m => (m.id === messageId ? { ...m, reactions } : m))
-            };
+            const idx = arr.findIndex(m => m.id === messageId);
+            if (idx === -1) return prev;
+            const next = arr.slice();
+            next[idx] = { ...arr[idx], reactions };
+            return { ...prev, [chatId]: next };
         });
     }, []);
 
@@ -1499,11 +1518,19 @@ export function App() {
         });
 
         const inMemory = messagesRef.current[chatId] || [];
-        const hasImmediateMessages = inMemory.length > 0;
+        let hasImmediateMessages = inMemory.length > 0;
 
         const shouldShowSkeleton = !messagesLoadedOnceRef.current[chatId] && !hasImmediateMessages;
         if (shouldShowSkeleton) {
-            setMessagesLoading(prev => ({ ...prev, [chatId]: true }));
+            const cached = await getChatSnapshot(chatId);
+            if (chatLoadRequestRef.current !== requestId) return;
+            if (cached && cached.length > 0) {
+                hasImmediateMessages = true;
+                setMessages(prev => (prev[chatId]?.length ? prev : { ...prev, [chatId]: cached }));
+                setMessagesLoadedOnce(prev => (prev[chatId] ? prev : { ...prev, [chatId]: true }));
+            } else {
+                setMessagesLoading(prev => ({ ...prev, [chatId]: true }));
+            }
         }
 
         try {
