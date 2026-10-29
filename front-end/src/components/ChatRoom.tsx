@@ -924,7 +924,7 @@ export function ChatRoom({
                     if (!response.ok) throw new Error('Download failed');
                     const encryptedBytes = new Uint8Array(await response.arrayBuffer());
                     const plainBytes = await decryptFileBytesClientSide(encryptedBytes, token, chatId);
-                    return new Blob([new Uint8Array(plainBytes)], { type: m.file?.mimeType || 'application/octet-stream' });
+                    return new Blob([plainBytes as BlobPart], { type: m.file?.mimeType || 'application/octet-stream' });
                 },
             });
             const url = URL.createObjectURL(blob);

@@ -46,8 +46,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
   const decodeResponseBlob = async (response: Response): Promise<Blob> => {
     const encryptedBytes = new Uint8Array(await response.arrayBuffer());
     const plainBytes = await decryptFileBytesClientSide(encryptedBytes, token, chatId);
-    const normalizedBytes = new Uint8Array(plainBytes);
-    return new Blob([normalizedBytes], { type: file.mimeType || response.headers.get('content-type') || 'application/octet-stream' });
+    return new Blob([plainBytes as BlobPart], { type: file.mimeType || response.headers.get('content-type') || 'application/octet-stream' });
   };
 
   const ensureObjectUrl = async () => {

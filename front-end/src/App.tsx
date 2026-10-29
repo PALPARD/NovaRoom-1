@@ -479,15 +479,17 @@ export function App() {
             const data = await apiFetch('/chats');
 
             const normalized: Chat[] = await Promise.all((data as any[]).map(async (c) => {
-                const decryptedLastMessage = c?.lastMessage
-                    ? await decryptMessageClientSide(c.lastMessage, authToken || '', String(c.id || ''))
-                    : null;
-                const decryptedPinnedMessage = c?.pinnedMessage
-                    ? await decryptMessageClientSide(c.pinnedMessage, authToken || '', String(c.id || ''))
-                    : null;
-                const decryptedOtherBio = c?.otherUser?.chatId
-                    ? await decryptBioClientSide(String(c.otherUser.bio || ''), authToken || '', String(c.otherUser.chatId || ''))
-                    : c?.otherUser?.bio;
+                const [decryptedLastMessage, decryptedPinnedMessage, decryptedOtherBio] = await Promise.all([
+                    c?.lastMessage
+                        ? decryptMessageClientSide(c.lastMessage, authToken || '', String(c.id || ''))
+                        : Promise.resolve(null),
+                    c?.pinnedMessage
+                        ? decryptMessageClientSide(c.pinnedMessage, authToken || '', String(c.id || ''))
+                        : Promise.resolve(null),
+                    c?.otherUser?.chatId
+                        ? decryptBioClientSide(String(c.otherUser.bio || ''), authToken || '', String(c.otherUser.chatId || ''))
+                        : Promise.resolve(c?.otherUser?.bio),
+                ]);
                 const otherChatId = String(c?.otherUser?.chatId || '').trim();
                 const otherUsername = String(c?.otherUser?.username || '').trim();
                 const presenceCandidateIds = [otherChatId, otherUsername].filter(Boolean);

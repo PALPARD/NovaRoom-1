@@ -114,7 +114,7 @@ async function fetchAvatar(src: string): Promise<string> {
           if (plainBytes === encryptedBytes) {
             plainBytes = await decryptAvatarBytesClientSide(encryptedBytes, token);
           }
-          return new Blob([new Uint8Array(plainBytes)], { type: response.headers.get('content-type') || 'image/*' });
+          return new Blob([plainBytes as BlobPart], { type: response.headers.get('content-type') || 'image/*' });
         },
       });
       const blobUrl = URL.createObjectURL(blob);

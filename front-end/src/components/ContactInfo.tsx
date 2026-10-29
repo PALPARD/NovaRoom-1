@@ -211,7 +211,7 @@ export function ContactInfo({
             const token = localStorage.getItem('token') || '';
             const plainBytes = new Uint8Array(await file.arrayBuffer());
             const encryptedBytes = await encryptFileBytesClientSide(plainBytes, token, 'profile_avatar_shared');
-            const encryptedFile = new window.File([new Uint8Array(encryptedBytes)], file.name, {
+            const encryptedFile = new window.File([encryptedBytes as BlobPart], file.name, {
                 type: 'application/octet-stream',
                 lastModified: file.lastModified || Date.now(),
             });

@@ -2,6 +2,8 @@ const ENC_PREFIX = 'enc:v1:';
 const ENC_NONCE_SIZE = 16;
 const ENC_TAG_SIZE = 16;
 const FILE_MAGIC = new Uint8Array([0x4e, 0x43, 0x46, 0x31]); 
+const FILE_MAGIC_V2 = new Uint8Array([0x4e, 0x43, 0x46, 0x32]);
+const FILE_GCM_IV_SIZE = 12;
 const FILE_TEXT_PREFIX = 'ncf:v1:';
 const AVATAR_MAGIC = new Uint8Array([0x4e, 0x43, 0x41, 0x31]); 
 const AVATAR_TEXT_PREFIX = 'nca:v1:';
@@ -130,19 +132,11 @@ const fromBase64Url = (value: string): Uint8Array => {
     return out;
 };
 
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
-    const view = bytes as Uint8Array<ArrayBufferLike>;
-    if (view.buffer instanceof ArrayBuffer) {
-        return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-    }
-    const out = new Uint8Array(view.byteLength);
-    out.set(view);
-    return out.buffer;
-};
+const asBufferSource = (bytes: Uint8Array): BufferSource => bytes as unknown as BufferSource;
 
 const sha256 = async (bytes: Uint8Array): Promise<Uint8Array> => {
     if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const digest = await crypto.subtle.digest('SHA-256', toArrayBuffer(bytes));
+        const digest = await crypto.subtle.digest('SHA-256', asBufferSource(bytes));
         return new Uint8Array(digest);
     }
     return sha256Fallback(bytes);
@@ -150,6 +144,7 @@ const sha256 = async (bytes: Uint8Array): Promise<Uint8Array> => {
 
 const deriveKeyCache = new Map<string, Promise<Uint8Array>>();
 const hmacKeyCache = new Map<string, Promise<CryptoKey>>();
+const aesKeyCache = new Map<string, Promise<CryptoKey>>();
 const decryptedTextCache = new Map<string, string>();
 
 const deriveKey = (material: string): Promise<Uint8Array> => {
@@ -157,6 +152,17 @@ const deriveKey = (material: string): Promise<Uint8Array> => {
     if (cached) return cached;
     const promise = sha256(toUtf8(material));
     deriveKeyCache.set(material, promise);
+    return promise;
+};
+
+const getAesKey = (material: string): Promise<CryptoKey> => {
+    const cached = aesKeyCache.get(material);
+    if (cached) return cached;
+    const promise = deriveKey(material).then((key) =>
+        crypto.subtle.importKey('raw', asBufferSource(key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+    );
+    aesKeyCache.set(material, promise);
+    void promise.catch(() => aesKeyCache.delete(material));
     return promise;
 };
 
@@ -210,14 +216,14 @@ const hmacTag = async (keyBytes: Uint8Array, payload: Uint8Array): Promise<Uint8
         const cacheKey = toBase64Url(keyBytes);
         let keyPromise = hmacKeyCache.get(cacheKey);
         if (!keyPromise) {
-            keyPromise = crypto.subtle.importKey('raw', toArrayBuffer(keyBytes), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+            keyPromise = crypto.subtle.importKey('raw', asBufferSource(keyBytes), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
             hmacKeyCache.set(cacheKey, keyPromise);
         }
         const key = await keyPromise;
-        const mac = await crypto.subtle.sign('HMAC', key, toArrayBuffer(payload));
-        return new Uint8Array(mac).slice(0, ENC_TAG_SIZE);
+        const mac = await crypto.subtle.sign('HMAC', key, asBufferSource(payload));
+        return new Uint8Array(mac, 0, ENC_TAG_SIZE);
     }
-    return hmacSha256Fallback(keyBytes, payload).slice(0, ENC_TAG_SIZE);
+    return hmacSha256Fallback(keyBytes, payload).subarray(0, ENC_TAG_SIZE);
 };
 
 const buildLegacyMaterial = (token: string, scope: string) => `${token || ''}|${scope || ''}`;
@@ -239,14 +245,10 @@ export const encryptClientText = async (plain: string, token: string, scope: str
         const key = await deriveKey(material);
         const nonce = randomBytes(ENC_NONCE_SIZE);
         const encrypted = await xorStream(toUtf8(text), key, nonce);
-        const nonceAndEncrypted = new Uint8Array(nonce.length + encrypted.length);
-        nonceAndEncrypted.set(nonce, 0);
-        nonceAndEncrypted.set(encrypted, nonce.length);
-
-        const tag = await hmacTag(key, nonceAndEncrypted);
-        const full = new Uint8Array(nonce.length + encrypted.length + tag.length);
+        const full = new Uint8Array(nonce.length + encrypted.length + ENC_TAG_SIZE);
         full.set(nonce, 0);
         full.set(encrypted, nonce.length);
+        const tag = await hmacTag(key, full.subarray(0, nonce.length + encrypted.length));
         full.set(tag, nonce.length + encrypted.length);
 
         return `${ENC_PREFIX}${toBase64Url(full)}`;
@@ -269,13 +271,10 @@ export const decryptClientText = async (cipher: string, token: string, scope: st
         const raw = fromBase64Url(value.slice(ENC_PREFIX.length));
         if (raw.length < ENC_NONCE_SIZE + ENC_TAG_SIZE) return '';
 
-        const nonce = raw.slice(0, ENC_NONCE_SIZE);
-        const body = raw.slice(ENC_NONCE_SIZE, raw.length - ENC_TAG_SIZE);
-        const tag = raw.slice(raw.length - ENC_TAG_SIZE);
-
-        const nonceAndBody = new Uint8Array(nonce.length + body.length);
-        nonceAndBody.set(nonce, 0);
-        nonceAndBody.set(body, nonce.length);
+        const nonce = raw.subarray(0, ENC_NONCE_SIZE);
+        const body = raw.subarray(ENC_NONCE_SIZE, raw.length - ENC_TAG_SIZE);
+        const tag = raw.subarray(raw.length - ENC_TAG_SIZE);
+        const nonceAndBody = raw.subarray(0, raw.length - ENC_TAG_SIZE);
 
         const candidateMaterials = [
             buildSharedMaterial(scope),       
@@ -306,18 +305,22 @@ export const decryptMessageClientSide = async (message: any, token: string, chat
     if (!message) return message;
     const scope = `chat:${chatId}`;
     const next = { ...message };
+    const tasks: Promise<void>[] = [];
     if (typeof next.text === 'string') {
-        const dec = await decryptClientText(next.text, token, scope);
-        next.text = dec;
+        tasks.push(decryptClientText(next.text, token, scope).then((dec) => { next.text = dec; }));
     }
-    if (next.replyTo && typeof next.replyTo === 'object' && typeof next.replyTo.text === 'string') {
-        const decReply = await decryptClientText(next.replyTo.text, token, scope);
-        next.replyTo = { ...next.replyTo, text: decReply };
+    const replyTo = next.replyTo;
+    if (replyTo && typeof replyTo === 'object' && typeof replyTo.text === 'string') {
+        tasks.push(decryptClientText(replyTo.text, token, scope).then((decReply) => {
+            next.replyTo = { ...replyTo, text: decReply };
+        }));
     }
     if (typeof next.reasoningContent === 'string') {
-        const decReasoning = await decryptClientText(next.reasoningContent, token, scope);
-        next.reasoningContent = decReasoning;
+        tasks.push(decryptClientText(next.reasoningContent, token, scope).then((decReasoning) => {
+            next.reasoningContent = decReasoning;
+        }));
     }
+    await Promise.all(tasks);
     return next;
 };
 
@@ -333,15 +336,24 @@ export const decryptBioClientSide = async (bio: string, token: string, chatId: s
     return decryptClientText(bio, token, `user-bio:${chatId}`);
 };
 
-const hasFileMagic = (raw: Uint8Array): boolean => {
-    if (raw.length < FILE_MAGIC.length) return false;
-    for (let i = 0; i < FILE_MAGIC.length; i += 1) {
-        if (raw[i] !== FILE_MAGIC[i]) return false;
+const hasMagic = (raw: Uint8Array, magic: Uint8Array): boolean => {
+    if (raw.length < magic.length) return false;
+    for (let i = 0; i < magic.length; i += 1) {
+        if (raw[i] !== magic[i]) return false;
     }
     return true;
 };
 
-export const encryptFileBytesClientSide = async (plain: Uint8Array, _token: string, chatId: string): Promise<Uint8Array> => {
+const hasAsciiPrefix = (raw: Uint8Array, prefix: string): boolean => {
+    if (raw.length < prefix.length) return false;
+    for (let i = 0; i < prefix.length; i += 1) {
+        if (raw[i] !== prefix.charCodeAt(i)) return false;
+    }
+    return true;
+};
+
+// shortcut: v1 keystream costs one SHA-256 per 32 bytes; kept for old data and no-WebCrypto fallback, upgrade by migrating old files to NCF2.
+const encryptFileBytesV1 = async (plain: Uint8Array, chatId: string): Promise<Uint8Array> => {
     if (!plain.length) return plain;
     try {
         const scope = `chat:${chatId}`;
@@ -363,17 +375,56 @@ export const encryptFileBytesClientSide = async (plain: Uint8Array, _token: stri
     }
 };
 
+export const encryptFileBytesClientSide = async (plain: Uint8Array, _token: string, chatId: string): Promise<Uint8Array> => {
+    if (!plain.length) return plain;
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+        return encryptFileBytesV1(plain, chatId);
+    }
+    try {
+        const scope = `chat:${chatId}`;
+        const key = await getAesKey(buildSharedMaterial(scope));
+        const iv = randomBytes(FILE_GCM_IV_SIZE);
+        const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: asBufferSource(iv) },
+            key,
+            asBufferSource(plain),
+        ));
+        const full = new Uint8Array(FILE_MAGIC_V2.length + iv.length + encrypted.length);
+        full.set(FILE_MAGIC_V2, 0);
+        full.set(iv, FILE_MAGIC_V2.length);
+        full.set(encrypted, FILE_MAGIC_V2.length + iv.length);
+        return full;
+    } catch {
+        return encryptFileBytesV1(plain, chatId);
+    }
+};
+
 export const decryptFileBytesClientSide = async (raw: Uint8Array, _token: string, chatId: string): Promise<Uint8Array> => {
     if (!raw.length) return raw;
-    let packed: Uint8Array | null = null;
-    if (hasFileMagic(raw)) {
-        packed = raw.slice(FILE_MAGIC.length);
-    } else {
+    const scope = `chat:${chatId}`;
+    if (hasMagic(raw, FILE_MAGIC_V2)) {
+        if (typeof crypto === 'undefined' || !crypto.subtle) return raw;
+        if (raw.length < FILE_MAGIC_V2.length + FILE_GCM_IV_SIZE + ENC_TAG_SIZE) return raw;
         try {
-            const maybeText = textDecoder.decode(raw);
-            if (maybeText.startsWith(FILE_TEXT_PREFIX)) {
-                packed = fromBase64Url(maybeText.slice(FILE_TEXT_PREFIX.length));
-            }
+            const iv = raw.subarray(FILE_MAGIC_V2.length, FILE_MAGIC_V2.length + FILE_GCM_IV_SIZE);
+            const body = raw.subarray(FILE_MAGIC_V2.length + FILE_GCM_IV_SIZE);
+            const key = await getAesKey(buildSharedMaterial(scope));
+            const plain = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: asBufferSource(iv) },
+                key,
+                asBufferSource(body),
+            );
+            return new Uint8Array(plain);
+        } catch {
+            return raw;
+        }
+    }
+    let packed: Uint8Array | null = null;
+    if (hasMagic(raw, FILE_MAGIC)) {
+        packed = raw.subarray(FILE_MAGIC.length);
+    } else if (hasAsciiPrefix(raw, FILE_TEXT_PREFIX)) {
+        try {
+            packed = fromBase64Url(textDecoder.decode(raw.subarray(FILE_TEXT_PREFIX.length)));
         } catch {
             packed = null;
         }
@@ -382,15 +433,11 @@ export const decryptFileBytesClientSide = async (raw: Uint8Array, _token: string
     if (packed.length < ENC_NONCE_SIZE + ENC_TAG_SIZE) return raw;
 
     try {
-        const nonce = packed.slice(0, ENC_NONCE_SIZE);
-        const body = packed.slice(ENC_NONCE_SIZE, packed.length - ENC_TAG_SIZE);
-        const tag = packed.slice(packed.length - ENC_TAG_SIZE);
-        const nonceAndBody = new Uint8Array(nonce.length + body.length);
-        nonceAndBody.set(nonce, 0);
-        nonceAndBody.set(body, nonce.length);
-        const scope = `chat:${chatId}`;
+        const nonce = packed.subarray(0, ENC_NONCE_SIZE);
+        const body = packed.subarray(ENC_NONCE_SIZE, packed.length - ENC_TAG_SIZE);
+        const tag = packed.subarray(packed.length - ENC_TAG_SIZE);
         const key = await deriveKey(buildSharedMaterial(scope));
-        const expectedTag = await hmacTag(key, nonceAndBody);
+        const expectedTag = await hmacTag(key, packed.subarray(0, packed.length - ENC_TAG_SIZE));
         const sameTag = tag.length === expectedTag.length && tag.every((b, i) => b === expectedTag[i]);
         if (!sameTag) return raw;
         return xorStream(body, key, nonce);
@@ -424,14 +471,11 @@ export const encryptAvatarBytesClientSide = async (plain: Uint8Array, _token: st
 export const decryptAvatarBytesClientSide = async (raw: Uint8Array, _token: string): Promise<Uint8Array> => {
     if (!raw.length) return raw;
     let packed: Uint8Array | null = null;
-    if (raw.length >= AVATAR_MAGIC.length && raw.slice(0, AVATAR_MAGIC.length).every((b, i) => b === AVATAR_MAGIC[i])) {
-        packed = raw.slice(AVATAR_MAGIC.length);
-    } else {
+    if (hasMagic(raw, AVATAR_MAGIC)) {
+        packed = raw.subarray(AVATAR_MAGIC.length);
+    } else if (hasAsciiPrefix(raw, AVATAR_TEXT_PREFIX)) {
         try {
-            const maybeText = textDecoder.decode(raw);
-            if (maybeText.startsWith(AVATAR_TEXT_PREFIX)) {
-                packed = fromBase64Url(maybeText.slice(AVATAR_TEXT_PREFIX.length));
-            }
+            packed = fromBase64Url(textDecoder.decode(raw.subarray(AVATAR_TEXT_PREFIX.length)));
         } catch {
             packed = null;
         }
@@ -439,14 +483,11 @@ export const decryptAvatarBytesClientSide = async (raw: Uint8Array, _token: stri
     if (!packed) return raw;
     if (packed.length < ENC_NONCE_SIZE + ENC_TAG_SIZE) return raw;
     try {
-        const nonce = packed.slice(0, ENC_NONCE_SIZE);
-        const body = packed.slice(ENC_NONCE_SIZE, packed.length - ENC_TAG_SIZE);
-        const tag = packed.slice(packed.length - ENC_TAG_SIZE);
-        const nonceAndBody = new Uint8Array(nonce.length + body.length);
-        nonceAndBody.set(nonce, 0);
-        nonceAndBody.set(body, nonce.length);
+        const nonce = packed.subarray(0, ENC_NONCE_SIZE);
+        const body = packed.subarray(ENC_NONCE_SIZE, packed.length - ENC_TAG_SIZE);
+        const tag = packed.subarray(packed.length - ENC_TAG_SIZE);
         const key = await deriveKey(buildSharedMaterial('profile-avatar:shared'));
-        const expectedTag = await hmacTag(key, nonceAndBody);
+        const expectedTag = await hmacTag(key, packed.subarray(0, packed.length - ENC_TAG_SIZE));
         const sameTag = tag.length === expectedTag.length && tag.every((b, i) => b === expectedTag[i]);
         if (!sameTag) return raw;
         return xorStream(body, key, nonce);
