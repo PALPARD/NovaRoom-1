@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey } from './types';
+import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey, PendingForwardDraft } from './types';
 import { apiFetch } from './config/api';
 import { useWebSocket } from './hooks/useWebSocket';
 import { ChatList } from './components/ChatList';
@@ -225,7 +225,7 @@ export function App() {
     
     
     const [pendingUser, setPendingUser] = useState<User | null>(null);
-    const [pendingForwardDrafts, setPendingForwardDrafts] = useState<Record<string, { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }>>({});
+    const [pendingForwardDrafts, setPendingForwardDrafts] = useState<Record<string, PendingForwardDraft>>({});
     const aiStreamStartedRef = useRef<Record<string, boolean>>({});
     const aiPendingStreamMetaRef = useRef<Record<string, Message>>({});
     const dragHoverChatTimerRef = useRef<number | null>(null);
@@ -2024,7 +2024,7 @@ export function App() {
         loadChats(false);
     }, [loadChats, messages, aiMessagesByChat, authToken, currentUser, chats, activeChatId, fetchPagedMessages]);
 
-    const handleSetPendingForwardDraft = useCallback((targetChatId: string, draft: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }) => {
+    const handleSetPendingForwardDraft = useCallback((targetChatId: string, draft: PendingForwardDraft) => {
         if (!targetChatId || !draft?.sourceChatId || !draft?.messageId) return;
         setPendingForwardDrafts((prev) => ({ ...prev, [targetChatId]: draft }));
     }, []);

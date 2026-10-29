@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react';
 import { Check, ChevronDown, Copy } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -246,11 +246,49 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 }: ChatMessageItemProps) {
     const bubbleRef = useRef<HTMLDivElement | null>(null);
     const swipeRef = useRef({ startX: 0, startY: 0, active: false, captured: false, pointerId: null as number | null, blockClickUntil: 0 });
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressOriginRef = useRef({ x: 0, y: 0 });
+    const suppressClickRef = useRef(false);
+    const swipeEnabled = canSwipeToReply && !isSelectionModeActive;
 
     const setBubbleRef = useCallback((el: HTMLDivElement | null) => {
         bubbleRef.current = el;
         actions.registerEl(message.id, el);
     }, [actions, message.id]);
+
+    const cancelLongPress = () => {
+        if (longPressTimerRef.current === null) return;
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+    };
+
+    const startLongPress = (x: number, y: number) => {
+        cancelLongPress();
+        suppressClickRef.current = false;
+        if (isSelectionModeActive) return;
+        longPressOriginRef.current = { x, y };
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTimerRef.current = null;
+            suppressClickRef.current = true;
+            actions.toggleSelect(message.id);
+            triggerHaptic();
+        }, 450);
+    };
+
+    const consumeSuppressedClick = () => {
+        if (!suppressClickRef.current) return false;
+        suppressClickRef.current = false;
+        return true;
+    };
+
+    const trackLongPressMove = (x: number, y: number) => {
+        if (longPressTimerRef.current === null) return;
+        const dx = x - longPressOriginRef.current.x;
+        const dy = y - longPressOriginRef.current.y;
+        if (Math.hypot(dx, dy) > 8) cancelLongPress();
+    };
+
+    useEffect(() => cancelLongPress, []);
 
     const resetDrag = () => {
         const el = bubbleRef.current;
@@ -282,7 +320,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     }, [message.senderId]);
 
     return (
-        <div>
+        <div className="message-item">
             {dayBreak && (
                 <div className="chat-room__date-separator">
                     <div className="chat-room__date-label">{dayLabel}</div>
@@ -300,14 +338,23 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             )}
 
             <div
-                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isSelected ? 'message-row--selected' : ''}`}
+                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isSelected ? 'message-row--selected' : ''} ${isSelectionModeActive ? 'message-row--selecting' : ''}`}
+                onClick={(e) => {
+                    if (!isSelectionModeActive) return;
+                    if (consumeSuppressedClick()) return;
+                    if (Date.now() < swipeRef.current.blockClickUntil) return;
+                    e.stopPropagation();
+                    actions.toggleSelect(message.id);
+                }}
                 onPointerDown={(e) => {
-                    if (!canSwipeToReply) return;
+                    if (e.pointerType === 'mouse' && e.button === 0) startLongPress(e.clientX, e.clientY);
+                    if (!swipeEnabled) return;
                     if (e.pointerType !== 'mouse' || e.button !== 0) return;
                     swipeRef.current = { ...swipeRef.current, startX: e.clientX, startY: e.clientY, active: true, captured: false, pointerId: e.pointerId };
                 }}
                 onPointerMove={(e) => {
-                    if (!canSwipeToReply) return;
+                    if (e.pointerType === 'mouse') trackLongPressMove(e.clientX, e.clientY);
+                    if (!swipeEnabled) return;
                     if (e.pointerType !== 'mouse' || !swipeRef.current.active) return;
                     const dx = e.clientX - swipeRef.current.startX;
                     const dy = e.clientY - swipeRef.current.startY;
@@ -321,7 +368,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     applyDragOffset(dx);
                 }}
                 onPointerUp={(e) => {
-                    if (!canSwipeToReply) return;
+                    cancelLongPress();
+                    if (!swipeEnabled) return;
                     if (e.pointerType !== 'mouse' || !swipeRef.current.active) return;
                     const dx = e.clientX - swipeRef.current.startX;
                     const dy = e.clientY - swipeRef.current.startY;
@@ -334,20 +382,24 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
                 }}
                 onPointerCancel={(e) => {
-                    if (!canSwipeToReply) return;
+                    cancelLongPress();
+                    if (!swipeEnabled) return;
                     if (e.pointerType !== 'mouse') return;
                     resetDrag();
                     swipeRef.current = { ...swipeRef.current, active: false, captured: false, pointerId: null };
                 }}
                 onTouchStart={(e) => {
-                    if (!canSwipeToReply) return;
                     const t = e.touches[0];
+                    startLongPress(t.clientX, t.clientY);
+                    if (!swipeEnabled) return;
                     swipeRef.current = { ...swipeRef.current, startX: t.clientX, startY: t.clientY, active: true, captured: false };
                 }}
                 onTouchMove={(e) => {
-                    if (!canSwipeToReply) return;
+                    const moveTouch = e.touches[0];
+                    trackLongPressMove(moveTouch.clientX, moveTouch.clientY);
+                    if (!swipeEnabled) return;
                     if (!swipeRef.current.active) return;
-                    const t = e.touches[0];
+                    const t = moveTouch;
                     const dx = t.clientX - swipeRef.current.startX;
                     const dy = t.clientY - swipeRef.current.startY;
                     if (!swipeRef.current.captured) {
@@ -358,7 +410,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     applyDragOffset(dx);
                 }}
                 onTouchEnd={(e) => {
-                    if (!canSwipeToReply) return;
+                    cancelLongPress();
+                    if (!swipeEnabled) return;
                     if (!swipeRef.current.active) return;
                     const t = e.changedTouches[0];
                     const dx = t.clientX - swipeRef.current.startX;
@@ -372,7 +425,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     swipeRef.current = { ...swipeRef.current, active: false, captured: false };
                 }}
                 onTouchCancel={() => {
-                    if (!canSwipeToReply) return;
+                    cancelLongPress();
+                    if (!swipeEnabled) return;
                     resetDrag();
                     swipeRef.current = { ...swipeRef.current, active: false, captured: false };
                 }}
@@ -394,7 +448,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 
                 {isGroupChat && !isMine && (shape === 'msg-shape--single' || shape === 'msg-shape--last') && (
                     <div style={{ position: 'absolute', left: 0, bottom: 0, cursor: 'pointer', zIndex: 1 }}
-                        onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}>
+                        onClick={(e) => {
+                            if (isSelectionModeActive) return;
+                            e.stopPropagation();
+                            actions.openMember(message.senderId);
+                        }}>
                         {senderPending
                             ? <span className="skeleton-glass skeleton-glass--avatar" aria-hidden />
                             : <Avatar name={senderName} size="sm" src={senderAvatar} />}
@@ -408,6 +466,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                         : `message-bubble message-bubble--theirs ${shape} ${isBigEmojiOnly ? 'message-bubble--emoji-only' : ''} ${isHighlighted ? 'message-bubble--highlighted' : ''} ${isSelected ? 'message-bubble--selected' : ''}`}
                     onClick={(e) => {
                         e.stopPropagation();
+                        if (consumeSuppressedClick()) return;
                         if (Date.now() < swipeRef.current.blockClickUntil) return;
                         if (isSelectionModeActive) {
                             actions.toggleSelect(message.id);
@@ -430,7 +489,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     }}
                 >
                     {isGroupChat && !isMine && !isBigEmojiOnly && (shape === 'msg-shape--single' || shape === 'msg-shape--first') && (
-                        <div className="message-sender-name" onClick={(e) => { e.stopPropagation(); actions.openMember(message.senderId); }}
+                        <div className="message-sender-name" onClick={(e) => {
+                            if (isSelectionModeActive) return;
+                            e.stopPropagation();
+                            actions.openMember(message.senderId);
+                        }}
                             style={{ color: senderColor }}>
                             {senderPending
                                 ? <span className="skeleton-glass skeleton-glass--name" aria-hidden />
@@ -443,6 +506,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                             type="button"
                             className="message-forwarded-label"
                             onClick={(e) => {
+                                if (isSelectionModeActive) return;
                                 e.stopPropagation();
                                 actions.openForwardSource(message);
                             }}
@@ -452,9 +516,13 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                     )}
 
                     {message.replyTo && (
-                        <div onClick={(e) => { e.stopPropagation(); actions.scrollToMessage(message.replyTo!.id); }}
+                        <div onClick={(e) => {
+                            if (isSelectionModeActive) return;
+                            e.stopPropagation();
+                            actions.scrollToMessage(message.replyTo!.id);
+                        }}
                             role="button" tabIndex={0}
-                            onKeyDown={(e) => { if (e.key === 'Enter') actions.scrollToMessage(message.replyTo!.id); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !isSelectionModeActive) actions.scrollToMessage(message.replyTo!.id); }}
                             className="message-reply-box"
                             style={{ marginBottom: 6, padding: '6px 10px', borderRadius: 12, cursor: 'pointer' }}>
                             <div className="message-reply-box__label">

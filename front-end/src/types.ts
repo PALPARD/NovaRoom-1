@@ -84,6 +84,15 @@ export interface ChatLastMessage {
     file?: FileMetadata;
 }
 
+export type PendingForwardDraft = {
+    sourceChatId: string;
+    messageId: string;
+    messageIds?: string[];
+    sourceChatName?: string;
+    previewText?: string;
+    previewFile?: FileMetadata | null;
+};
+
 export interface Chat {
     otherUser: any;
     id: string;

@@ -1774,7 +1774,7 @@ body,
 
 .message-row {
     display: flex;
-    margin-top: 3px;
+    margin-top: 4px;
     touch-action: pan-y;
     position: relative;
     content-visibility: auto;
@@ -1795,20 +1795,19 @@ body,
 }
 
 .message-row--first {
-    margin-top: 6px;
+    margin-top: 7px;
 }
 
 .message-sender-name {
-    display: flex;
-    align-items: center;
-    height: 1.2em;
+    display: block;
     font-size: 13px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.3;
     margin-bottom: 3px;
     cursor: pointer;
     font-family: 'Vazir', 'AppleEmoji', sans-serif;
     direction: rtl;
+    text-align: left;
 }
 
 .message-bubble {
@@ -5660,12 +5659,35 @@ body[data-music-player='active'] .app {
 }
 
 .message-row--selected {
-    background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-    border-radius: 18px;
+    isolation: isolate;
+    content-visibility: visible;
 }
 
-.message-bubble--selected {
-    box-shadow: 0 0 0 2px var(--accent-primary) !important;
+.message-row--selected::before {
+    content: '';
+    position: absolute;
+    inset: 0 -100px;
+    background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+    pointer-events: none;
+    z-index: -1;
+}
+
+.message-item:has(> .message-row--selected) + .message-item:has(> .message-row--selected) > .message-row--selected {
+    margin-top: 0;
+    padding-top: 4px;
+}
+
+.message-item:has(> .message-row--selected) + .message-item:has(> .message-row--selected) > .message-row--first {
+    padding-top: 7px;
+}
+
+.message-item:has(> .message-row--selected) + .message-item:has(> .message-row--selected) > .chat-room__date-separator {
+    margin-inline: -100px;
+    background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+}
+
+.message-row--selecting {
+    cursor: pointer;
 }
 
 .chat-room__toast {

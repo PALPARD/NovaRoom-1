@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { Components } from 'react-markdown';
-import type { Message, Chat, FileMetadata, AIChatSummary, AIModelKey } from '../types';
+import type { Message, Chat, AIChatSummary, AIModelKey, PendingForwardDraft } from '../types';
 import { ChatMessagesSkeleton } from './ChatMessagesSkeleton';
 import { ForwardModal } from './ForwardModal';
 import { notify } from '../utils/notificationBus';
@@ -29,7 +29,7 @@ interface AIChatRoomProps {
     isReasoningPending?: boolean;
     chats: Chat[];
     onSelectChat?: (chatId: string) => void;
-    onSetPendingForwardDraft?: (targetChatId: string, draft: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }) => void;
+    onSetPendingForwardDraft?: (targetChatId: string, draft: PendingForwardDraft) => void;
     aiChats: AIChatSummary[];
     activeAIChatId: string | null;
     onCreateAIChat: () => void;

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { SendHorizontal, X } from 'lucide-react';
-import type { FileMetadata, MessageReply } from '../types';
+import type { FileMetadata, MessageReply, PendingForwardDraft } from '../types';
 import { apiFetch } from '../config/api';
 import { pendingUploadedFileByChat } from '../utils/pendingUploads';
 import { FileUpload } from './FileUpload';
@@ -31,8 +31,9 @@ type ChatComposerProps = {
     editingId: string | null;
     editDraft: string;
     replyPreviewText: string;
-    pendingForwardDraft: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null } | null;
+    pendingForwardDraft: PendingForwardDraft | null;
     forwardPreviewText: string;
+    forwardPreviewTitle: string;
     uploadFile: ((file: File) => void) | null;
     onSend: (payload: ChatComposerSendPayload) => boolean;
     onCancelReplyEdit: () => void;
@@ -69,6 +70,7 @@ export const ChatComposer = memo(function ChatComposer({
     replyPreviewText,
     pendingForwardDraft,
     forwardPreviewText,
+    forwardPreviewTitle,
     uploadFile,
     onSend,
     onCancelReplyEdit,
@@ -291,7 +293,7 @@ export const ChatComposer = memo(function ChatComposer({
             {pendingForwardDraft && (
                 <div className="chat-room__reply-edit-box">
                     <div style={{ minWidth: 0, flex: 1, textAlign: 'right' }}>
-                        <div className="chat-room__reply-edit-box__title">در حال فوروارد پیام</div>
+                        <div className="chat-room__reply-edit-box__title">{forwardPreviewTitle}</div>
                         <div className="chat-room__reply-edit-box__text">{forwardPreviewText}</div>
                     </div>
                     <button

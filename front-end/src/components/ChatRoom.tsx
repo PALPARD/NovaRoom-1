@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Copy, Eye, MoreVertical, Pencil, Smile, Trash2, X, LogOut, Check, CornerUpLeft, CornerUpRight, ChevronDown, Upload, Download, Pin } from 'lucide-react';
 import { AnimatePresence, motion } from "framer-motion";
-import type { Message, MessageReply as MessageReplyType, User, Chat, FileMetadata, PinnedMessage } from '../types';
+import type { Message, MessageReply as MessageReplyType, User, Chat, FileMetadata, PendingForwardDraft, PinnedMessage } from '../types';
 import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { API_BASE_URL, apiFetch, getMessageSeenBy } from '../config/api';
@@ -28,7 +28,7 @@ import './FileComponents.css';
 
 const persistedTextKeys = new Set<string>();
 const EMPTY_REACTIONS: ReactionEntry[] = [];
-const MAX_SELECTED_MESSAGES = 20;
+const MAX_SELECTED_MESSAGES = 30;
 
 // shortcut: group member cache skips payloads over 200KB; move it to IndexedDB when huge groups show up.
 const groupMemberCacheKey = (chatId: string) => `novaroom:group-members:v1:${chatId}`;
@@ -81,8 +81,8 @@ interface ChatRoomProps {
     onReactMessage?: (chatId: string, messageId: string, emoji: string) => Promise<void>;
     onUnreactMessage?: (chatId: string, messageId: string) => Promise<void>;
     onForwardMessage?: (sourceChatId: string, messageId: string, targetChatId: string) => Promise<void>;
-    pendingForwardDraft?: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null } | null;
-    onSetPendingForwardDraft?: (targetChatId: string, draft: { sourceChatId: string; messageId: string; previewText?: string; previewFile?: FileMetadata | null }) => void;
+    pendingForwardDraft?: PendingForwardDraft | null;
+    onSetPendingForwardDraft?: (targetChatId: string, draft: PendingForwardDraft) => void;
     onClearPendingForwardDraft?: (targetChatId: string) => void;
     typingUserIds?: string[];
     uploadingUserIds?: string[];
@@ -739,6 +739,10 @@ export function ChatRoom({
         return fallbackText ? `${prefix} • ${fallbackText}` : prefix;
     };
 
+    const forwardPreviewTitle = pendingForwardDraft && (pendingForwardDraft.messageIds?.length || 0) > 1
+        ? `فوروارد ${toPersianDigits(pendingForwardDraft.messageIds!.length)} پیام از «${pendingForwardDraft.sourceChatName || 'چت'}»`
+        : 'در حال فوروارد پیام';
+
     const openForwardSource = (m: Message) => {
         const sourceId = m.forwardedFrom?.originalSenderId;
         if (!sourceId) return;
@@ -1091,21 +1095,29 @@ export function ChatRoom({
         return apiFetch('/messages/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, messageId, targetChatId }) });
     }, [onForwardMessage]);
 
-    const handleForwardMessage = useCallback(async (sourceChatId: string, messageId: string, targetChatId: string) => {
+    const handleForwardDraft = useCallback(async () => {
+        const draft = pendingForwardDraft;
+        if (!draft) return;
         if (forwardingInFlightRef.current) return;
         forwardingInFlightRef.current = true;
-        const draftSnapshot = pendingForwardDraft;
-        onClearPendingForwardDraft?.(targetChatId);
+        const ids = draft.messageIds?.length ? draft.messageIds : [draft.messageId];
+        onClearPendingForwardDraft?.(chatId);
         try {
-            await forwardOne(sourceChatId, messageId, targetChatId);
-        } catch (e) {
-            if (draftSnapshot) onSetPendingForwardDraft?.(targetChatId, draftSnapshot);
-            console.error('Failed to forward:', e);
+            const results = await Promise.allSettled(ids.map((id) => forwardOne(draft.sourceChatId, id, chatId)));
+            const failed = results.filter((result) => result.status === 'rejected').length;
+            if (failed === ids.length) {
+                onSetPendingForwardDraft?.(chatId, draft);
+                alert('فوروارد پیام با خطا مواجه شد');
+            } else if (failed > 0) {
+                alert('برخی پیام‌ها فوروارد نشدند');
+            }
+        } catch {
+            onSetPendingForwardDraft?.(chatId, draft);
             alert('فوروارد پیام با خطا مواجه شد');
         } finally {
             forwardingInFlightRef.current = false;
         }
-    }, [pendingForwardDraft, onClearPendingForwardDraft, onSetPendingForwardDraft, forwardOne]);
+    }, [pendingForwardDraft, chatId, onClearPendingForwardDraft, onSetPendingForwardDraft, forwardOne]);
 
     const handleForwardFromModal = async (targetChatId: string) => {
         const idsToForward = forwardingMessageIds.length > 0
@@ -1119,25 +1131,21 @@ export function ChatRoom({
         setForwardingMessageIds([]);
         setSelectedMessageIds([]);
 
-        if (idsToForward.length === 1 && !forwardingMessageIds.length) {
-            const singleId = idsToForward[0];
-            const sourceMessage = messagesById.get(singleId);
-            onSetPendingForwardDraft?.(targetChatId, {
-                sourceChatId: chatId,
-                messageId: singleId,
-                previewText: sourceMessage?.text || '',
-                previewFile: sourceMessage?.file || null,
-            });
-            onSelectChat?.(targetChatId);
-            return;
-        }
-
         const sortedMsgs = messages
             .filter((m) => idsToForward.includes(m.id))
             .sort((a, b) => a.timestamp - b.timestamp);
+        const messageIds = sortedMsgs.map((m) => m.id);
+        if (messageIds.length === 0) return;
 
-        await Promise.allSettled(sortedMsgs.map((msg) => forwardOne(chatId, msg.id, targetChatId)));
-
+        const firstMessage = sortedMsgs[0];
+        onSetPendingForwardDraft?.(targetChatId, {
+            sourceChatId: chatId,
+            messageId: messageIds[0],
+            messageIds: messageIds.length > 1 ? messageIds : undefined,
+            sourceChatName: currentChat?.otherUser?.name || contact.name || '',
+            previewText: firstMessage.text || '',
+            previewFile: messageIds.length === 1 ? (firstMessage.file || null) : null,
+        });
         onSelectChat?.(targetChatId);
     };
 
@@ -1197,7 +1205,7 @@ export function ChatRoom({
         });
     }, [selectedMessageIds, messages, currentUserId, isGroupChat, isVerifiedUser]);
 
-    const canDeleteAnySelected = deletableSelectedIds.length > 0;
+    const canDeleteAnySelected = selectedMessageIds.length > 0 && deletableSelectedIds.length === selectedMessageIds.length;
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -1799,13 +1807,13 @@ export function ChatRoom({
             });
         }
         if (pendingForwardDraft && !editingId) {
-            void handleForwardMessage(pendingForwardDraft.sourceChatId, pendingForwardDraft.messageId, chatId);
+            void handleForwardDraft();
         }
         setReplyTo(null);
         setEditingId(null);
         requestAnimationFrame(() => scrollToBottom(true));
         return true;
-    }, [isContactBlocked, canSendInOfficialChannel, pendingForwardDraft, editingId, onSendMessage, handleForwardMessage, chatId]);
+    }, [isContactBlocked, canSendInOfficialChannel, pendingForwardDraft, editingId, onSendMessage, handleForwardDraft, chatId]);
 
     const handleInputFocus = useCallback(() => {
         window.setTimeout(() => {
@@ -2742,6 +2750,7 @@ export function ChatRoom({
                     replyPreviewText={replyTo ? getReplyPreviewText(replyTo) : ''}
                     pendingForwardDraft={pendingForwardDraft}
                     forwardPreviewText={getForwardPreviewText(pendingForwardDraft)}
+                    forwardPreviewTitle={forwardPreviewTitle}
                     uploadFile={externalFileUploadHandler}
                     onSend={handleComposerSend}
                     onCancelReplyEdit={handleCancelReplyEdit}
