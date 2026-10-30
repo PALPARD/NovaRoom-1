@@ -194,8 +194,8 @@ def normalize_ai_model_key(value: str) -> str:
 
 def ai_model_name_from_key(model_key: str, use_reasoner: bool = False) -> str:
     if normalize_ai_model_key(model_key) == "nova-pro" or use_reasoner:
-        return "deepseek-reasoner"
-    return "deepseek-chat"
+        return "deepseek-v4-pro"
+    return "deepseek-flash"
 
 
 def ai_model_label_from_key(model_key: str) -> str:
