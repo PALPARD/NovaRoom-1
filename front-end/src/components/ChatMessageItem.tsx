@@ -148,8 +148,12 @@ const markdownComponents: Components = {
     ),
 };
 
+const MARKDOWN_TRIGGER_RE = /[#*`\[$>\\_\-\d+]/;
+const MARKDOWN_SYNTAX_RE = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)|(```|`[^`]+`|\[[^\]]+]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|\$\$?[\s\S]+?\$\$?|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/m;
+
 function hasMarkdownSyntax(text: string): boolean {
-    return /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)|(```|`[^`]+`|\[[^\]]+]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|\$\$?[\s\S]+?\$\$?|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/m.test(text);
+    if (!MARKDOWN_TRIGGER_RE.test(text)) return false;
+    return MARKDOWN_SYNTAX_RE.test(text);
 }
 
 function renderTextWithLinks(text: string): React.ReactNode {

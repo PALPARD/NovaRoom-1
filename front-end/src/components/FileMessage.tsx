@@ -21,6 +21,29 @@ type DownloadTask = {
 };
 const fileDownloadTasks = new Map<string, DownloadTask>();
 
+const MAX_CONCURRENT_DOWNLOADS = 2;
+let activeDownloadCount = 0;
+const downloadQueue: Array<() => void> = [];
+
+const acquireDownloadSlot = (): Promise<void> => {
+  if (activeDownloadCount < MAX_CONCURRENT_DOWNLOADS) {
+    activeDownloadCount += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    downloadQueue.push(resolve);
+  });
+};
+
+const releaseDownloadSlot = (): void => {
+  const next = downloadQueue.shift();
+  if (next) {
+    next();
+  } else {
+    activeDownloadCount = Math.max(0, activeDownloadCount - 1);
+  }
+};
+
 const visibilityCallbacks = new WeakMap<Element, (visible: boolean) => void>();
 let sharedVisibilityObserver: IntersectionObserver | null = null;
 const observeVisibility = (el: Element, cb: (visible: boolean) => void) => {
@@ -99,10 +122,12 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
       task.abortController = new AbortController();
       task.state = 'downloading'; task.progress = 6; notify(task);
       task.promise = (async () => {
+        await acquireDownloadSlot();
         const progressTimer = window.setInterval(() => {
           task!.progress = Math.min(92, task!.progress + 4); notify(task!);
         }, 180);
         try {
+          if (task!.abortController?.signal.aborted) throw new Error('aborted');
           const res = await fetch(`${API_BASE_URL}/files/${file.fileId}`, { headers: { Authorization: `Bearer ${token}` }, signal: task!.abortController?.signal });
           if (!res.ok) throw new Error('download failed');
           window.clearInterval(progressTimer);
@@ -117,6 +142,7 @@ export function FileMessage({ file, token, chatId, onMediaLoad, onMediaError, on
           window.clearInterval(progressTimer);
           task!.state = task!.abortController?.signal.aborted ? 'idle' : 'error'; notify(task!);
         } finally {
+          releaseDownloadSlot();
           task!.promise = null;
           task!.abortController = null;
         }

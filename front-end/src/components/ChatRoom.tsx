@@ -16,7 +16,7 @@ import { ImageMediaViewer } from './ImageMediaViewer';
 import { VideoMediaViewer } from './VideoMediaViewer';
 import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { screenVariants } from '../utils/screenMotion';
-import { cacheTextValue, deleteCachedBlob, deleteCachedText, getCachedBlob, getCachedTextValue, getOrCacheBlob } from '../utils/mediaCache';
+import { deleteCachedBlob, getCachedBlob, getOrCacheBlob } from '../utils/mediaCache';
 import { pendingUploadedFileByChat } from '../utils/pendingUploads';
 import { formatDayLabel, formatLastSeen, formatMessageTime, messageDayKey, resolveVerified, toPersianDigits } from '../utils/format';
 import { copyText } from '../utils/clipboard';
@@ -26,7 +26,6 @@ import { ChatComposer, type ChatComposerSendPayload } from './ChatComposer';
 import { GroupMembersView, type GroupMember } from './GroupMembersView';
 import './FileComponents.css';
 
-const persistedTextKeys = new Set<string>();
 const EMPTY_REACTIONS: ReactionEntry[] = [];
 const MAX_SELECTED_MESSAGES = 30;
 
@@ -325,7 +324,6 @@ export function ChatRoom({
     const messagesContainerRef = useRef<HTMLDivElement | null>(null);
     const roomRef = useRef<HTMLDivElement | null>(null);
     const topSentinelRef = useRef<HTMLDivElement | null>(null);
-    const hydratedMessageIdsRef = useRef<Set<string>>(new Set());
 
     const messageElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
     const unreadSeparatorRef = useRef<HTMLDivElement | null>(null);
@@ -344,7 +342,7 @@ export function ChatRoom({
     const [chatStats, setChatStats] = useState<{ totalMembers: number; onlineMembers: number } | null>(null);
     const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember>>(() => (isGroupChat ? readCachedGroupMembers(chatId) : {}));
     const groupMembersSnapshotRef = useRef<Record<string, GroupMember> | null>(null);
-    const [membersResolved, setMembersResolved] = useState(false);
+    const [membersResolved, setMembersResolved] = useState<boolean>(() => !isGroupChat || Object.keys(readCachedGroupMembers(chatId)).length > 0);
     const [membersLoading, setMembersLoading] = useState(false);
     const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
     const [showMembersList, setShowMembersList] = useState(false);
@@ -443,8 +441,6 @@ export function ChatRoom({
         }
     }, [location.search, openedImage, openedVideo]);
     
-    const [cachedTextByMessageId, setCachedTextByMessageId] = useState<Record<string, string>>({});
-
     const autoJumpedToUnreadRef = useRef(false);
     const userScrolledAfterAutoJumpRef = useRef(false);
     const programmaticScrollEventsRef = useRef(0);
@@ -485,7 +481,7 @@ export function ChatRoom({
     const handleInitialMediaReady = (messageId: string) => {
         
         if (!shouldPreserveExactScroll() && isAtBottomRef.current && !userHasScrolledRef.current) {
-            requestAnimationFrame(() => scrollToBottom(true));
+            requestAnimationFrame(() => scrollToBottom(false));
         }
         if (restoringFromInfoRef.current && restoreTopAfterInfoRef.current !== null) {
             const container = messagesContainerRef.current;
@@ -495,7 +491,7 @@ export function ChatRoom({
             }
         }
         if (restoringFromInfoRef.current && restoreBottomAfterInfoRef.current) {
-            scrollToBottom(true);
+            scrollToBottom(false);
             restoreBottomAfterInfoRef.current = false;
             restoringFromInfoRef.current = false;
         }
@@ -527,7 +523,7 @@ export function ChatRoom({
                         return;
                     }
                 }
-                scrollToBottom(true);
+                scrollToBottom(false);
             });
         }
     };
@@ -550,9 +546,7 @@ export function ChatRoom({
             return;
         }
         markProgrammaticScroll();
-        for (let pass = 0; pass < 3; pass += 1) {
-            container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        }
+        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         isAtBottomRef.current = true;
     };
 
@@ -842,7 +836,16 @@ export function ChatRoom({
         if (!isGroupChat) {
             setGroupMembers((prev) => (Object.keys(prev).length === 0 ? prev : {}));
             setMembersLoading((prev) => (prev ? false : prev));
+            setMembersResolved(true);
             return;
+        }
+        const cached = readCachedGroupMembers(chatId);
+        if (Object.keys(cached).length > 0) {
+            groupMembersSnapshotRef.current = cached;
+            setGroupMembers((prev) => (membersEqual(prev, cached) ? prev : cached));
+            setMembersResolved(true);
+        } else {
+            setMembersResolved(false);
         }
         let cancelled = false;
         let initialLoad = true;
@@ -1226,7 +1229,7 @@ export function ChatRoom({
 
         const textLines = selectedMsgs
             .map((m) => {
-                const raw = cachedTextByMessageId[m.id] ?? m.text ?? '';
+                const raw = m.text ?? '';
                 if (raw.trim()) return raw.trim();
                 if (m.file?.fileName) return `[فایل: ${m.file.fileName}]`;
                 return '';
@@ -1297,46 +1300,6 @@ export function ChatRoom({
     const handleRegisterUploadFile = useCallback((handler: ((file: File) => void) | null) => {
         setExternalFileUploadHandler(() => handler);
     }, []);
-
-    useEffect(() => {
-        let cancelled = false;
-        if (persistedTextKeys.size > 2000) persistedTextKeys.clear();
-        const pendingIds: string[] = [];
-        for (const message of messages) {
-            if (!message?.id) continue;
-            const cacheKey = `chat:${chatId}:message:${message.id}:text`;
-            if (typeof message.text === 'string' && message.text.length > 0) {
-                if (!persistedTextKeys.has(cacheKey)) {
-                    persistedTextKeys.add(cacheKey);
-                    void cacheTextValue(cacheKey, message.text);
-                }
-                continue;
-            }
-            if (hydratedMessageIdsRef.current.has(message.id)) continue;
-            hydratedMessageIdsRef.current.add(message.id);
-            pendingIds.push(message.id);
-        }
-        if (pendingIds.length === 0) return;
-        const updates: Record<string, string> = {};
-        void Promise.all(pendingIds.map(async (messageId) => {
-            const cached = await getCachedTextValue(`chat:${chatId}:message:${messageId}:text`);
-            if (cached != null) updates[messageId] = cached;
-        })).then(() => {
-            if (cancelled) return;
-            if (Object.keys(updates).length === 0) return;
-            setCachedTextByMessageId((prev) => {
-                let changed = false;
-                for (const key of Object.keys(updates)) {
-                    if (prev[key] !== updates[key]) {
-                        changed = true;
-                        break;
-                    }
-                }
-                return changed ? { ...prev, ...updates } : prev;
-            });
-        });
-        return () => { cancelled = true; };
-    }, [chatId, messages]);
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
@@ -1436,27 +1399,14 @@ export function ChatRoom({
         if (!chatContentReady || loading || messages.length === 0) return;
         if (userHasScrolledRef.current) return;
         if (displayUnreadCount > 0 || unreadAnchorId || autoJumpedToUnreadRef.current) return;
-        let raf = 0;
-        let frames = 0;
-        let lastHeight = -1;
-        let stableFrames = 0;
-        const step = () => {
+        const raf = requestAnimationFrame(() => {
             const container = messagesContainerRef.current;
             if (!container) return;
             const mem = scrollMemoryRef.current[chatId];
             if (userHasScrolledRef.current || (mem && mem.userInteracted && !mem.atBottom)) return;
-            if (container.scrollHeight !== lastHeight) {
-                lastHeight = container.scrollHeight;
-                container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-                stableFrames = 0;
-            } else {
-                stableFrames += 1;
-            }
-            frames += 1;
-            if (stableFrames >= 2 || frames >= 10) return;
-            raf = requestAnimationFrame(step);
-        };
-        raf = requestAnimationFrame(step);
+            markProgrammaticScroll();
+            container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        });
         return () => cancelAnimationFrame(raf);
     }, [chatId, chatContentReady, loading, messages.length, displayUnreadCount, unreadAnchorId]);
 
@@ -2029,7 +1979,7 @@ export function ChatRoom({
     };
 
     const beginReply = (m: Message, withHaptic = false) => {
-        setReplyTo({ id: m.id, senderId: m.senderId, text: cachedTextByMessageId[m.id] ?? m.text });
+        setReplyTo({ id: m.id, senderId: m.senderId, text: m.text });
         setEditingId(null); setMsgMenu(null); setReactionMenu(null); setSeenByMenu(null);
         if (withHaptic) triggerHaptic();
     };
@@ -2046,7 +1996,6 @@ export function ChatRoom({
 
     const cleanupMessageCache = (messageId: string) => {
         const msg = messagesById.get(messageId);
-        void deleteCachedText(`chat:${chatId}:message:${messageId}:text`);
         if (msg?.file?.fileId) void deleteCachedBlob(`chat:${chatId}:file:${msg.file.fileId}`);
     };
 
@@ -2146,7 +2095,7 @@ export function ChatRoom({
             <ChatMessageItem
                 key={m.id}
                 message={m}
-                displayText={cachedTextByMessageId[m.id] ?? m.text}
+                displayText={m.text}
                 isMine={isMine}
                 isGroupChat={isGroupChat}
                 isOfficialChannel={isOfficialChannel}
@@ -2195,7 +2144,6 @@ export function ChatRoom({
         groupMembers,
         membersResolved,
         messagesById,
-        cachedTextByMessageId,
         token,
         chatId,
         reasoningPanelByMessage,
@@ -2872,7 +2820,7 @@ export function ChatRoom({
                     blockedMessage={isUserBlocked?.(contact) ? 'شما این کاربر را بلاک کرده‌اید.' : 'این کاربر شما را بلاک کرده است.'}
                     replyTo={replyTo}
                     editingId={editingId}
-                    editDraft={editingId ? (cachedTextByMessageId[editingId] ?? messagesById.get(editingId)?.text ?? '') : ''}
+                    editDraft={editingId ? (messagesById.get(editingId)?.text ?? '') : ''}
                     replyPreviewText={replyTo ? getReplyPreviewText(replyTo) : ''}
                     pendingForwardDraft={pendingForwardDraft}
                     forwardPreviewText={getForwardPreviewText(pendingForwardDraft)}

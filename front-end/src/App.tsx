@@ -37,13 +37,60 @@ const normalizeTimestamp = (ts: unknown): number => {
     return Date.now();
 };
 
+const areReactionsEqual = (a?: Message['reactions'], b?: Message['reactions']): boolean => {
+    if (a === b) return true;
+    const listA = Array.isArray(a) ? a : [];
+    const listB = Array.isArray(b) ? b : [];
+    if (listA.length !== listB.length) return false;
+    for (let i = 0; i < listA.length; i += 1) {
+        const rA = listA[i] as any;
+        const rB = listB[i] as any;
+        if (rA?.emoji !== rB?.emoji || rA?.count !== rB?.count || rA?.userId !== rB?.userId) return false;
+        const uA = Array.isArray(rA?.userIds) ? rA.userIds : [];
+        const uB = Array.isArray(rB?.userIds) ? rB.userIds : [];
+        if (uA.length !== uB.length) return false;
+        for (let j = 0; j < uA.length; j += 1) {
+            if (uA[j] !== uB[j]) return false;
+        }
+    }
+    return true;
+};
+
+const isSameMessageRecord = (prev: Message, next: Message): boolean => {
+    if (prev === next) return true;
+    return (
+        prev.id === next.id &&
+        prev.text === next.text &&
+        prev.senderId === next.senderId &&
+        normalizeTimestamp(prev.timestamp) === normalizeTimestamp(next.timestamp) &&
+        Boolean(prev.seen) === Boolean(next.seen) &&
+        Number((prev as any).seenCount || 0) === Number((next as any).seenCount || 0) &&
+        Boolean(prev.edited) === Boolean(next.edited) &&
+        (prev as any).editedAt === (next as any).editedAt &&
+        prev.deliveryStatus === next.deliveryStatus &&
+        prev.file?.fileId === next.file?.fileId &&
+        prev.file?.fileName === next.file?.fileName &&
+        prev.file?.previewUrl === next.file?.previewUrl &&
+        prev.file?.coverArtUrl === next.file?.coverArtUrl &&
+        prev.replyTo?.id === next.replyTo?.id &&
+        prev.replyTo?.text === next.replyTo?.text &&
+        prev.forwardedFrom?.originalSenderId === next.forwardedFrom?.originalSenderId &&
+        areReactionsEqual(prev.reactions, next.reactions)
+    );
+};
+
 const mergeMessages = (base: Message[], incoming: Message[], mode: 'replace' | 'prepend' | 'append'): Message[] => {
     const byId = new Map<string, Message>();
+    const baseById = new Map(base.map((m) => [m.id, m]));
     const incomingClientIds = new Set(incoming.map((m) => String((m as any).clientId || '')).filter(Boolean));
+    const setMerged = (m: Message) => {
+        const prev = baseById.get(m.id);
+        byId.set(m.id, prev && isSameMessageRecord(prev, m) ? prev : m);
+    };
 
     if (mode === 'replace') {
         for (const m of incoming) {
-            byId.set(m.id, m);
+            setMerged(m);
         }
         for (const pending of base) {
             const isPendingSend = pending.deliveryStatus === 'sending';
@@ -76,19 +123,23 @@ const mergeMessages = (base: Message[], incoming: Message[], mode: 'replace' | '
             if (byId.has(m.id)) {
                 const existing = byId.get(m.id)!;
                 if (existing.deliveryStatus === 'sending' && m.deliveryStatus !== 'sending') {
-                    byId.set(m.id, m);
+                    setMerged(m);
                 }
             } else {
-                byId.set(m.id, m);
+                setMerged(m);
             }
         }
     }
 
-    return Array.from(byId.values()).sort((a, b) => {
+    const sorted = Array.from(byId.values()).sort((a, b) => {
         const tsDiff = normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp);
         if (tsDiff !== 0) return tsDiff;
         return String(a.id || '').localeCompare(String(b.id || ''));
     });
+    if (sorted.length === base.length && sorted.every((item, idx) => item === base[idx])) {
+        return base;
+    }
+    return sorted;
 };
 
 export function App() {
@@ -116,6 +167,7 @@ export function App() {
     const [chats, setChats] = useState<Chat[]>([]);
     const [messages, setMessages] = useState<Record<string, Message[]>>({});
     const messagesRef = useRef<Record<string, Message[]>>({});
+    const recentChatIdsRef = useRef<string[]>([]);
     useEffect(() => {
         messagesRef.current = messages;
     }, [messages]);
@@ -1443,7 +1495,9 @@ export function App() {
         );
 
         setMessages((prev) => {
-            const merged = mergeMessages(prev[chatId] || [], chunk, mode);
+            const existing = prev[chatId] || [];
+            const merged = mergeMessages(existing, chunk, mode);
+            if (merged === existing && prev[chatId]) return prev;
             return { ...prev, [chatId]: merged };
         });
 
@@ -2330,22 +2384,52 @@ export function App() {
     }, []);
     const disposeChatSession = useCallback((chatId: string | null) => {
         if (!chatId) return;
-        setMessages((prev) => {
-            const { [chatId]: _, ...rest } = prev;
-            return rest;
-        });
-        setMessagesLoadedOnce((prev) => {
-            const { [chatId]: _, ...rest } = prev;
-            return rest;
-        });
         setMessagesLoading((prev) => {
+            if (!prev[chatId]) return prev;
             const { [chatId]: _, ...rest } = prev;
             return rest;
         });
-        setMessageRangeState((prev) => {
-            const { [chatId]: _, ...rest } = prev;
-            return rest;
+        const nextRecent = [...recentChatIdsRef.current.filter((id) => id !== chatId), chatId];
+        const evictedIds = nextRecent.length > 10 ? nextRecent.slice(0, nextRecent.length - 10) : [];
+        recentChatIdsRef.current = nextRecent.slice(-10);
+        const willTrim = (messagesRef.current[chatId]?.length ?? 0) > MESSAGE_PAGE_SIZE;
+
+        setMessages((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            const currentList = next[chatId];
+            if (currentList && currentList.length > MESSAGE_PAGE_SIZE) {
+                next[chatId] = currentList.slice(-MESSAGE_PAGE_SIZE);
+                changed = true;
+            }
+            for (const evictId of evictedIds) {
+                if (evictId in next) {
+                    delete next[evictId];
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
         });
+
+        if (evictedIds.length > 0) {
+            setMessagesLoadedOnce((prev) => {
+                const next = { ...prev };
+                evictedIds.forEach((id) => delete next[id]);
+                return next;
+            });
+            setMessageRangeState((prev) => {
+                const next = { ...prev };
+                evictedIds.forEach((id) => delete next[id]);
+                return next;
+            });
+        }
+        if (willTrim) {
+            setMessageRangeState((prev) => {
+                if (!prev[chatId]) return prev;
+                const { [chatId]: _, ...rest } = prev;
+                return rest;
+            });
+        }
     }, []);
     const handleBack = () => {
         if (temporaryAIChat && activeAIChatId && !aiResponding) {

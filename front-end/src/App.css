@@ -1777,8 +1777,6 @@ body,
     margin-top: 4px;
     touch-action: pan-y;
     position: relative;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 68px;
 }
 
 .message-row--mine {
