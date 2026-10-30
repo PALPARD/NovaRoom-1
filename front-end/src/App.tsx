@@ -148,7 +148,7 @@ export function App() {
     const [uploadingUserIdsByChat, setUploadingUserIdsByChat] = useState<Record<string, string[]>>({});
     const [blockedChatIds, setBlockedChatIds] = useState<string[]>([]);
     const typingTimeoutsRef = useRef<Record<string, number>>({});
-    const userPresenceRef = useRef<Record<string, { online: boolean; updatedAt: number }>>({});
+    const userPresenceRef = useRef<Record<string, { online: boolean; updatedAt: number; lastSeen?: number | null }>>({});
     const presenceOfflineGraceTimersRef = useRef<Record<string, number>>({});
     const realtimeRecoveryInFlightRef = useRef(false);
 
@@ -243,6 +243,26 @@ export function App() {
     const lastSeenAckMessageIdRef = useRef<Record<string, string>>({});
     const playedSendSoundIdsRef = useRef<Set<string>>(new Set());
     const lastReceiveSoundMessageRef = useRef<Record<string, string>>({});
+    const interactiveOnlineTimersRef = useRef<Record<string, number>>({});
+    const [interactiveOnlineUsers, setInteractiveOnlineUsers] = useState<Record<string, number>>({});
+
+    const touchInteractiveUser = useCallback((userId?: string) => {
+        const id = String(userId || '').trim();
+        if (!id || id === String(currentUser?.chatId || '').trim()) return;
+        if (interactiveOnlineTimersRef.current[id]) {
+            window.clearTimeout(interactiveOnlineTimersRef.current[id]);
+        }
+        const expiresAt = Date.now() + 6000;
+        setInteractiveOnlineUsers((prev) => ({ ...prev, [id]: expiresAt }));
+        interactiveOnlineTimersRef.current[id] = window.setTimeout(() => {
+            setInteractiveOnlineUsers((prev) => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+            delete interactiveOnlineTimersRef.current[id];
+        }, 6000);
+    }, [currentUser?.chatId]);
 
     const chatLoadRequestRef = useRef(0);
     const aiSendInFlightRef = useRef(false);
@@ -657,6 +677,8 @@ export function App() {
             return;
         }
 
+        touchInteractiveUser(userId);
+
         setTypingUserIdsByChat((prev) => {
             const chatUsers = prev[chatId] || [];
             if (chatUsers.includes(userId)) return prev;
@@ -674,6 +696,10 @@ export function App() {
     const handleUploadStatus = useCallback((chatId: string, userId: string, isUploading: boolean) => {
         if (!chatId || !userId) return;
         if (currentUser?.chatId && userId === currentUser.chatId) return;
+
+        if (isUploading) {
+            touchInteractiveUser(userId);
+        }
 
         setUploadingUserIdsByChat((prev) => {
             const chatUsers = prev[chatId] || [];
@@ -694,6 +720,10 @@ export function App() {
 
     
     const handleNewMessage = useCallback((chatId: string, newMsg: Message) => {
+        if (newMsg?.senderId) {
+            touchInteractiveUser(newMsg.senderId);
+        }
+
         const currentMessages = messagesRef.current[chatId] || [];
         
         let isDuplicateMessage = false;
@@ -1009,14 +1039,18 @@ export function App() {
         }
     }, [messages, authToken]);
 
-    const handleUserStatusChange = useCallback((userId: string, online: boolean) => {
+    const handleUserStatusChange = useCallback((userId: string, online: boolean, lastSeen?: number | null) => {
         const normalizedUserId = String(userId || '').trim();
         if (!normalizedUserId) return;
         const now = Date.now();
         const prevPresence = userPresenceRef.current[normalizedUserId];
         const prevOnline = prevPresence?.online;
         const setPresence = (nextOnline: boolean) => {
-            userPresenceRef.current[normalizedUserId] = { online: nextOnline, updatedAt: Date.now() };
+            userPresenceRef.current[normalizedUserId] = {
+                online: nextOnline,
+                updatedAt: Date.now(),
+                lastSeen: typeof lastSeen === 'number' ? lastSeen : prevPresence?.lastSeen,
+            };
         };
         if (presenceOfflineGraceTimersRef.current[normalizedUserId]) {
             window.clearTimeout(presenceOfflineGraceTimersRef.current[normalizedUserId]);
@@ -1036,7 +1070,14 @@ export function App() {
                         ...participantIds,
                     ].filter(Boolean);
                     if (!candidateIds.includes(normalizedUserId)) return chat;
-                    return { ...chat, otherUser: { ...ou, online: false } };
+                    return {
+                        ...chat,
+                        otherUser: {
+                            ...ou,
+                            online: false,
+                            lastSeen: typeof lastSeen === 'number' ? lastSeen : (ou.lastSeen || Date.now()),
+                        },
+                    };
                 }));
                 delete presenceOfflineGraceTimersRef.current[normalizedUserId];
             }, 3200);
@@ -1058,13 +1099,23 @@ export function App() {
                 if (blockedByMe || blockedByOther) {
                     return { ...chat, otherUser: { ...chat.otherUser, online: false } };
                 }
-                return { ...chat, otherUser: { ...chat.otherUser, online: Boolean(online) } };
+                return {
+                    ...chat,
+                    otherUser: {
+                        ...chat.otherUser,
+                        online: Boolean(online),
+                        lastSeen: typeof lastSeen === 'number' ? lastSeen : chat.otherUser?.lastSeen,
+                    },
+                };
             }
             return chat;
         }));
     }, []);
 
     const handleMessagesSeen = useCallback((chatId: string, byUserId?: string) => {
+        if (byUserId) {
+            touchInteractiveUser(byUserId);
+        }
         if (chatId === 'official-channel' && byUserId) {
             setMessages(prev => {
                 const list = prev[chatId];
@@ -1736,6 +1787,10 @@ export function App() {
         }
         if (pathname === '/settings/theme') {
             setView('settingsTheme');
+            return;
+        }
+        if (pathname === '/settings/privacy') {
+            setView('settingsPrivacy');
             return;
         }
         if (pathname === '/settings/data-storage') {
@@ -2613,6 +2668,8 @@ export function App() {
                 avatar: chat.otherUser.avatar ?? '',
                 bio: chat.otherUser.bio ?? '',
                 online: Boolean(chat.otherUser.online),
+                lastSeen: (chat.otherUser as any)?.lastSeen,
+                lastSeenCategory: (chat.otherUser as any)?.lastSeenCategory,
                 verified: Boolean((chat.otherUser as any)?.verified),
                 registrationDate: (chat.otherUser as any)?.registrationDate,
                 ...(typeof (chat.otherUser as any)?.blockedByMe !== 'undefined' ? { blockedByMe: Boolean((chat.otherUser as any)?.blockedByMe) } : {}),
@@ -2722,6 +2779,7 @@ export function App() {
                             activeChatId={activeChatId}
                             wsConnected={wsConnected}
                             wsReconnectExhausted={wsReconnectExhausted}
+                            interactiveOnlineUsers={interactiveOnlineUsers}
                             onSelectChat={handleSelectChat}
                             onNewChatClick={handleNewChatClick}
                             onLogout={handleLogout}
@@ -2831,11 +2889,13 @@ export function App() {
                             <>
                                 <Settings
                                     key={view}
-                                    section={view === 'settingsDevices' ? 'devices' : view === 'settingsTheme' ? 'theme' : view === 'settingsLogs' ? 'logs' : view === 'settingsDataStorage' ? 'dataStorage' : 'menu'}
-                                    onOpenSection={(section) => navigate(section === 'logs' ? '/settings/devices/logs' : section === 'dataStorage' ? '/settings/data-storage' : `/settings/${section}`)}
+                                    section={view === 'settingsDevices' ? 'devices' : view === 'settingsTheme' ? 'theme' : view === 'settingsLogs' ? 'logs' : view === 'settingsDataStorage' ? 'dataStorage' : view === 'settingsPrivacy' ? 'privacy' : 'menu'}
+                                    onOpenSection={(section) => navigate(section === 'logs' ? '/settings/devices/logs' : section === 'dataStorage' ? '/settings/data-storage' : section === 'privacy' ? '/settings/privacy' : `/settings/${section}`)}
                                     onBackToMenu={() => navigate('/settings')}
                                     loginEvents={loginEvents}
                                     hasUnseenLoginLogs={unseenLoginCount > 0}
+                                    currentUser={currentUser}
+                                    onUpdateCurrentUser={(updates) => setCurrentUser((prev) => prev ? { ...prev, ...updates } : prev)}
                                 />
                                 {view === 'settings' && (
                                     <BottomNavbar
@@ -2854,6 +2914,7 @@ export function App() {
                                 messages={activeMessages}
                                 currentUserId={currentUser!.chatId}
                                 currentUser={currentUser}
+                                interactiveOnlineUsers={interactiveOnlineUsers}
                                 onSendMessage={handleSendMessage}
                                 onDeleteMessage={handleDeleteMessage}
                                 onBack={handleBack}

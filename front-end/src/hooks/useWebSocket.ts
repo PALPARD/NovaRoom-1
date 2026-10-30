@@ -9,7 +9,7 @@ interface UseWebSocketProps {
     onNewMessage: (chatId: string, message: any) => void;
     onMessageEdited?: (chatId: string, message: any) => void;
     onMessageDeleted?: (chatId: string, messageId: string, lastMessage?: any) => void;
-    onUserStatusChange?: (userId: string, online: boolean) => void;
+    onUserStatusChange?: (userId: string, online: boolean, lastSeen?: number | null) => void;
     onMessagesSeen?: (chatId: string, byUserId?: string) => void;
     onReactionUpdated?: (chatId: string, messageId: string, reactions: any[]) => void;
     onTypingStatus?: (chatId: string, userId: string, isTyping: boolean) => void;
@@ -40,7 +40,8 @@ type OutgoingEvent =
     | { type: 'upload_status'; chatId: string; isUploading: boolean }
     | { type: 'ai_message'; text: string; aiChatId: string; clientId?: string; useReasoner?: boolean; modelKey?: 'nova-flash' | 'nova-pro' }
     | { type: 'ai_stop' }
-    | { type: 'ping' };
+    | { type: 'ping' }
+    | { type: 'pong' };
 
 const WS_RECONNECT_DELAY_MS = 1500;
 const WS_PONG_TIMEOUT_MS = 45000;
@@ -250,8 +251,13 @@ export function useWebSocket({
                         ?? data.payload?.is_online
                         ?? (rawStatus ? rawStatus === 'online' : undefined)
                     );
+                    const resolvedLastSeen = typeof data.lastSeen === 'number'
+                        ? data.lastSeen
+                        : typeof data.payload?.lastSeen === 'number'
+                        ? data.payload?.lastSeen
+                        : undefined;
                     if (resolvedUserId) {
-                        onUserStatusChangeRef.current?.(resolvedUserId, resolvedOnline);
+                        onUserStatusChangeRef.current?.(resolvedUserId, resolvedOnline, resolvedLastSeen);
                     }
                 } else if (dataType === 'messages_seen') {
                     const resolvedChatId = String(resolvedChatIdFromPayload || '').trim();
@@ -311,6 +317,9 @@ export function useWebSocket({
                     });
                 } else if (data.type === 'block_status_changed') {
                     window.dispatchEvent(new Event('novaroom:block_status_changed'));
+                } else if (data.type === 'ping') {
+                    lastPongAtRef.current = Date.now();
+                    send({ type: 'pong' });
                 } else if (data.type === 'pong') {
                     lastPongAtRef.current = Date.now();
                 } else if (data.type === 'error' && data.requestId) {

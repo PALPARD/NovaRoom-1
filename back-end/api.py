@@ -496,20 +496,88 @@ def dt_to_epoch_ms(dt: Any) -> int:
 def resolve_user_online_state(user_doc: Optional[Dict[str, Any]]) -> bool:
     if not user_doc:
         return False
-    if bool(user_doc.get("online")):
-        return True
-    try:
-        return int(user_doc.get("wsConnectionCount", 0)) > 0
-    except Exception:
-        return False
+    chat_id = user_doc.get("chatId")
+    if chat_id:
+        conns = active_connections.get(chat_id, [])
+        alive = [ws for ws in conns if ws.client_state == WebSocketState.CONNECTED]
+        if alive:
+            return True
+        if not conns and not alive:
+            return False
+    return bool(user_doc.get("online"))
+
+
+def resolve_user_presence_for_viewer(
+    viewer_user: Optional[Dict[str, Any]],
+    target_user: Optional[Dict[str, Any]],
+    blocked: bool = False,
+) -> Dict[str, Any]:
+    if not target_user:
+        return {"online": False, "lastSeen": None, "lastSeenCategory": None}
+
+    if blocked:
+        return {"online": False, "lastSeen": None, "lastSeenCategory": "long_time_ago"}
+
+    viewer_id = str((viewer_user or {}).get("chatId") or "")
+    target_id = str(target_user.get("chatId") or "")
+    target_actual_online = resolve_user_online_state(target_user)
+    target_last_seen = target_user.get("lastSeen")
+
+    if viewer_id and target_id and viewer_id == target_id:
+        return {
+            "online": target_actual_online,
+            "lastSeen": dt_to_epoch_ms(target_last_seen) if target_last_seen else None,
+            "lastSeenCategory": None,
+        }
+
+    viewer_settings = (viewer_user or {}).get("settings") or {}
+    target_settings = target_user.get("settings") or {}
+    viewer_hide = bool(viewer_settings.get("hideOnlineStatus", False))
+    target_hide = bool(target_settings.get("hideOnlineStatus", False))
+
+    if viewer_hide or target_hide:
+        now = utc_now()
+        ref_dt = now if target_actual_online else target_last_seen
+        category = "recently"
+        if ref_dt:
+            if not isinstance(ref_dt, datetime):
+                try:
+                    ref_dt = datetime.fromtimestamp(float(ref_dt) / 1000.0, tz=timezone.utc)
+                except Exception:
+                    ref_dt = now
+            elif ref_dt.tzinfo is None:
+                ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+            else:
+                ref_dt = ref_dt.astimezone(timezone.utc)
+            diff_seconds = max(0.0, (now - ref_dt).total_seconds())
+            if diff_seconds < 4 * 86400:
+                category = "recently"
+            elif diff_seconds < 14 * 86400:
+                category = "within_week"
+            elif diff_seconds < 30 * 86400:
+                category = "within_month"
+            else:
+                category = "long_time_ago"
+        return {
+            "online": False,
+            "lastSeen": None,
+            "lastSeenCategory": category,
+        }
+
+    return {
+        "online": target_actual_online,
+        "lastSeen": dt_to_epoch_ms(target_last_seen) if target_last_seen else None,
+        "lastSeenCategory": None,
+    }
 
 
 async def mark_user_connected(user_id: str) -> bool:
     if not user_id:
         return False
+    alive_count = len([ws for ws in active_connections.get(user_id, []) if ws.client_state == WebSocketState.CONNECTED])
     prev = await cl_users.find_one_and_update(
         {"chatId": user_id},
-        {"$inc": {"wsConnectionCount": 1}, "$set": {"online": True}},
+        {"$set": {"online": True, "wsConnectionCount": max(1, alive_count)}},
         return_document=ReturnDocument.BEFORE,
         projection={"online": 1, "wsConnectionCount": 1},
     )
@@ -520,23 +588,17 @@ async def mark_user_connected(user_id: str) -> bool:
 async def mark_user_disconnected(user_id: str) -> bool:
     if not user_id:
         return False
-    after = await cl_users.find_one_and_update(
-        {"chatId": user_id},
-        {"$inc": {"wsConnectionCount": -1}},
-        return_document=ReturnDocument.AFTER,
-        projection={"wsConnectionCount": 1, "online": 1},
-    )
-    current_count = 0
-    if after:
-        try:
-            current_count = int(after.get("wsConnectionCount", 0))
-        except Exception:
-            current_count = 0
-    if current_count > 0:
+    alive_count = len([ws for ws in active_connections.get(user_id, []) if ws.client_state == WebSocketState.CONNECTED])
+    if alive_count > 0:
+        await cl_users.update_one(
+            {"chatId": user_id},
+            {"$set": {"online": True, "wsConnectionCount": alive_count}},
+        )
         return False
+    active_connections.pop(user_id, None)
     await cl_users.update_one(
         {"chatId": user_id},
-        {"$set": {"online": False, "wsConnectionCount": 0}},
+        {"$set": {"online": False, "wsConnectionCount": 0, "lastSeen": utc_now()}},
     )
     return True
 
@@ -544,12 +606,14 @@ async def mark_user_disconnected(user_id: str) -> bool:
 async def force_user_offline(user_id: str) -> bool:
     if not user_id:
         return False
+    active_connections.pop(user_id, None)
     prev = await cl_users.find_one(
         {"chatId": user_id}, {"online": 1, "wsConnectionCount": 1}
     )
     was_online = resolve_user_online_state(prev)
     await cl_users.update_one(
-        {"chatId": user_id}, {"$set": {"online": False, "wsConnectionCount": 0}}
+        {"chatId": user_id},
+        {"$set": {"online": False, "wsConnectionCount": 0, "lastSeen": utc_now()}},
     )
     return bool(was_online)
 
@@ -625,6 +689,8 @@ class UserSearchResult(BaseModel):
     avatar: str
     bio: str
     online: bool
+    lastSeen: Optional[int] = None
+    lastSeenCategory: Optional[str] = None
     verified: bool = False
     registrationDate: Optional[str] = None
 
@@ -1714,19 +1780,51 @@ async def login(req: LoginRequest, request: Request):
     }
 
 
+class PrivacySettingsUpdate(BaseModel):
+    hideOnlineStatus: bool
+
+
 @app.get("/profile/me")
 @limiter.limit("100/minute;2000/hour")
 async def get_profile(request: Request, current_user: dict = Depends(get_current_user)):
+    user_settings = current_user.get("settings") or {}
+    last_seen = current_user.get("lastSeen")
     return {
         "chatId": current_user["chatId"],
         "username": current_user["profile"]["username"],
         "name": current_user["profile"]["name"],
         "bio": current_user["profile"]["bio"],
         "avatar": current_user["profile"]["avatar"],
-        "online": current_user.get("online", False),
+        "online": resolve_user_online_state(current_user),
+        "lastSeen": dt_to_epoch_ms(last_seen) if last_seen else None,
+        "hideOnlineStatus": bool(user_settings.get("hideOnlineStatus", False)),
         "verified": bool(current_user.get("verified", False)),
         "registrationDate": current_user.get("registrationDate"),
     }
+
+
+@app.get("/profile/me/privacy")
+@limiter.limit("60/minute;1000/hour")
+async def get_privacy_settings(request: Request, current_user: dict = Depends(get_current_user)):
+    user_settings = current_user.get("settings") or {}
+    return {
+        "hideOnlineStatus": bool(user_settings.get("hideOnlineStatus", False)),
+    }
+
+
+@app.patch("/profile/me/privacy")
+@limiter.limit("30/minute;300/hour")
+async def update_privacy_settings(
+    request: Request,
+    payload: PrivacySettingsUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    hide_flag = bool(payload.hideOnlineStatus)
+    await cl_users.update_one(
+        {"chatId": current_user["chatId"]},
+        {"$set": {"settings.hideOnlineStatus": hide_flag}},
+    )
+    return {"hideOnlineStatus": hide_flag}
 
 
 @app.patch("/profile/me")
@@ -1829,7 +1927,12 @@ async def set_presence_offline(current_user: dict = Depends(get_current_user)):
         )
         await broadcast(
             allowed_contacts,
-            {"type": "user_status", "userId": user_id, "online": False},
+            {
+                "type": "user_status",
+                "userId": user_id,
+                "online": False,
+                "lastSeen": dt_to_epoch_ms(utc_now()),
+            },
         )
     return {"ok": True}
 
@@ -1908,6 +2011,11 @@ async def search_users(
     for u in users:
         u_blocked_ids = set(_get_blocked_from_user_doc(u))
         blocked_by_other = my_id in u_blocked_ids
+        presence = resolve_user_presence_for_viewer(
+            current_user,
+            u,
+            blocked=bool(blocked_by_other),
+        )
 
         result.append(
             {
@@ -1918,7 +2026,9 @@ async def search_users(
                 "bio": decrypt_user_bio(
                     u, str(current_user.get("_session_token") or "")
                 ),
-                "online": False if blocked_by_other else resolve_user_online_state(u),
+                "online": presence["online"],
+                "lastSeen": presence.get("lastSeen"),
+                "lastSeenCategory": presence.get("lastSeenCategory"),
                 "verified": bool(u.get("verified", False)),
                 "registrationDate": u.get("registrationDate"),
             }
@@ -2222,6 +2332,16 @@ async def get_chat_list(
         else:
             pinned_msg = None
 
+        presence = (
+            {"online": False, "lastSeen": None, "lastSeenCategory": None}
+            if is_group
+            else resolve_user_presence_for_viewer(
+                current_user,
+                other_user,
+                blocked=bool(blocked_relation),
+            )
+        )
+
         result.append(
             {
                 "id": chat["_id"],
@@ -2269,19 +2389,9 @@ async def get_chat_list(
                             else ""
                         )
                     ),
-                    "online": (
-                        False
-                        if is_group
-                        else (
-                            False
-                            if blocked_relation
-                            else (
-                                resolve_user_online_state(other_user)
-                                if other_user
-                                else False
-                            )
-                        )
-                    ),
+                    "online": presence["online"],
+                    "lastSeen": presence.get("lastSeen"),
+                    "lastSeenCategory": presence.get("lastSeenCategory"),
                     "blockedByMe": blocked_by_me if not is_group else False,
                     "blockedByOther": blocked_by_other if not is_group else False,
                     "verified": (
@@ -2464,6 +2574,11 @@ async def get_chat_members(
 
             u_blocked_ids = set(_get_blocked_from_user_doc(u))
             blocked_by_other = my_id in u_blocked_ids
+            presence = resolve_user_presence_for_viewer(
+                current_user,
+                u,
+                blocked=bool(blocked_by_other),
+            )
 
             profile = u.get("profile", {})
             result.append(
@@ -2476,9 +2591,9 @@ async def get_chat_members(
                         u, str(current_user.get("_session_token") or "")
                     ),
                     "verified": bool(u.get("verified", False)),
-                    "online": (
-                        False if blocked_by_other else resolve_user_online_state(u)
-                    ),
+                    "online": presence["online"],
+                    "lastSeen": presence.get("lastSeen"),
+                    "lastSeenCategory": presence.get("lastSeenCategory"),
                 }
             )
         return result
@@ -2496,6 +2611,11 @@ async def get_chat_members(
     for u in users:
         u_blocked_ids = set(_get_blocked_from_user_doc(u))
         blocked_by_other = my_id in u_blocked_ids
+        presence = resolve_user_presence_for_viewer(
+            current_user,
+            u,
+            blocked=bool(blocked_by_other),
+        )
 
         profile = u.get("profile", {})
         result.append(
@@ -2510,7 +2630,9 @@ async def get_chat_members(
                     u, str(current_user.get("_session_token") or "")
                 ),
                 "verified": u.get("verified", False),
-                "online": False if blocked_by_other else resolve_user_online_state(u),
+                "online": presence["online"],
+                "lastSeen": presence.get("lastSeen"),
+                "lastSeenCategory": presence.get("lastSeenCategory"),
             }
         )
     return result
@@ -3989,20 +4111,24 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 )
 
         if became_online:
-            user_chats = await cl_chats.find({"participants": chat_id}).to_list(None)
-            contacts_to_notify = set()
-            for chat in user_chats:
-                for p in chat.get("participants", []):
-                    if p != chat_id:
-                        contacts_to_notify.add(p)
+            user_doc = await cl_users.find_one({"chatId": chat_id}, {"settings": 1})
+            user_settings = (user_doc or {}).get("settings") or {}
+            hide_online = bool(user_settings.get("hideOnlineStatus", False))
+            if not hide_online:
+                user_chats = await cl_chats.find({"participants": chat_id}).to_list(None)
+                contacts_to_notify = set()
+                for chat in user_chats:
+                    for p in chat.get("participants", []):
+                        if p != chat_id:
+                            contacts_to_notify.add(p)
 
-            allowed_contacts = await _filter_recipients_by_block_status(
-                chat_id, contacts_to_notify
-            )
-            await broadcast(
-                allowed_contacts,
-                {"type": "user_status", "userId": chat_id, "online": True},
-            )
+                allowed_contacts = await _filter_recipients_by_block_status(
+                    chat_id, contacts_to_notify
+                )
+                await broadcast(
+                    allowed_contacts,
+                    {"type": "user_status", "userId": chat_id, "online": True},
+                )
 
         last_client_activity = time.time()
         while True:
@@ -4801,7 +4927,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 active_ai_stream_tasks.pop(chat_id, None)
 
             elif data.get("type") == "ping":
+                last_client_activity = time.time()
                 await websocket.send_json({"type": "pong"})
+
+            elif data.get("type") == "pong":
+                last_client_activity = time.time()
 
     except WebSocketDisconnect:
         pass
@@ -4828,24 +4958,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             if not active_connections[chat_id]:
                 del active_connections[chat_id]
 
-                became_offline = await mark_user_disconnected(chat_id)
-                if became_offline:
-                    user_chats = await cl_chats.find({"participants": chat_id}).to_list(
-                        None
-                    )
-                    contacts_to_notify = set()
-                    for chat in user_chats:
-                        for p in chat.get("participants", []):
-                            if p != chat_id:
-                                contacts_to_notify.add(p)
+            became_offline = await mark_user_disconnected(chat_id)
+            if became_offline:
+                now_epoch = dt_to_epoch_ms(utc_now())
+                user_chats = await cl_chats.find({"participants": chat_id}).to_list(
+                    None
+                )
+                contacts_to_notify = set()
+                for chat in user_chats:
+                    for p in chat.get("participants", []):
+                        if p != chat_id:
+                            contacts_to_notify.add(p)
 
-                    allowed_contacts = await _filter_recipients_by_block_status(
-                        chat_id, contacts_to_notify
-                    )
-                    await broadcast(
-                        allowed_contacts,
-                        {"type": "user_status", "userId": chat_id, "online": False},
-                    )
+                allowed_contacts = await _filter_recipients_by_block_status(
+                    chat_id, contacts_to_notify
+                )
+                await broadcast(
+                    allowed_contacts,
+                    {"type": "user_status", "userId": chat_id, "online": False, "lastSeen": now_epoch},
+                )
 
 
 async def ensure_ai_chat(user_id: str, ai_chat_id: str) -> dict:

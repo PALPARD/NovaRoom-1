@@ -12,7 +12,7 @@ import { apiFetch } from '../config/api';
 import { ImageMediaViewer } from './ImageMediaViewer';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
 import { copyText } from '../utils/clipboard';
-import { resolveVerified, toPersianDigits } from '../utils/format';
+import { formatLastSeen, resolveVerified, toPersianDigits } from '../utils/format';
 
 interface ContactInfoProps {
     user: User;
@@ -20,6 +20,7 @@ interface ContactInfoProps {
     onOpenChat?: (user: User) => void;
     isBlocked?: boolean;
     hideOnlineStatus?: boolean;
+    isInteractiveOnline?: boolean;
     onToggleBlock?: (user: User) => void | Promise<void>;
     onOpenMembers?: () => void;
     autoOpenMembers?: boolean;
@@ -39,6 +40,7 @@ export function ContactInfo({
     onOpenChat,
     isBlocked = false,
     hideOnlineStatus = false,
+    isInteractiveOnline = false,
     onToggleBlock,
     onOpenMembers,
     autoOpenMembers = true,
@@ -362,7 +364,7 @@ export function ContactInfo({
                         <Avatar
                             name={user.name}
                             size="xl"
-                            online={(isBlocked || hideOnlineStatus) ? undefined : user.online}
+                            online={(isBlocked || hideOnlineStatus) ? undefined : (isInteractiveOnline || user.online)}
                             src={user.avatar}
                         />
                     </button>
@@ -377,8 +379,8 @@ export function ContactInfo({
                             {editingGroup ? 'در حال ویرایش اطلاعات گروه' : 'گروه'}
                         </p>
                     ) : (
-                        <span className={(!(isBlocked || hideOnlineStatus) && user.online) ? 'contact-info__status contact-info__status--online' : 'contact-info__status'}>
-                            {(isBlocked || hideOnlineStatus) ? 'آخرین بازدید مدت‌ها پیش' : user.online ? 'آنلاین' : 'آفلاین'}
+                        <span className={(!(isBlocked || hideOnlineStatus) && (isInteractiveOnline || user.online)) ? 'contact-info__status contact-info__status--online' : 'contact-info__status'}>
+                            {formatLastSeen(user, { isContactBlocked: isBlocked || hideOnlineStatus, isInteractiveOnline })}
                         </span>
                     )}
 

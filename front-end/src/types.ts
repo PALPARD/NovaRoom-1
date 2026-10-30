@@ -5,6 +5,9 @@ export interface User {
     bio: string;
     avatar: string;
     online: boolean;
+    lastSeen?: number | string | null;
+    lastSeenCategory?: 'recently' | 'within_week' | 'within_month' | 'long_time_ago' | null;
+    hideOnlineStatus?: boolean;
     verified?: boolean;
     registrationDate?: string;
 }
@@ -112,4 +115,4 @@ export interface AIChatSummary {
 
 export type AIModelKey = 'nova-flash' | 'nova-pro';
 
-export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage';
+export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage' | 'settingsPrivacy';

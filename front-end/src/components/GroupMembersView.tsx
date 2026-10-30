@@ -7,7 +7,7 @@ import { Avatar, extractFileIdFromAvatar, getAvatarDisplayUrl } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { ImageMediaViewer } from './ImageMediaViewer';
 import { screenVariants } from '../utils/screenMotion';
-import { resolveVerified, toPersianDigits } from '../utils/format';
+import { formatLastSeen, resolveVerified, toPersianDigits } from '../utils/format';
 import { copyText } from '../utils/clipboard';
 
 export type GroupMember = {
@@ -18,6 +18,8 @@ export type GroupMember = {
     chatId: string;
     verified?: boolean;
     online?: boolean;
+    lastSeen?: number | string | null;
+    lastSeenCategory?: 'recently' | 'within_week' | 'within_month' | 'long_time_ago' | null;
 };
 
 type GroupMembersViewProps = {
@@ -28,6 +30,7 @@ type GroupMembersViewProps = {
     membersLoading: boolean;
     chatStats: { totalMembers: number; onlineMembers: number } | null;
     token: string;
+    interactiveOnlineUsers?: Record<string, number>;
     onBack: () => void;
     onEditGroup: () => void;
     onOpenProfile: () => void;
@@ -42,6 +45,7 @@ export function GroupMembersView({
     membersLoading,
     chatStats,
     token,
+    interactiveOnlineUsers,
     onBack,
     onEditGroup,
     onOpenProfile,
@@ -88,14 +92,18 @@ export function GroupMembersView({
         ? membersList.filter(m => m.name.toLowerCase().includes(memberSearch.toLowerCase()) || m.username.toLowerCase().includes(memberSearch.toLowerCase()))
         : membersList;
 
+    const isMemberOnline = (m: GroupMember) => Boolean((interactiveOnlineUsers && m.chatId && interactiveOnlineUsers[m.chatId]) || m.online);
+
     const sortedFiltered = [...filtered].sort((a, b) => {
         if (a.chatId === currentUserId && b.chatId !== currentUserId) return -1;
         if (a.chatId !== currentUserId && b.chatId === currentUserId) return 1;
-        if (a.online && !b.online) return -1;
-        if (!a.online && b.online) return 1;
+        const aOnline = isMemberOnline(a);
+        const bOnline = isMemberOnline(b);
+        if (aOnline && !bOnline) return -1;
+        if (!aOnline && bOnline) return 1;
         return 0;
     });
-    const onlineCount = membersList.filter(m => m.online).length;
+    const onlineCount = membersList.filter(isMemberOnline).length;
     const isInviteLink = (s: string) => s.startsWith('novaroom://') || s.startsWith('senoroom://');
     const inviteLink = contact.username && isInviteLink(contact.username) ? contact.username : null;
 
@@ -189,18 +197,18 @@ export function GroupMembersView({
                                 onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                             >
-                                <Avatar name={member.name} size="md" src={member.avatar} online={member.online} />
+                                <Avatar name={member.name} size="md" src={member.avatar} online={isMemberOnline(member)} />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>
                                         {member.name}
                                         {resolveVerified(member.verified) && <VerifiedBadge size={14} />}
                                     </div>
                                     <div style={{ fontSize: 13, marginTop: 2 }}>
-                                        {member.online ? (
+                                        {isMemberOnline(member) ? (
                                             <span className="status-online-text">آنلاین</span>
                                         ) : (
                                             <span style={{ color: 'var(--text-secondary)' }}>
-                                                {member.username ? `@${member.username}` : 'آفلاین'}
+                                                {formatLastSeen(member, { isInteractiveOnline: isMemberOnline(member) })}
                                             </span>
                                         )}
                                     </div>

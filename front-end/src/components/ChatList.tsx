@@ -17,6 +17,7 @@ interface ChatListProps {
     activeChatId: string | null;
     wsConnected: boolean;
     wsReconnectExhausted: boolean;
+    interactiveOnlineUsers?: Record<string, number>;
     onSelectChat: (chatId: string) => void;
     onNewChatClick: () => void;
     onLogout: () => void;
@@ -370,6 +371,7 @@ export const ChatList = memo(function ChatList({
     activeChatId,
     wsConnected,
     wsReconnectExhausted,
+    interactiveOnlineUsers,
     onSelectChat,
     onNewChatClick,
     onLogout,
@@ -1130,7 +1132,7 @@ export const ChatList = memo(function ChatList({
                                 <Avatar
                                     name={contact.name}
                                     size="md"
-                                    online={group || blockedRelation ? undefined : contact.online}
+                                    online={group || blockedRelation ? undefined : Boolean((interactiveOnlineUsers && contact.chatId && interactiveOnlineUsers[contact.chatId]) || contact.online)}
                                     src={isOfficial ? '/logo/ch.png' : contact.avatar}
                                 />
 

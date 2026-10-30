@@ -38,9 +38,12 @@ const tehranTimeFormatter = new Intl.DateTimeFormat('fa-IR', {
   hour12: false,
 });
 
-const toJalaliTehran = (timestamp: number): string => {
+const toJalaliTehran = (timestamp: number): { date: string; time: string } => {
   const dt = new Date(timestamp);
-  return `${jalaliDateFormatter.format(dt)} • ${tehranTimeFormatter.format(dt)}`;
+  return {
+    date: toPersianDigits(jalaliDateFormatter.format(dt)),
+    time: toPersianDigits(tehranTimeFormatter.format(dt)),
+  };
 };
 
 export function LoginLogs({ onBack, events }: { onBack: () => void; events: LoginEvent[] }) {
@@ -50,10 +53,10 @@ export function LoginLogs({ onBack, events }: { onBack: () => void; events: Logi
     return events.slice(0, 10).map((event) => {
       const device = toPersianDigits(toTitleCaseDevice(event.deviceName || 'نامشخص'));
       const ip = toPersianDigits(event.ipAddress || '-');
-      const time = toPersianDigits(toJalaliTehran(event.createdAt));
+      const { date, time } = toJalaliTehran(event.createdAt);
       return {
         key: `${event.tokenHash}-${event.createdAt}`,
-        text: `دستگاه ${device} با آی‌پی ${ip} در ساعت و تاریخ ${time} ورود کرد${event.isCurrentDevice ? ' (این دستگاه)' : ''}.`,
+        text: `دستگاه ${device} با آی‌پی ${ip} در تاریخ ${date} و در ساعت ${time} وارد شد${event.isCurrentDevice ? ' (این دستگاه)' : ''}.`,
         unseen: Boolean(event.unseenForCurrent),
       };
     });

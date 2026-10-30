@@ -88,3 +88,56 @@ export function formatDayLabel(ts: unknown): string {
 export function formatMessageTime(ts: unknown): string {
     return persianTimeFmt.format(new Date(normalizeTs(ts)));
 }
+
+export function formatLastSeen(
+    user?: {
+        online?: boolean;
+        lastSeen?: number | string | null;
+        lastSeenCategory?: 'recently' | 'within_week' | 'within_month' | 'long_time_ago' | null;
+        blockedByOther?: boolean;
+        blockedByMe?: boolean;
+    } | null,
+    options?: {
+        isContactBlocked?: boolean;
+        isInteractiveOnline?: boolean;
+    }
+): string {
+    if (!user) return 'آفلاین';
+    if (options?.isContactBlocked || user.blockedByOther || user.blockedByMe) {
+        return 'آخرین بازدید مدت‌ها پیش';
+    }
+    if (options?.isInteractiveOnline || user.online) {
+        return 'آنلاین';
+    }
+    if (user.lastSeenCategory) {
+        if (user.lastSeenCategory === 'recently') return 'آخرین بازدید به تازگی';
+        if (user.lastSeenCategory === 'within_week') return 'آخرین بازدید یک هفته پیش';
+        if (user.lastSeenCategory === 'within_month') return 'آخرین بازدید یک ماه پیش';
+        if (user.lastSeenCategory === 'long_time_ago') return 'آخرین بازدید مدت‌ها پیش';
+    }
+    if (!user.lastSeen) {
+        return 'آفلاین';
+    }
+    const diffMs = Math.max(0, Date.now() - normalizeTs(user.lastSeen));
+    if (diffMs < 60_000) {
+        return 'آخرین بازدید به تازگی';
+    }
+    const diffMinutes = Math.floor(diffMs / 60_000);
+    if (diffMinutes < 60) {
+        return `آخرین بازدید ${toPersianDigits(diffMinutes)} دقیقه پیش`;
+    }
+    const diffHours = Math.floor(diffMs / 3_600_000);
+    if (diffHours < 24) {
+        return `آخرین بازدید ${toPersianDigits(diffHours)} ساعت پیش`;
+    }
+    const diffDays = Math.floor(diffMs / 86_400_000);
+    if (diffDays < 7) {
+        return `آخرین بازدید ${toPersianDigits(diffDays)} روز پیش`;
+    }
+    if (diffDays < 30) {
+        const diffWeeks = Math.max(1, Math.floor(diffDays / 7));
+        return `آخرین بازدید ${toPersianDigits(diffWeeks)} هفته پیش`;
+    }
+    const diffMonths = Math.max(1, Math.floor(diffDays / 30));
+    return `آخرین بازدید ${toPersianDigits(diffMonths)} ماه پیش`;
+}

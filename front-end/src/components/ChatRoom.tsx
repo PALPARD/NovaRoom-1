@@ -18,7 +18,7 @@ import { decryptFileBytesClientSide } from '../utils/e2ee';
 import { screenVariants } from '../utils/screenMotion';
 import { cacheTextValue, deleteCachedBlob, deleteCachedText, getCachedBlob, getCachedTextValue, getOrCacheBlob } from '../utils/mediaCache';
 import { pendingUploadedFileByChat } from '../utils/pendingUploads';
-import { formatDayLabel, formatMessageTime, messageDayKey, resolveVerified, toPersianDigits } from '../utils/format';
+import { formatDayLabel, formatLastSeen, formatMessageTime, messageDayKey, resolveVerified, toPersianDigits } from '../utils/format';
 import { copyText } from '../utils/clipboard';
 import { triggerHaptic } from '../utils/haptics';
 import { ChatMessageItem, type ReactionEntry } from './ChatMessageItem';
@@ -98,6 +98,7 @@ interface ChatRoomProps {
     onLoadNewerMessages?: (chatId: string) => void | Promise<void>;
     onJumpToLatestMessages?: (chatId: string) => void | Promise<void>;
     pinnedMessage?: PinnedMessage | null;
+    interactiveOnlineUsers?: Record<string, number>;
     onPinMessage?: (chatId: string, messageId: string) => void | Promise<void>;
     onUnpinMessage?: (chatId: string) => void | Promise<void>;
     onJumpToMessage?: (chatId: string, messageId: string) => void | Promise<void>;
@@ -257,6 +258,7 @@ export function ChatRoom({
     onLoadNewerMessages,
     onJumpToLatestMessages,
     pinnedMessage = null,
+    interactiveOnlineUsers,
     onPinMessage,
     onUnpinMessage,
     onJumpToMessage,
@@ -2161,6 +2163,7 @@ export function ChatRoom({
                 user: infoUser,
                 isBlocked: !isGroupChat && blocked,
                 hideOnlineStatus: !isGroupChat && (Boolean(infoUser?.blockedByOther) || blocked),
+                isInteractiveOnline: Boolean(interactiveOnlineUsers && infoUser?.chatId && interactiveOnlineUsers[infoUser.chatId]),
                 onToggleBlock: !isGroupChat ? onToggleBlockUser : undefined,
                 onBack: () => {
                     setShowContactInfo(false);
@@ -2196,6 +2199,7 @@ export function ChatRoom({
                 user: forwardSourceUser,
                 isBlocked: Boolean(isUserBlocked?.(forwardSourceUser)),
                 hideOnlineStatus: Boolean((forwardSourceUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(forwardSourceUser)),
+                isInteractiveOnline: Boolean(interactiveOnlineUsers && forwardSourceUser?.chatId && interactiveOnlineUsers[forwardSourceUser.chatId]),
                 onToggleBlock: onToggleBlockUser,
                 onBack: () => setForwardSourceUser(null),
                 onOpenMembers: undefined,
@@ -2215,12 +2219,23 @@ export function ChatRoom({
         if (viewingMemberId) {
             const memberData = groupMembers[viewingMemberId];
             const memberUser: any = memberData
-                ? { chatId: memberData.chatId || viewingMemberId, name: memberData.name || viewingMemberId, username: memberData.username || '', avatar: memberData.avatar || '', bio: memberData.bio || '', online: memberData.online ?? false, verified: memberData.verified || false }
+                ? {
+                    chatId: memberData.chatId || viewingMemberId,
+                    name: memberData.name || viewingMemberId,
+                    username: memberData.username || '',
+                    avatar: memberData.avatar || '',
+                    bio: memberData.bio || '',
+                    online: memberData.online ?? false,
+                    lastSeen: memberData.lastSeen,
+                    lastSeenCategory: memberData.lastSeenCategory,
+                    verified: memberData.verified || false,
+                }
                 : { chatId: viewingMemberId, name: viewingMemberId, username: '', avatar: '', bio: '', online: false };
             return {
                 user: memberUser,
                 isBlocked: Boolean(isUserBlocked?.(memberUser)),
                 hideOnlineStatus: Boolean((memberUser as any)?.blockedByOther) || Boolean(isUserBlocked?.(memberUser)),
+                isInteractiveOnline: Boolean(interactiveOnlineUsers && (memberUser.chatId || viewingMemberId) && interactiveOnlineUsers[memberUser.chatId || viewingMemberId]),
                 onToggleBlock: onToggleBlockUser,
                 onBack: () => setViewingMemberId(null),
                 onOpenMembers: undefined,
@@ -2252,6 +2267,7 @@ export function ChatRoom({
                 membersLoading={membersLoading}
                 chatStats={chatStats}
                 token={token}
+                interactiveOnlineUsers={interactiveOnlineUsers}
                 onBack={() => {
                     setShowMembersList(false);
                     if (onCloseForcedContactInfo) {
@@ -2396,7 +2412,7 @@ export function ChatRoom({
                         <Avatar
                             name={contact.name}
                             size="sm"
-                            online={isGroupChat || isSavedMessages || isContactBlocked ? undefined : contact.online}
+                            online={isGroupChat || isSavedMessages || isContactBlocked ? undefined : Boolean((interactiveOnlineUsers && contact.chatId && interactiveOnlineUsers[contact.chatId]) || contact.online)}
                             savedMessages={isSavedMessages}
                             src={contact.avatar}
                         />
@@ -2406,7 +2422,7 @@ export function ChatRoom({
                                 {!isSavedMessages && resolveVerified(contact.verified) ? <VerifiedBadge size={14} /> : null}
                             </div>
                             {!isSavedMessages && (
-                                <div className={(!isGroupChat && !isContactBlocked && contact.online) ? 'chat-room__contact-status chat-room__contact-status--online' : 'chat-room__contact-status'}>
+                                <div className={(!isGroupChat && !isContactBlocked && Boolean((interactiveOnlineUsers && contact.chatId && interactiveOnlineUsers[contact.chatId]) || contact.online)) ? 'chat-room__contact-status chat-room__contact-status--online' : 'chat-room__contact-status'}>
                                     {isOfficialChannel ? (
                                         <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? 0)} عضو</span>
                                     ) : headerActivityLabel ? (
@@ -2417,7 +2433,7 @@ export function ChatRoom({
                                             <span style={{ color: 'var(--text-muted)' }}>•</span>
                                             <span style={{ color: 'var(--text-secondary)' }}>{toPersianDigits(chatStats?.totalMembers ?? currentChat?.participantIds?.length ?? 0)} عضو</span>
                                         </span>
-                                    ) : isContactBlocked ? 'آخرین بازدید مدت‌ها پیش' : contact.online ? 'آنلاین' : 'آفلاین')}
+                                    ) : formatLastSeen(contact, { isContactBlocked, isInteractiveOnline: Boolean(interactiveOnlineUsers && contact.chatId && interactiveOnlineUsers[contact.chatId]) }))}
                                 </div>
                             )}
                         </div>
