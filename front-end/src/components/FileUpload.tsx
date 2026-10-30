@@ -236,8 +236,9 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 task.uploadProgress = Math.min(8, task.uploadProgress + 1);
                 pushTaskUpdate(task);
             }, 210);
+            const isAudio = (file.type || '').startsWith('audio/');
             const plainBytes = new Uint8Array(await file.arrayBuffer());
-            const encryptedBytes = await encryptFileBytesClientSide(plainBytes, token, chatId);
+            const fileBytes = isAudio ? plainBytes : await encryptFileBytesClientSide(plainBytes, token, chatId);
             if (encryptCancelRef.current) {
                 uploadTasksByChat.delete(chatId);
                 resetUpload();
@@ -247,14 +248,14 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 window.clearInterval(uploadWarmupTimer);
                 uploadWarmupTimer = null;
             }
-            const encryptedBlob = new Blob([encryptedBytes as BlobPart], { type: 'application/octet-stream' });
-            const encryptedFile = new window.File([encryptedBlob], file.name, {
-                type: 'application/octet-stream',
+            const uploadBlob = new Blob([fileBytes as BlobPart], { type: isAudio ? (file.type || 'audio/mpeg') : 'application/octet-stream' });
+            const uploadFile = new window.File([uploadBlob], file.name, {
+                type: isAudio ? (file.type || 'audio/mpeg') : 'application/octet-stream',
                 lastModified: file.lastModified,
             });
 
             const formData = new FormData();
-            formData.append('file', encryptedFile);
+            formData.append('file', uploadFile);
             if (mediaDuration > 0) formData.append('duration', String(mediaDuration));
             if (imagePreviewBlob) {
                 formData.append('preview', new window.File([imagePreviewBlob], `preview-${file.name}.jpg`, { type: 'image/jpeg' }));

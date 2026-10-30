@@ -1,4 +1,4 @@
-import { ChevronLeft, Copy, Check, Calendar, Link2, MessageCircle, Pencil, X, Save, Image as ImageIcon, Trash2, RotateCcw, Ban, FileText, AtSign, UserRound } from 'lucide-react';
+import { ChevronLeft, Copy, Check, Calendar, Link2, MessageCircle, Pencil, X, Save, Image as ImageIcon, Trash2, RotateCcw, Ban, FileText, AtSign, UserRound, Hash } from 'lucide-react';
 import { motion } from "framer-motion";
 import { screenVariants } from '../utils/screenMotion';
 import { useScrollFade } from '../hooks/useScrollFade';
@@ -45,7 +45,7 @@ export function ContactInfo({
     startInEditMode = false,
 }: ContactInfoProps) {
     const { scrolled, handleScroll } = useScrollFade();
-    const [copied, setCopied] = useState(false);
+    const [copiedField, setCopiedField] = useState<string | null>(null);
     const [canEditGroup, setCanEditGroup] = useState(false);
     const [editingGroup, setEditingGroup] = useState(false);
     const [groupName, setGroupName] = useState('');
@@ -61,7 +61,7 @@ export function ContactInfo({
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
-        setCopied(false);
+        setCopiedField(null);
     }, [user.chatId, user.username]);
 
     const bio = typeof user.bio === 'string' ? user.bio.trim() : '';
@@ -182,14 +182,12 @@ export function ContactInfo({
         onOpenMembers();
     }, [autoOpenMembers, isGroup, onOpenMembers, user.chatId]);
 
-    const handleCopy = () => {
-        const un = (user.username || '').trim();
-        if (!un) return;
-        const textToCopy = isInviteLink(un) ? un : `@${un}`;
-        copyText(textToCopy)
+    const handleCopy = (text: string, field: string) => {
+        if (!text) return;
+        copyText(text)
             .then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
+                setCopiedField(field);
+                setTimeout(() => setCopiedField((curr) => (curr === field ? null : curr)), 1500);
             })
             .catch(() => alert('کپی انجام نشد'));
     };
@@ -285,7 +283,6 @@ export function ContactInfo({
     };
 
     const originalAvatar = String(user.avatar || '');
-    const previewName = groupName || String(user.name || '');
     const previewAvatar = avatarTouched ? groupAvatar : originalAvatar;
 
     const canRemoveAvatar = Boolean(previewAvatar);
@@ -450,7 +447,7 @@ export function ContactInfo({
                                 ویرایش گروه
                             </div>
 
-                            <div className="profile__field-group">
+                            <div className="profile__field-group" style={{ marginBottom: 0 }}>
                                 <label className="profile__field-label">نام گروه</label>
                                 <input
                                     value={groupName}
@@ -459,21 +456,6 @@ export function ContactInfo({
                                     className="profile__field-input"
                                     disabled={saving}
                                 />
-                            </div>
-
-                            <div className="profile__field-group">
-                                <label className="profile__field-label">عکس گروه</label>
-                                <div className="contact-info__avatar-editor">
-                                    <Avatar name={previewName} size="md" src={previewAvatar} />
-                                    <div className="contact-info__avatar-editor-text">
-                                        <span className="contact-info__avatar-editor-name">{previewName || 'گروه'}</span>
-                                        <span className="contact-info__avatar-editor-hint">
-                                            {isAvatarRemoved
-                                                ? 'عکس برای حذف انتخاب شد (بعد از ذخیره کامل می‌شود)'
-                                                : 'برای تغییر، از دکمه بالا عکس جدید انتخاب کن'}
-                                        </span>
-                                    </div>
-                                </div>
                             </div>
 
                             {error && <p className="contact-info__error">{error}</p>}
@@ -503,67 +485,125 @@ export function ContactInfo({
                         </>
                     )}
 
-                    {(!isGroup || displayBio) && (
-                        <div className="profile__card">
-                            <div className="profile__section-title">
-                                <span className="profile__section-icon"><FileText size={15} /></span>
-                                بیوگرافی
-                            </div>
-                            <p className={displayBio ? 'profile__bio-text' : 'profile__bio-text profile__bio-text--empty'}>
-                                {displayBio || 'بدون بیوگرافی'}
-                            </p>
-                        </div>
-                    )}
-
-                    {user.username && (
-                        <div className="profile__card">
-                            <div className="profile__section-title">
-                                <span className="profile__section-icon">
-                                    {isGroup ? <Link2 size={15} /> : <AtSign size={15} />}
-                                </span>
-                                {isGroup ? 'لینک دعوت' : 'نام کاربری'}
-                            </div>
-                            <div className="profile__info-row">
-                                <span className="profile__info-icon">
-                                    {isGroup ? <Link2 size={16} /> : <AtSign size={16} />}
-                                </span>
-                                <div className="profile__info-body">
-                                    <span className="profile__info-label">{isGroup ? 'لینک دعوت گروه' : 'نام کاربری'}</span>
-                                    <span className="profile__info-value profile__info-value--mono contact-info__invite-value">
-                                        {isGroup ? user.username : `@${user.username}`}
-                                    </span>
+                    {!isGroup ? (
+                        <>
+                            <div className="profile__card">
+                                <div className="profile__section-title">
+                                    <span className="profile__section-icon"><UserRound size={15} /></span>
+                                    اطلاعات حساب
                                 </div>
-                                <button
-                                    type="button"
-                                    className={copied ? 'profile__copy-btn profile__copy-btn--copied' : 'profile__copy-btn'}
-                                    aria-label="کپی"
-                                    onClick={handleCopy}
-                                    disabled={!user.username}
-                                >
-                                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                                </button>
-                            </div>
-                        </div>
-                    )}
 
-                    {!isGroup && (
-                        <div className="profile__card">
-                            <div className="profile__section-title">
-                                <span className="profile__section-icon"><Calendar size={15} /></span>
-                                تاریخ عضویت
-                            </div>
-                            <div className="profile__info-row">
-                                <span className="profile__info-icon"><UserRound size={16} /></span>
-                                <div className="profile__info-body">
-                                    <span className="profile__info-label">عضو شده در</span>
-                                    <span className="profile__info-value">
-                                        {registrationLoading ? (
-                                            <span className="skeleton" style={{ display: 'inline-block', width: 110, height: 16, borderRadius: 8 }} />
-                                        ) : (resolvedRegistrationDate ? toPersianDigits(resolvedRegistrationDate) : 'نامشخص')}
-                                    </span>
+                                <div className="profile__info-row">
+                                    <span className="profile__info-icon"><UserRound size={16} /></span>
+                                    <div className="profile__info-body">
+                                        <span className="profile__info-label">نام</span>
+                                        <span className="profile__info-value">{user.name}</span>
+                                    </div>
                                 </div>
+
+                                {user.username && (
+                                    <div className="profile__info-row">
+                                        <span className="profile__info-icon"><AtSign size={16} /></span>
+                                        <div className="profile__info-body">
+                                            <span className="profile__info-label">نام کاربری</span>
+                                            <span className="profile__info-value" style={{ direction: 'ltr', textAlign: 'right' }}>@{user.username}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className={cx('profile__copy-btn', copiedField === 'username' && 'profile__copy-btn--copied')}
+                                            aria-label="کپی نام کاربری"
+                                            onClick={() => handleCopy(`@${user.username}`, 'username')}
+                                        >
+                                            {copiedField === 'username' ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {user.chatId && (
+                                    <div className="profile__info-row">
+                                        <span className="profile__info-icon"><Hash size={16} /></span>
+                                        <div className="profile__info-body">
+                                            <span className="profile__info-label">شناسه چت</span>
+                                            <span className="profile__info-value profile__info-value--mono">{user.chatId}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className={cx('profile__copy-btn', copiedField === 'chatId' && 'profile__copy-btn--copied')}
+                                            aria-label="کپی شناسه چت"
+                                            onClick={() => handleCopy(user.chatId, 'chatId')}
+                                        >
+                                            {copiedField === 'chatId' ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {(resolvedRegistrationDate || registrationLoading) && (
+                                    <div className="profile__info-row">
+                                        <span className="profile__info-icon"><Calendar size={16} /></span>
+                                        <div className="profile__info-body">
+                                            <span className="profile__info-label">تاریخ عضویت</span>
+                                            <span className="profile__info-value">
+                                                {registrationLoading ? (
+                                                    <span className="skeleton" style={{ display: 'inline-block', width: 110, height: 16, borderRadius: 8 }} />
+                                                ) : (resolvedRegistrationDate ? toPersianDigits(resolvedRegistrationDate) : 'نامشخص')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        </div>
+
+                            {displayBio && (
+                                <div className="profile__card">
+                                    <div className="profile__section-title">
+                                        <span className="profile__section-icon"><FileText size={15} /></span>
+                                        بیوگرافی
+                                    </div>
+                                    <p className="profile__bio-text">
+                                        {displayBio}
+                                    </p>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {displayBio && (
+                                <div className="profile__card">
+                                    <div className="profile__section-title">
+                                        <span className="profile__section-icon"><FileText size={15} /></span>
+                                        بیوگرافی
+                                    </div>
+                                    <p className="profile__bio-text">
+                                        {displayBio}
+                                    </p>
+                                </div>
+                            )}
+
+                            {user.username && (
+                                <div className="profile__card">
+                                    <div className="profile__section-title">
+                                        <span className="profile__section-icon"><Link2 size={15} /></span>
+                                        لینک دعوت
+                                    </div>
+                                    <div className="profile__info-row">
+                                        <span className="profile__info-icon"><Link2 size={16} /></span>
+                                        <div className="profile__info-body">
+                                            <span className="profile__info-label">لینک دعوت گروه</span>
+                                            <span className="profile__info-value profile__info-value--mono contact-info__invite-value">
+                                                {user.username}
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className={cx('profile__copy-btn', copiedField === 'invite' && 'profile__copy-btn--copied')}
+                                            aria-label="کپی لینک دعوت"
+                                            onClick={() => handleCopy(user.username, 'invite')}
+                                        >
+                                            {copiedField === 'invite' ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             </div>
