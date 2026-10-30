@@ -24,6 +24,9 @@ interface UseWebSocketProps {
     onAIStreamStart?: (message: any) => void;
     onAIStreamChunk?: (payload: { messageId: string; text: string; chunk?: string; reasoningContent?: string; reasoningChunk?: string; hasMainContent?: boolean }) => void;
     onAIStreamDone?: (payload: any) => void;
+    onAISearchStatus?: (payload: any) => void;
+    onAISearchResults?: (payload: any) => void;
+    onAIMemoriesUpdated?: () => void;
 }
 
 type OutgoingEvent =
@@ -38,7 +41,7 @@ type OutgoingEvent =
     | { type: 'forward_message'; requestId: string; messageId: string; targetChatId: string }
     | { type: 'typing'; chatId: string; isTyping: boolean }
     | { type: 'upload_status'; chatId: string; isUploading: boolean }
-    | { type: 'ai_message'; text: string; aiChatId: string; clientId?: string; useReasoner?: boolean; modelKey?: 'nova-flash' | 'nova-pro' }
+    | { type: 'ai_message'; text: string; aiChatId: string; clientId?: string; useReasoner?: boolean; modelKey?: 'nova-flash' | 'nova-pro'; useWebSearch?: boolean; attachment?: { tempFileId: string; fileName: string; fileSize: number; mimeType: string; isImage: boolean } | null }
     | { type: 'ai_stop' }
     | { type: 'ping' }
     | { type: 'pong' };
@@ -78,6 +81,9 @@ export function useWebSocket({
     onAIStreamStart,
     onAIStreamChunk,
     onAIStreamDone,
+    onAISearchStatus,
+    onAISearchResults,
+    onAIMemoriesUpdated,
 }: UseWebSocketProps) {
     const socketRef = useRef<WebSocket | null>(null);
     const isConnectedRef = useRef(false);
@@ -93,6 +99,7 @@ export function useWebSocket({
     const hiddenDisconnectRef = useRef(false);
     const offlineTimerRef = useRef<number | null>(null);
 
+    const aiAbortControllerRef = useRef<AbortController | null>(null);
     const onNewMessageRef = useRef(onNewMessage);
     const onMessageEditedRef = useRef(onMessageEdited);
     const onMessageDeletedRef = useRef(onMessageDeleted);
@@ -111,6 +118,9 @@ export function useWebSocket({
     const onAIStreamStartRef = useRef(onAIStreamStart);
     const onAIStreamChunkRef = useRef(onAIStreamChunk);
     const onAIStreamDoneRef = useRef(onAIStreamDone);
+    const onAISearchStatusRef = useRef(onAISearchStatus);
+    const onAISearchResultsRef = useRef(onAISearchResults);
+    const onAIMemoriesUpdatedRef = useRef(onAIMemoriesUpdated);
 
     useEffect(() => { onNewMessageRef.current = onNewMessage; }, [onNewMessage]);
     useEffect(() => { onMessageEditedRef.current = onMessageEdited; }, [onMessageEdited]);
@@ -130,6 +140,9 @@ export function useWebSocket({
     useEffect(() => { onAIStreamStartRef.current = onAIStreamStart; }, [onAIStreamStart]);
     useEffect(() => { onAIStreamChunkRef.current = onAIStreamChunk; }, [onAIStreamChunk]);
     useEffect(() => { onAIStreamDoneRef.current = onAIStreamDone; }, [onAIStreamDone]);
+    useEffect(() => { onAISearchStatusRef.current = onAISearchStatus; }, [onAISearchStatus]);
+    useEffect(() => { onAISearchResultsRef.current = onAISearchResults; }, [onAISearchResults]);
+    useEffect(() => { onAIMemoriesUpdatedRef.current = onAIMemoriesUpdated; }, [onAIMemoriesUpdated]);
 
     const rejectAllPendingRequests = useCallback((reason: string) => {
         for (const [, pending] of pendingRequestsRef.current) {
@@ -314,6 +327,12 @@ export function useWebSocket({
                     });
                 } else if (data.type === 'ai_response_done') {
                     onAIStreamDoneRef.current?.(data);
+                } else if (data.type === 'ai_search_status') {
+                    onAISearchStatusRef.current?.(data);
+                } else if (data.type === 'ai_search_results') {
+                    onAISearchResultsRef.current?.(data);
+                } else if (data.type === 'ai_memories_updated') {
+                    onAIMemoriesUpdatedRef.current?.();
                 } else if (data.type === 'ai_user_message_saved') {
                     onAIUserMessageSavedRef.current?.(data.message, data.clientId, data.title);
                 } else if (data.type === 'ai_error') {
@@ -442,18 +461,132 @@ export function useWebSocket({
         [send]
     );
 
+    const dispatchAIEvent = useCallback((data: any) => {
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'ai_response') {
+            onAINewMessageRef.current?.(data.message);
+        } else if (data.type === 'ai_response_start') {
+            onAIStreamStartRef.current?.(data.message);
+        } else if (data.type === 'ai_response_chunk') {
+            onAIStreamChunkRef.current?.({
+                messageId: data.messageId,
+                text: data.text ?? '',
+                chunk: data.chunk ?? '',
+                reasoningContent: data.reasoningContent ?? '',
+                reasoningChunk: data.reasoningChunk ?? '',
+                hasMainContent: Boolean(data.hasMainContent),
+            });
+        } else if (data.type === 'ai_response_done') {
+            onAIStreamDoneRef.current?.(data);
+        } else if (data.type === 'ai_search_status') {
+            onAISearchStatusRef.current?.(data);
+        } else if (data.type === 'ai_search_results') {
+            onAISearchResultsRef.current?.(data);
+        } else if (data.type === 'ai_memories_updated') {
+            onAIMemoriesUpdatedRef.current?.();
+        } else if (data.type === 'ai_user_message_saved') {
+            onAIUserMessageSavedRef.current?.(data.message, data.clientId, data.title);
+        } else if (data.type === 'ai_error') {
+            onAIErrorRef.current?.({
+                ...data,
+                message: String(data.message || 'خطا در سرویس هوش مصنوعی'),
+            });
+        }
+    }, []);
+
     const sendAIMessage = useCallback(
-        (text: string, aiChatId: string, clientId?: string, useReasoner = false, modelKey: 'nova-flash' | 'nova-pro' = 'nova-flash') => {
-            if (typeof text !== 'string' || !text.trim() || text.length > 3000) return false;
-            if (!aiChatId) return false;
-            return send({ type: 'ai_message', text, aiChatId, clientId, useReasoner: Boolean(useReasoner), modelKey });
+        (
+            text: string,
+            aiChatId: string,
+            clientId?: string,
+            useReasoner = false,
+            modelKey: 'nova-flash' | 'nova-pro' = 'nova-flash',
+            useWebSearch = false,
+            attachment: { tempFileId: string; fileName: string; fileSize: number; mimeType: string; isImage: boolean } | null = null,
+        ) => {
+            if (typeof text !== 'string' || (!text.trim() && !attachment) || text.length > 3000) return false;
+            if (!aiChatId || !token) return false;
+            aiAbortControllerRef.current?.abort();
+            const controller = new AbortController();
+            aiAbortControllerRef.current = controller;
+            void (async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/ai/stream`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            text,
+                            aiChatId,
+                            clientId,
+                            useReasoner: Boolean(useReasoner),
+                            modelKey,
+                            useWebSearch: Boolean(useWebSearch),
+                            attachment,
+                        }),
+                        signal: controller.signal,
+                    });
+                    if (!response.ok || !response.body) {
+                        let detail = 'خطا در سرویس هوش مصنوعی';
+                        try {
+                            const errJson = await response.json();
+                            if (errJson?.detail) detail = String(errJson.detail);
+                        } catch {
+                        }
+                        dispatchAIEvent({ type: 'ai_error', message: detail });
+                        return;
+                    }
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop() || '';
+                        for (const block of parts) {
+                            const line = block
+                                .split('\n')
+                                .find((l) => l.startsWith('data:'));
+                            if (!line) continue;
+                            const raw = line.slice(5).trim();
+                            if (!raw) continue;
+                            try {
+                                dispatchAIEvent(JSON.parse(raw));
+                            } catch {
+                            }
+                        }
+                    }
+                } catch (err: any) {
+                    if (err?.name === 'AbortError') return;
+                    dispatchAIEvent({
+                        type: 'ai_error',
+                        message: 'ارتباط با سرویس هوش مصنوعی برقرار نیست. لطفاً دوباره تلاش کنید.',
+                    });
+                } finally {
+                    if (aiAbortControllerRef.current === controller) {
+                        aiAbortControllerRef.current = null;
+                    }
+                }
+            })();
+            return true;
         },
-        [send]
+        [token, dispatchAIEvent]
     );
 
     const stopAIGeneration = useCallback(() => {
-        return send({ type: 'ai_stop' });
-    }, [send]);
+        if (!token) return false;
+        aiAbortControllerRef.current?.abort();
+        aiAbortControllerRef.current = null;
+        void fetch(`${API_BASE_URL}/ai/stop`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+        return true;
+    }, [token]);
 
     const disconnect = useCallback(() => {
         shouldReconnectRef.current = false;

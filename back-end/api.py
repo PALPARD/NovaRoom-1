@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response, FileResponse, StreamingResponse
 from starlette.websockets import WebSocketState
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
@@ -35,14 +35,18 @@ import hashlib
 import secrets
 import base64
 import hmac
+import json
 from bson import ObjectId
 import re
 import uuid
 import jdatetime
 from ai_service import (
+    extract_urls_from_text,
     generate_ai_response_stream,
-    generate_conversation_summary,
     generate_chat_title,
+    perform_deepseek_url_fetch,
+    perform_deepseek_web_search,
+    process_post_turn_memory_and_summary,
 )
 from email_service import (
     send_verification_email,
@@ -133,6 +137,8 @@ cl_messages = db["messages"]
 cl_ai_messages = db["ai_messages"]
 cl_ai_chats = db["ai_chats"]
 cl_ai_usage = db["ai_usage"]
+cl_ai_memories = db["ai_memories"]
+cl_ai_temp_files = db["ai_temp_files"]
 
 active_connections: Dict[str, List[WebSocket]] = {}
 active_ai_connections: Dict[str, List[WebSocket]] = {}
@@ -166,7 +172,37 @@ VALID_REACTIONS = [
 MAX_PINNED_CHATS = 20
 MAX_CHAT_MESSAGE_LENGTH = 6000
 MAX_AI_MESSAGE_LENGTH = 3000
-MAX_AI_MESSAGES_PER_CHAT = 30
+MAX_AI_MESSAGES_PER_CHAT = 60
+AI_DAILY_TOKEN_LIMIT = 20000
+AI_DAILY_FILE_LIMIT = 5
+AI_DAILY_SEARCH_LIMIT = 5
+MAX_AI_USER_MEMORIES = 10
+AI_MAX_FILE_SIZE = 10 * 1024 * 1024
+AI_TEMP_FILE_TTL_SEC = 15 * 60
+AI_TEMP_DIR = UPLOAD_DIR / "ai_temp"
+AI_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+AI_ALLOWED_EXTENSIONS = AI_IMAGE_EXTENSIONS | {
+    ".pdf",
+    ".md",
+    ".txt",
+    ".csv",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".html",
+    ".css",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".py",
+    ".sql",
+    ".sh",
+    ".log",
+}
+AI_MAX_FILE_CONTEXT_CHARS = 15000
+AI_HISTORY_MESSAGE_LIMIT = 16
+AI_HISTORY_CHAR_BUDGET = 12000
 OFFICIAL_CHANNEL_CHAT_ID = "official-channel"
 OFFICIAL_CHANNEL_NAME = "کانال نواروم"
 OFFICIAL_CHANNEL_AVATAR = "/logo/ch.png"
@@ -176,7 +212,6 @@ def is_official_channel_chat(chat_id: str) -> bool:
     return str(chat_id or "").strip() == OFFICIAL_CHANNEL_CHAT_ID
 
 
-AI_PRO_DAILY_LIMIT = 10
 TEHRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 WS_IDLE_TIMEOUT_SEC = 95
 ENC_PREFIX = "enc:v1:"
@@ -242,6 +277,7 @@ def _is_server_managed_scope(scope: str) -> bool:
         value.startswith("ai:")
         or value.startswith("ai-chat:")
         or value.startswith("ai-chat-meta:")
+        or value.startswith("ai-memory:")
     )
 
 
@@ -295,6 +331,7 @@ def _decrypt_scoped_text_raw(value: str, token: str, scope: str) -> str:
         tag = raw[-ENC_TAG_SIZE:]
         candidate_keys = [
             _derive_enc_key(token, scope),
+            _derive_enc_key("", scope),
             _derive_enc_key_legacy_shared(scope),
             _derive_enc_key_legacy_scoped_tokenhash(token, scope),
             _derive_enc_key_legacy_token_raw(token, scope),
@@ -1353,13 +1390,18 @@ async def startup_db():
                 [("userId", 1), ("aiChatId", 1), ("timestamp", -1)]
             ),
             cl_ai_chats.create_index([("userId", 1), ("updatedAt", -1)]),
+            cl_ai_memories.create_index([("userId", 1), ("updatedAt", -1)]),
+            cl_ai_usage.create_index([("userId", 1), ("dateKey", 1)]),
+            cl_ai_usage.create_index("updatedAt", expireAfterSeconds=2 * 86400),
             return_exceptions=True,
         )
+        AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
         await cl_users.update_many({}, {"$set": {"online": False, "wsConnectionCount": 0}})
     except Exception as e:
         print(f"Startup DB warning: {e}")
     asyncio.create_task(migrate_unencrypted_messages())
     asyncio.create_task(encrypt_existing_uploads())
+    asyncio.create_task(sweep_ai_temp_files_task())
 
 
 async def migrate_unencrypted_messages():
@@ -4124,6 +4166,691 @@ async def build_last_message(chat_id: str, session_token: str = "") -> Optional[
     }
 
 
+async def _build_ai_history(
+    user_id: str,
+    session_token: str,
+    ai_chat_id: str,
+) -> List[Dict[str, str]]:
+    docs = (
+        await cl_ai_messages.find({"userId": user_id, "aiChatId": ai_chat_id})
+        .sort("timestamp", -1)
+        .limit(AI_HISTORY_MESSAGE_LIMIT)
+        .to_list(AI_HISTORY_MESSAGE_LIMIT)
+    )
+    docs.reverse()
+    messages: List[Dict[str, str]] = []
+    budget = AI_HISTORY_CHAR_BUDGET
+    trimmed: List[Dict[str, str]] = []
+    for doc in docs:
+        content = decrypt_with_fallback(
+            doc.get("content", ""), session_token, f"ai:{ai_chat_id}"
+        )
+        attachment_context = decrypt_with_fallback(
+            doc.get("extractedContext", ""), session_token, f"ai:{ai_chat_id}"
+        )
+        if attachment_context:
+            content = f"{content}\n\n{attachment_context}".strip()
+        if not content.strip():
+            continue
+        trimmed.append({"role": doc.get("role", "user"), "content": content})
+    for item in reversed(trimmed):
+        remaining = budget - sum(len(m["content"]) for m in messages)
+        if remaining <= 0:
+            break
+        messages.insert(0, {"role": item["role"], "content": item["content"][-remaining:]})
+    return messages
+
+
+async def _prepare_ai_attachment(
+    user_id: str,
+    attachment: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    oid = await try_object_id(str(attachment.get("tempFileId") or ""))
+    if not oid:
+        return None
+    row = await cl_ai_temp_files.find_one({"_id": oid, "userId": user_id})
+    if not row:
+        return None
+    file_path = Path(str(row.get("filePath") or ""))
+    if not file_path.exists():
+        alt_path = Path(__file__).resolve().parent / file_path
+        if alt_path.exists():
+            file_path = alt_path
+        else:
+            await cl_ai_temp_files.delete_one({"_id": oid})
+            return None
+    is_image = bool(row.get("isImage"))
+    mime_type = str(row.get("mimeType") or "application/octet-stream")
+    file_name = str(row.get("fileName") or "")
+    image_data_url = ""
+    extracted_context = ""
+    try:
+        if is_image:
+            data = await asyncio.to_thread(file_path.read_bytes)
+            image_data_url = f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"
+            extracted_context = f"[تصویر پیوست‌شده: {file_name}]"
+        elif file_path.suffix.lower() == ".pdf":
+            text = await asyncio.to_thread(_extract_pdf_text, file_path)
+            extracted_context = f"[فایل پیوست‌شده: {file_name}]\n{text[:AI_MAX_FILE_CONTEXT_CHARS]}"
+        else:
+            raw = await asyncio.to_thread(file_path.read_bytes)
+            text = raw.decode("utf-8", errors="replace")
+            extracted_context = f"[فایل پیوست‌شده: {file_name}]\n{text[:AI_MAX_FILE_CONTEXT_CHARS]}"
+    except Exception:
+        return None
+    return {
+        "meta": {
+            "fileName": file_name,
+            "fileSize": int(row.get("fileSize") or 0),
+            "mimeType": mime_type,
+            "isImage": is_image,
+        },
+        "image_data_url": image_data_url,
+        "extracted_context": extracted_context,
+        "file_path": file_path,
+        "file_oid": oid,
+    }
+
+
+def _extract_pdf_text(file_path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(file_path))
+        parts = []
+        for page in reader.pages:
+            parts.append(page.extract_text() or "")
+            if sum(len(part) for part in parts) >= AI_MAX_FILE_CONTEXT_CHARS:
+                break
+        return "\n".join(parts)[:AI_MAX_FILE_CONTEXT_CHARS]
+    except Exception as e:
+        print(f"PDF extraction error: {e}")
+        return ""
+
+
+async def _cleanup_ai_temp_attachment(prepared: Dict[str, Any]) -> None:
+    try:
+        await asyncio.to_thread(prepared["file_path"].unlink, True)
+    except Exception:
+        pass
+    try:
+        await cl_ai_temp_files.delete_one({"_id": prepared["file_oid"]})
+    except Exception:
+        pass
+
+
+async def run_post_turn_memory(
+    user_id: str,
+    ai_chat_id: str,
+    history_messages: List[Dict[str, str]],
+    assistant_text: str,
+    previous_summary: str,
+    event_queue: Optional[asyncio.Queue] = None,
+) -> None:
+    if not assistant_text.strip():
+        return
+    try:
+        existing = await get_user_memories(user_id)
+        result = await process_post_turn_memory_and_summary(
+            [*history_messages, {"role": "assistant", "content": assistant_text}],
+            previous_summary=previous_summary,
+            existing_memories=[{"id": item["id"], "text": item["content"]} for item in existing],
+        )
+        summary = str(result.get("summary") or "")
+        if summary:
+            await cl_ai_chats.update_one(
+                {"_id": await try_object_id(ai_chat_id), "userId": user_id},
+                {
+                    "$set": {
+                        "summary": encrypt_scoped_text(
+                            summary, "", f"ai-chat-meta:{ai_chat_id}"
+                        ),
+                        "summaryEncrypted": True,
+                    }
+                },
+            )
+        action = result.get("memory_action")
+        memory_text = str(result.get("memory_text") or "")
+        memory_changed = False
+        if action == "add" and len(existing) < MAX_AI_USER_MEMORIES and memory_text:
+            now = utc_now()
+            await cl_ai_memories.insert_one(
+                {
+                    "userId": user_id,
+                    "content": encrypt_scoped_text(
+                        memory_text, "", ai_memory_scope(user_id)
+                    ),
+                    "contentEncrypted": True,
+                    "createdAt": now,
+                    "updatedAt": now,
+                }
+            )
+            memory_changed = True
+        elif action == "replace" and memory_text:
+            replace_oid = await try_object_id(str(result.get("replace_id") or ""))
+            if replace_oid:
+                update = await cl_ai_memories.update_one(
+                    {"_id": replace_oid, "userId": user_id},
+                    {
+                        "$set": {
+                            "content": encrypt_scoped_text(
+                                memory_text, "", ai_memory_scope(user_id)
+                            ),
+                            "updatedAt": utc_now(),
+                        }
+                    },
+                )
+                memory_changed = update.modified_count > 0
+        if memory_changed:
+            if event_queue is not None:
+                await event_queue.put({"type": "ai_memories_updated"})
+            await safe_send_ai(user_id, {"type": "ai_memories_updated"})
+    except Exception as e:
+        print(f"Post-turn memory error: {e}")
+
+
+async def stream_ai_reply(
+    user_id: str,
+    session_token: str,
+    user_name: str,
+    username: str,
+    user_bio: str,
+    ai_chat_id: str,
+    prompt_messages: List[Dict[str, str]],
+    memory_summary: str,
+    model_name: str,
+    model_key: str,
+    reasoning_mode: bool,
+    should_generate_title: bool = False,
+    first_user_message: str = "",
+    is_temporary_chat: bool = False,
+    user_memories: Optional[List[str]] = None,
+    search_query: str = "",
+    search_enabled: bool = False,
+    detected_urls: Optional[List[str]] = None,
+    image_data_url: str = "",
+    user_text: str = "",
+    prepared_attachment: Optional[Dict[str, Any]] = None,
+    event_queue: Optional[asyncio.Queue] = None,
+):
+    async def emit(payload: Dict[str, Any]):
+        if event_queue is not None:
+            await event_queue.put(payload)
+        else:
+            await safe_send_ai(user_id, payload)
+
+    ai_scope = f"ai:{ai_chat_id}"
+    sources: List[Dict[str, Any]] = []
+    urls_to_fetch = list(detected_urls or [])
+    effective_search = bool(search_enabled or urls_to_fetch)
+    analyzing_attachment = bool(prepared_attachment)
+    ai_message_doc = {
+        "userId": user_id,
+        "aiChatId": ai_chat_id,
+        "role": "assistant",
+        "content": encrypt_scoped_text("", session_token, ai_scope),
+        "contentEncrypted": True,
+        "reasoningContent": encrypt_scoped_text("", session_token, ai_scope),
+        "reasoningEnabled": bool(reasoning_mode),
+        "streamCompleted": False,
+        "searchEnabled": effective_search,
+        "searchStatus": "searching" if effective_search else "",
+        "searchSources": "",
+        "analyzingAttachment": analyzing_attachment,
+        "aiModelKey": normalize_ai_model_key(model_key),
+        "aiModelName": ai_model_label_from_key(model_key),
+        "timestamp": utc_now(),
+    }
+    if prepared_attachment:
+        ai_message_doc["attachmentMeta"] = prepared_attachment["meta"]
+    result = await cl_ai_messages.insert_one(ai_message_doc)
+    ai_msg_id = str(result.inserted_id)
+    message_ts_ms = dt_to_epoch_ms(ai_message_doc["timestamp"])
+
+    await emit(
+        {
+            "type": "ai_response_start",
+            "message": {
+                "id": ai_msg_id,
+                "aiChatId": ai_chat_id,
+                "senderId": "ai",
+                "text": "",
+                "reasoningContent": "",
+                "reasoningEnabled": bool(reasoning_mode),
+                "isStreaming": True,
+                "streamCompleted": False,
+                "searchEnabled": effective_search,
+                "searchStatus": "searching" if effective_search else "",
+                "searchSources": sources,
+                "analyzingAttachment": analyzing_attachment,
+                "aiModelKey": normalize_ai_model_key(model_key),
+                "aiModelName": ai_model_label_from_key(model_key),
+                "timestamp": message_ts_ms,
+            },
+        },
+    )
+
+    if effective_search:
+        fetched_sources: List[Dict[str, Any]] = []
+        web_sources: List[Dict[str, Any]] = []
+        if urls_to_fetch:
+            fetched_sources = await perform_deepseek_url_fetch(urls_to_fetch)
+        if search_enabled:
+            web_sources = await perform_deepseek_web_search(search_query, search_query)
+        merged: List[Dict[str, Any]] = []
+        seen_urls = set()
+        for item in [*fetched_sources, *web_sources]:
+            u = str(item.get("url") or "").strip()
+            if not u or u in seen_urls:
+                continue
+            seen_urls.add(u)
+            merged.append({**item, "index": len(merged) + 1})
+        sources = merged
+        stored_sources = [
+            {k: v for k, v in item.items() if k != "content"}
+            for item in sources
+        ]
+        if stored_sources:
+            await cl_ai_messages.update_one(
+                {"_id": result.inserted_id},
+                {
+                    "$set": {
+                        "searchSources": encrypt_scoped_text(
+                            json.dumps(stored_sources, ensure_ascii=False), "", ai_scope
+                        )
+                    }
+                },
+            )
+        await emit(
+            {
+                "type": "ai_search_results",
+                "aiChatId": ai_chat_id,
+                "messageId": ai_msg_id,
+                "status": "completed",
+                "searchStatus": "completed",
+                "searchSources": stored_sources,
+            },
+        )
+
+    stopped = False
+    full_ai_response = ""
+    full_reasoning_content = ""
+    raw_usage_tokens = 0
+    stream_started_at = time.time()
+    first_main_content_at: Optional[float] = None
+    try:
+        async for chunk in generate_ai_response_stream(
+            prompt_messages,
+            user_name=user_name,
+            username=username,
+            chat_id=user_id,
+            bio=user_bio,
+            conversation_summary=memory_summary,
+            model=model_name,
+            reasoning_mode=reasoning_mode,
+            user_memories=user_memories,
+            search_results=sources,
+            image_data_url=image_data_url,
+            image_prompt=user_text,
+        ):
+            text_chunk = ""
+            reasoning_chunk = ""
+            if isinstance(chunk, dict):
+                text_chunk = str(chunk.get("content") or "")
+                reasoning_chunk = str(chunk.get("reasoning_content") or "")
+                usage = chunk.get("usage")
+                if isinstance(usage, dict):
+                    raw_usage_tokens = int(usage.get("total_tokens") or 0) or raw_usage_tokens
+            elif isinstance(chunk, str):
+                text_chunk = chunk
+
+            if text_chunk:
+                full_ai_response += text_chunk
+                if first_main_content_at is None:
+                    first_main_content_at = time.time()
+            if reasoning_chunk and reasoning_mode:
+                full_reasoning_content += reasoning_chunk
+            if not text_chunk and not (reasoning_chunk and reasoning_mode):
+                continue
+
+            await cl_ai_messages.update_one(
+                {"_id": result.inserted_id},
+                {
+                    "$set": {
+                        "content": encrypt_scoped_text(
+                            full_ai_response, session_token, ai_scope
+                        ),
+                        "reasoningContent": encrypt_scoped_text(
+                            full_reasoning_content, session_token, ai_scope
+                        ),
+                        "streamCompleted": False,
+                    }
+                },
+            )
+            await emit(
+                {
+                    "type": "ai_response_chunk",
+                    "aiChatId": ai_chat_id,
+                    "messageId": ai_msg_id,
+                    "chunk": text_chunk,
+                    "reasoningChunk": reasoning_chunk,
+                    "text": full_ai_response,
+                    "reasoningContent": full_reasoning_content,
+                    "hasMainContent": bool(full_ai_response),
+                },
+            )
+    except asyncio.CancelledError:
+        stopped = True
+        raise
+    finally:
+        reasoning_duration_sec = int(
+            max(
+                0,
+                round((first_main_content_at or time.time()) - stream_started_at),
+            )
+        )
+        if raw_usage_tokens <= 0:
+            prompt_chars = sum(len(str(m.get("content") or "")) for m in prompt_messages)
+            raw_usage_tokens = max(
+                1, (prompt_chars + len(full_ai_response) + len(full_reasoning_content)) // 3
+            )
+        usage_status = await record_token_usage(user_id, raw_usage_tokens, model_key)
+        if prepared_attachment:
+            await _cleanup_ai_temp_attachment(prepared_attachment)
+        await cl_ai_messages.update_one(
+            {"_id": result.inserted_id},
+            {
+                "$set": {
+                    "content": encrypt_scoped_text(
+                        full_ai_response, session_token, ai_scope
+                    ),
+                    "reasoningContent": encrypt_scoped_text(
+                        full_reasoning_content, session_token, ai_scope
+                    ),
+                    "streamCompleted": True,
+                    "reasoningDurationSec": reasoning_duration_sec,
+                    "searchStatus": "completed" if effective_search else "",
+                }
+            },
+        )
+        generated_title = ""
+        chat_update: Dict[str, Any] = {"updatedAt": utc_now()}
+        if is_temporary_chat:
+            chat_update["title"] = encrypt_scoped_text(
+                "گفتگوی موقت", "", f"ai-chat-meta:{ai_chat_id}"
+            )
+            chat_update["titleEncrypted"] = True
+        elif should_generate_title and not stopped:
+            candidate_title = await generate_chat_title(first_user_message)
+            if (
+                isinstance(candidate_title, str)
+                and candidate_title.strip()
+                and candidate_title.strip() != "گفتگوی جدید"
+            ):
+                generated_title = candidate_title.strip()[:56]
+                chat_update["title"] = encrypt_scoped_text(
+                    generated_title, "", f"ai-chat-meta:{ai_chat_id}"
+                )
+                chat_update["titleEncrypted"] = True
+        await cl_ai_chats.update_one(
+            {"_id": await try_object_id(ai_chat_id), "userId": user_id},
+            {"$set": chat_update},
+        )
+
+        done_sources = [
+            {k: v for k, v in item.items() if k != "content"}
+            for item in sources
+        ]
+        await emit(
+            {
+                "type": "ai_response_done",
+                "stopped": stopped,
+                "title": generated_title,
+                "usage": usage_status,
+                "message": {
+                    "id": ai_msg_id,
+                    "aiChatId": ai_chat_id,
+                    "senderId": "ai",
+                    "text": full_ai_response,
+                    "reasoningContent": full_reasoning_content,
+                    "reasoningEnabled": bool(reasoning_mode),
+                    "isStreaming": False,
+                    "streamCompleted": True,
+                    "reasoningDurationSec": reasoning_duration_sec,
+                    "searchEnabled": effective_search,
+                    "searchStatus": "completed" if effective_search else "",
+                    "searchSources": done_sources,
+                    "analyzingAttachment": False,
+                    "aiModelKey": normalize_ai_model_key(model_key),
+                    "aiModelName": ai_model_label_from_key(model_key),
+                    "timestamp": message_ts_ms,
+                },
+            },
+        )
+        if not is_temporary_chat and not stopped and full_ai_response.strip():
+            if event_queue is not None:
+                await run_post_turn_memory(
+                    user_id,
+                    ai_chat_id,
+                    prompt_messages,
+                    full_ai_response,
+                    memory_summary,
+                    event_queue=event_queue,
+                )
+            else:
+                asyncio.create_task(
+                    run_post_turn_memory(
+                        user_id,
+                        ai_chat_id,
+                        prompt_messages,
+                        full_ai_response,
+                        memory_summary,
+                    )
+                )
+        if event_queue is not None:
+            await event_queue.put(None)
+
+
+async def handle_ai_message(
+    user_id: str,
+    session_token: str,
+    user_name: str,
+    username: str,
+    user_bio: str,
+    data: Dict[str, Any],
+    event_queue: Optional[asyncio.Queue] = None,
+) -> None:
+    async def emit(payload: Dict[str, Any]):
+        if event_queue is not None:
+            await event_queue.put(payload)
+        else:
+            await safe_send_ai(user_id, payload)
+
+    async def finish_error(payload: Dict[str, Any]):
+        await emit(payload)
+        if event_queue is not None:
+            await event_queue.put(None)
+
+    text = data.get("text")
+    client_id = data.get("clientId")
+    ai_chat_id = str(data.get("aiChatId") or "").strip()
+    use_reasoner = bool(data.get("useReasoner"))
+    use_web_search = bool(data.get("useWebSearch"))
+    attachment = data.get("attachment") if isinstance(data.get("attachment"), dict) else None
+    model_key = normalize_ai_model_key(data.get("modelKey") or "nova-flash")
+    model_name = ai_model_name_from_key(model_key, use_reasoner)
+
+    if not isinstance(text, str):
+        if event_queue is not None:
+            await event_queue.put(None)
+        return
+    if len(text) > MAX_AI_MESSAGE_LENGTH:
+        if event_queue is not None:
+            await event_queue.put(None)
+        return
+    if not text.strip() and not attachment:
+        if event_queue is not None:
+            await event_queue.put(None)
+        return
+
+    usage = await get_usage_status(user_id)
+    if usage["tokens"]["exhausted"]:
+        await finish_error(
+            {
+                "type": "ai_error",
+                "code": "ai_daily_limit_reached",
+                "message": "سهمیه ۲۰٬۰۰۰ توکنی امروز شما تکمیل شده است. لطفاً تا ۰۰:۰۰ به وقت تهران صبر کنید.",
+                "usage": usage,
+            }
+        )
+        return
+
+    try:
+        ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
+    except HTTPException:
+        await asyncio.sleep(0.12)
+        try:
+            ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
+        except HTTPException:
+            await finish_error(
+                {"type": "ai_error", "message": "گفتگوی انتخاب‌شده معتبر نیست."}
+            )
+            return
+
+    is_temporary_chat = bool(ai_chat.get("isTemporary", False))
+    user_msg_count = await cl_ai_messages.count_documents(
+        {"userId": user_id, "aiChatId": ai_chat_id, "role": "user"}
+    )
+    if user_msg_count >= MAX_AI_MESSAGES_PER_CHAT:
+        await finish_error(
+            {
+                "type": "ai_error",
+                "message": "حداکثر ۶۰ پیام در هر گفتگو مجاز است. لطفاً گفتگوی جدید باز کنید.",
+            }
+        )
+        return
+
+    prepared_attachment: Optional[Dict[str, Any]] = None
+    if attachment:
+        prepared_attachment = await _prepare_ai_attachment(user_id, attachment)
+        if not prepared_attachment:
+            await finish_error(
+                {"type": "ai_error", "message": "فایل پیوست معتبر نیست یا منقضی شده است."}
+            )
+            return
+        if not await consume_file_quota(user_id):
+            await _cleanup_ai_temp_attachment(prepared_attachment)
+            await finish_error(
+                {"type": "ai_error", "message": "سقف ۵ فایل روزانه شما تکمیل شده است."}
+            )
+            return
+
+    detected_urls = extract_urls_from_text(text)
+    if (use_web_search or detected_urls) and not await consume_search_quota(user_id):
+        if prepared_attachment:
+            await _cleanup_ai_temp_attachment(prepared_attachment)
+        await finish_error(
+            {"type": "ai_error", "message": "سقف ۵ جستجوی روزانه شما تکمیل شده است."}
+        )
+        return
+
+    user_message_doc: Dict[str, Any] = {
+        "userId": user_id,
+        "aiChatId": ai_chat_id,
+        "role": "user",
+        "content": encrypt_scoped_text(text, session_token, f"ai:{ai_chat_id}"),
+        "contentEncrypted": True,
+        "timestamp": utc_now(),
+    }
+    if prepared_attachment:
+        user_message_doc["attachmentMeta"] = prepared_attachment["meta"]
+        user_message_doc["extractedContext"] = encrypt_scoped_text(
+            prepared_attachment["extracted_context"],
+            session_token,
+            f"ai:{ai_chat_id}",
+        )
+    user_insert = await cl_ai_messages.insert_one(user_message_doc)
+
+    await emit(
+        {
+            "type": "ai_user_message_saved",
+            "title": "",
+            "clientId": client_id if isinstance(client_id, str) else None,
+            "message": {
+                "id": str(user_insert.inserted_id),
+                "aiChatId": ai_chat_id,
+                "senderId": user_id,
+                "text": text,
+                "timestamp": dt_to_epoch_ms(user_message_doc["timestamp"]),
+                "aiAttachment": prepared_attachment["meta"] if prepared_attachment else None,
+            },
+        }
+    )
+
+    memory_summary = ""
+    if isinstance(ai_chat.get("summary"), str):
+        memory_summary = decrypt_with_fallback(
+            ai_chat.get("summary", ""),
+            session_token,
+            f"ai-chat-meta:{ai_chat_id}",
+        ).strip()
+
+    existing_chat_title = decrypt_with_fallback(
+        ai_chat.get("title") or "",
+        session_token,
+        f"ai-chat-meta:{ai_chat_id}",
+    ).strip()
+    needs_chat_title = (not is_temporary_chat) and (
+        user_msg_count == 0 or not existing_chat_title or existing_chat_title == "گفتگوی جدید"
+    )
+    title_source_text = (
+        text.strip()
+        or (prepared_attachment["meta"]["fileName"] if prepared_attachment else "")
+        or "گفتگوی جدید"
+    )
+
+    messages = await _build_ai_history(user_id, session_token, ai_chat_id)
+    user_memories: List[str] = []
+    if not is_temporary_chat:
+        user_memories = [item["content"] for item in await get_user_memories(user_id)]
+
+    current_stream_task = active_ai_stream_tasks.get(user_id)
+    if current_stream_task and not current_stream_task.done():
+        current_stream_task.cancel()
+        try:
+            await current_stream_task
+        except asyncio.CancelledError:
+            pass
+
+    new_stream_task = asyncio.create_task(
+        stream_ai_reply(
+            user_id,
+            session_token,
+            user_name,
+            username,
+            user_bio,
+            ai_chat_id,
+            messages,
+            memory_summary,
+            model_name,
+            model_key,
+            use_reasoner,
+            should_generate_title=needs_chat_title,
+            first_user_message=title_source_text,
+            is_temporary_chat=is_temporary_chat,
+            user_memories=user_memories,
+            search_query=text or (prepared_attachment["meta"]["fileName"] if prepared_attachment else ""),
+            search_enabled=use_web_search,
+            detected_urls=detected_urls,
+            image_data_url=prepared_attachment["image_data_url"] if prepared_attachment else "",
+            user_text=text,
+            prepared_attachment=prepared_attachment,
+            event_queue=event_queue,
+        )
+    )
+    active_ai_stream_tasks[user_id] = new_stream_task
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     await websocket.accept()
@@ -4144,187 +4871,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         user_name = profile.get("name", "")
         username = profile.get("username", "")
         user_bio = decrypt_user_bio(user, token)
-
-        async def stream_ai_reply(
-            ai_chat_id: str,
-            prompt_messages: List[Dict[str, str]],
-            memory_summary: str,
-            model_name: str,
-            model_key: str,
-            reasoning_mode: bool,
-            should_generate_title: bool = False,
-            first_user_message: str = "",
-            is_temporary_chat: bool = False,
-        ):
-            ai_scope = f"ai:{ai_chat_id}"
-            ai_message_doc = {
-                "userId": chat_id,
-                "aiChatId": ai_chat_id,
-                "role": "assistant",
-                "content": encrypt_scoped_text("", token, ai_scope),
-                "contentEncrypted": True,
-                "reasoningContent": encrypt_scoped_text("", token, ai_scope),
-                "reasoningEnabled": bool(reasoning_mode),
-                "streamCompleted": False,
-                "aiModelKey": normalize_ai_model_key(model_key),
-                "aiModelName": ai_model_label_from_key(model_key),
-                "timestamp": utc_now(),
-            }
-            result = await cl_ai_messages.insert_one(ai_message_doc)
-            ai_msg_id = str(result.inserted_id)
-            message_ts_ms = dt_to_epoch_ms(ai_message_doc["timestamp"])
-
-            await safe_send_ai(
-                chat_id,
-                {
-                    "type": "ai_response_start",
-                    "message": {
-                        "id": ai_msg_id,
-                        "aiChatId": ai_chat_id,
-                        "senderId": "ai",
-                        "text": "",
-                        "reasoningContent": "",
-                        "reasoningEnabled": bool(reasoning_mode),
-                        "isStreaming": True,
-                        "streamCompleted": False,
-                        "aiModelKey": normalize_ai_model_key(model_key),
-                        "aiModelName": ai_model_label_from_key(model_key),
-                        "timestamp": message_ts_ms,
-                    },
-                },
-            )
-
-            stopped = False
-            full_ai_response = ""
-            full_reasoning_content = ""
-            stream_started_at = time.time()
-            first_main_content_at: Optional[float] = None
-            try:
-                async for chunk in generate_ai_response_stream(
-                    prompt_messages,
-                    user_name=user_name,
-                    username=username,
-                    chat_id=chat_id,
-                    bio=user_bio,
-                    conversation_summary=memory_summary,
-                    model=model_name,
-                    reasoning_mode=reasoning_mode,
-                ):
-                    text_chunk = ""
-                    reasoning_chunk = ""
-                    if isinstance(chunk, dict):
-                        text_chunk = str(chunk.get("content") or "")
-                        reasoning_chunk = str(chunk.get("reasoning_content") or "")
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
-
-                    if text_chunk:
-                        full_ai_response += text_chunk
-                        if first_main_content_at is None:
-                            first_main_content_at = time.time()
-                    if reasoning_chunk:
-                        full_reasoning_content += reasoning_chunk
-
-                    await cl_ai_messages.update_one(
-                        {"_id": result.inserted_id},
-                        {
-                            "$set": {
-                                "content": encrypt_scoped_text(
-                                    full_ai_response, token, ai_scope
-                                ),
-                                "reasoningContent": encrypt_scoped_text(
-                                    full_reasoning_content, token, ai_scope
-                                ),
-                                "streamCompleted": False,
-                            }
-                        },
-                    )
-                    await safe_send_ai(
-                        chat_id,
-                        {
-                            "type": "ai_response_chunk",
-                            "aiChatId": ai_chat_id,
-                            "messageId": ai_msg_id,
-                            "chunk": text_chunk,
-                            "reasoningChunk": reasoning_chunk,
-                            "text": full_ai_response,
-                            "reasoningContent": full_reasoning_content,
-                            "hasMainContent": bool(full_ai_response),
-                        },
-                    )
-            except asyncio.CancelledError:
-                stopped = True
-                raise
-            finally:
-                reasoning_duration_sec = int(
-                    max(
-                        0,
-                        round(
-                            (first_main_content_at or time.time()) - stream_started_at
-                        ),
-                    )
-                )
-                await cl_ai_messages.update_one(
-                    {"_id": result.inserted_id},
-                    {
-                        "$set": {
-                            "content": encrypt_scoped_text(
-                                full_ai_response, token, ai_scope
-                            ),
-                            "reasoningContent": encrypt_scoped_text(
-                                full_reasoning_content, token, ai_scope
-                            ),
-                            "streamCompleted": True,
-                            "reasoningDurationSec": reasoning_duration_sec,
-                        }
-                    },
-                )
-                generated_title = ""
-                chat_update: Dict[str, Any] = {"updatedAt": utc_now()}
-                if is_temporary_chat:
-                    chat_update["title"] = encrypt_scoped_text(
-                        "گفتگوی موقت", "", f"ai-chat-meta:{ai_chat_id}"
-                    )
-                    chat_update["titleEncrypted"] = True
-                elif should_generate_title and not stopped:
-                    candidate_title = await generate_chat_title(first_user_message)
-                    if (
-                        isinstance(candidate_title, str)
-                        and candidate_title.strip()
-                        and candidate_title.strip() != "گفتگوی جدید"
-                    ):
-                        generated_title = candidate_title.strip()[:56]
-                        chat_update["title"] = encrypt_scoped_text(
-                            generated_title, "", f"ai-chat-meta:{ai_chat_id}"
-                        )
-                        chat_update["titleEncrypted"] = True
-                await cl_ai_chats.update_one(
-                    {"_id": await try_object_id(ai_chat_id), "userId": chat_id},
-                    {"$set": chat_update},
-                )
-
-                await safe_send_ai(
-                    chat_id,
-                    {
-                        "type": "ai_response_done",
-                        "stopped": stopped,
-                        "title": generated_title,
-                        "message": {
-                            "id": ai_msg_id,
-                            "aiChatId": ai_chat_id,
-                            "senderId": "ai",
-                            "text": full_ai_response,
-                            "reasoningContent": full_reasoning_content,
-                            "reasoningEnabled": bool(reasoning_mode),
-                            "isStreaming": False,
-                            "streamCompleted": True,
-                            "reasoningDurationSec": reasoning_duration_sec,
-                            "aiModelKey": normalize_ai_model_key(model_key),
-                            "aiModelName": ai_model_label_from_key(model_key),
-                            "timestamp": message_ts_ms,
-                        },
-                    },
-                )
 
         if became_online:
             user_doc = await cl_users.find_one({"chatId": chat_id}, {"settings": 1})
@@ -4975,163 +5521,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                         }
                     )
             elif data.get("type") == "ai_message":
-                text = data.get("text")
-                client_id = data.get("clientId")
-                ai_chat_id = str(data.get("aiChatId") or "").strip()
-                use_reasoner = bool(data.get("useReasoner"))
-                model_key = normalize_ai_model_key(data.get("modelKey") or "nova-flash")
-                model_name = ai_model_name_from_key(model_key, use_reasoner)
-
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                if len(text) > MAX_AI_MESSAGE_LENGTH:
-                    continue
-
-                quota = await consume_quota(chat_id, model_key)
-                if not quota.get("allowed"):
-                    await safe_send_ai(
-                        chat_id,
-                        {
-                            "type": "ai_error",
-                            "code": "ai_daily_limit_reached",
-                            "modelKey": model_key,
-                            "remaining": quota.get("remaining", 0),
-                            "message": (
-                                "سقف ۱۰ پیام روزانه Nova Pro شما به پایان رسیده است. لطفاً تا ۰۰:۰۰ صبر کنید یا از Nova Flash استفاده کنید."
-                                if model_key == "nova-pro"
-                                else "سقف ۵۰ پیام روزانه Nova Flash شما به پایان رسیده است. لطفاً تا ۰۰:۰۰ صبر کنید یا از Nova Pro استفاده کنید."
-                            ),
-                        },
-                    )
-                    continue
-
-                try:
-                    ai_chat = await ensure_ai_chat(chat_id, ai_chat_id)
-                except HTTPException:
-                    await asyncio.sleep(0.12)
-                    try:
-                        ai_chat = await ensure_ai_chat(chat_id, ai_chat_id)
-                    except HTTPException:
-                        await safe_send_ai(
-                            chat_id,
-                            {
-                                "type": "ai_error",
-                                "message": "گفتگوی انتخاب‌شده معتبر نیست.",
-                            },
-                        )
-                        continue
-
-                user_msg_count = await cl_ai_messages.count_documents(
-                    {"userId": chat_id, "aiChatId": ai_chat_id, "role": "user"}
+                await handle_ai_message(
+                    chat_id, token, user_name, username, user_bio, data
                 )
-                if user_msg_count >= MAX_AI_MESSAGES_PER_CHAT:
-                    await safe_send_ai(
-                        chat_id,
-                        {
-                            "type": "ai_error",
-                            "message": "حداکثر 30 پیام در هر گفتگو مجاز است. لطفاً گفتگوی جدید باز کنید.",
-                        },
-                    )
-                    continue
-
-                user_message_doc = {
-                    "userId": chat_id,
-                    "aiChatId": ai_chat_id,
-                    "role": "user",
-                    "content": encrypt_scoped_text(text, token, f"ai:{ai_chat_id}"),
-                    "contentEncrypted": True,
-                    "timestamp": utc_now(),
-                }
-                user_insert = await cl_ai_messages.insert_one(user_message_doc)
-
-                await safe_send_ai(
-                    chat_id,
-                    {
-                        "type": "ai_user_message_saved",
-                        "title": "",
-                        "clientId": client_id if isinstance(client_id, str) else None,
-                        "message": {
-                            "id": str(user_insert.inserted_id),
-                            "aiChatId": ai_chat_id,
-                            "senderId": chat_id,
-                            "text": text,
-                            "timestamp": dt_to_epoch_ms(user_message_doc["timestamp"]),
-                        },
-                    },
-                )
-
-                memory_summary = ""
-                if isinstance(ai_chat.get("summary"), str):
-                    memory_summary = decrypt_with_fallback(
-                        ai_chat.get("summary", ""),
-                        token,
-                        f"ai-chat-meta:{ai_chat_id}",
-                    ).strip()
-
-                history_docs = (
-                    await cl_ai_messages.find(
-                        {"userId": chat_id, "aiChatId": ai_chat_id}
-                    )
-                    .sort("timestamp", -1)
-                    .limit(6)
-                    .to_list(6)
-                )
-                history_docs.reverse()
-                messages = [
-                    {
-                        "role": doc["role"],
-                        "content": decrypt_with_fallback(
-                            doc.get("content", ""), token, f"ai:{ai_chat_id}"
-                        ),
-                    }
-                    for doc in history_docs
-                ]
-
-                refreshed_summary = await generate_conversation_summary(
-                    messages,
-                    previous_summary=memory_summary,
-                    user_name=user_name,
-                    username=username,
-                    chat_id=chat_id,
-                    bio=user_bio,
-                )
-                await cl_ai_chats.update_one(
-                    {"_id": ai_chat["_id"], "userId": chat_id},
-                    {
-                        "$set": {
-                            "summary": encrypt_scoped_text(
-                                refreshed_summary,
-                                "",
-                                f"ai-chat-meta:{ai_chat_id}",
-                            ),
-                            "summaryEncrypted": True,
-                            "updatedAt": utc_now(),
-                        }
-                    },
-                )
-
-                current_stream_task = active_ai_stream_tasks.get(chat_id)
-                if current_stream_task and not current_stream_task.done():
-                    current_stream_task.cancel()
-                    try:
-                        await current_stream_task
-                    except asyncio.CancelledError:
-                        pass
-
-                new_stream_task = asyncio.create_task(
-                    stream_ai_reply(
-                        ai_chat_id,
-                        messages,
-                        refreshed_summary,
-                        model_name,
-                        model_key,
-                        use_reasoner,
-                        should_generate_title=(user_msg_count == 0),
-                        first_user_message=text,
-                        is_temporary_chat=bool(ai_chat.get("isTemporary", False)),
-                    )
-                )
-                active_ai_stream_tasks[chat_id] = new_stream_task
             elif data.get("type") == "ai_stop":
                 current_stream_task = active_ai_stream_tasks.get(chat_id)
                 if current_stream_task and not current_stream_task.done():
@@ -5205,7 +5597,6 @@ async def ensure_ai_chat(user_id: str, ai_chat_id: str) -> dict:
     return chat
 
 
-AI_FLASH_DAILY_LIMIT = 50
 
 
 def tehran_day_key(now: Optional[datetime] = None) -> str:
@@ -5216,40 +5607,53 @@ def tehran_day_key(now: Optional[datetime] = None) -> str:
 async def get_usage_status(user_id: str) -> Dict[str, Any]:
     day_key = tehran_day_key()
     row = await cl_ai_usage.find_one({"userId": user_id, "dateKey": day_key})
-    pro_used = int(row.get("proCount", 0)) if isinstance(row, dict) else 0
-    flash_used = int(row.get("flashCount", 0)) if isinstance(row, dict) else 0
-    pro_used = max(0, min(AI_PRO_DAILY_LIMIT, pro_used))
-    flash_used = max(0, min(AI_FLASH_DAILY_LIMIT, flash_used))
+    tokens_used = max(0, int(row.get("tokensUsed", 0))) if isinstance(row, dict) else 0
+    file_used = max(0, int(row.get("fileCount", 0))) if isinstance(row, dict) else 0
+    search_used = max(0, int(row.get("searchCount", 0))) if isinstance(row, dict) else 0
+    used_percent = min(100, round((tokens_used / AI_DAILY_TOKEN_LIMIT) * 100)) if AI_DAILY_TOKEN_LIMIT else 100
     return {
         "dateKey": day_key,
-        "pro": {
-            "used": pro_used,
-            "remaining": max(0, AI_PRO_DAILY_LIMIT - pro_used),
-            "limit": AI_PRO_DAILY_LIMIT,
+        "resetTimezone": "Asia/Tehran",
+        "tokens": {
+            "usedPercent": used_percent,
+            "remainingPercent": max(0, 100 - used_percent),
+            "exhausted": tokens_used >= AI_DAILY_TOKEN_LIMIT,
         },
-        "flash": {
-            "used": flash_used,
-            "remaining": max(0, AI_FLASH_DAILY_LIMIT - flash_used),
-            "limit": AI_FLASH_DAILY_LIMIT,
+        "files": {
+            "used": file_used,
+            "remaining": max(0, AI_DAILY_FILE_LIMIT - file_used),
+            "limit": AI_DAILY_FILE_LIMIT,
+        },
+        "search": {
+            "used": search_used,
+            "remaining": max(0, AI_DAILY_SEARCH_LIMIT - search_used),
+            "limit": AI_DAILY_SEARCH_LIMIT,
         },
     }
 
 
-async def consume_quota(user_id: str, model_key: str) -> Dict[str, Any]:
-    status = await get_usage_status(user_id)
-    quota_key = "pro" if model_key == "nova-pro" else "flash"
-    field = "proCount" if quota_key == "pro" else "flashCount"
-    limit = AI_PRO_DAILY_LIMIT if quota_key == "pro" else AI_FLASH_DAILY_LIMIT
-    used = status[quota_key]["used"]
-    if used >= limit:
-        return {
-            **status[quota_key],
-            "allowed": False,
-            "modelKey": model_key,
-            "dateKey": status["dateKey"],
-        }
+async def record_token_usage(user_id: str, raw_tokens: int, model_key: str) -> Dict[str, Any]:
+    effective_tokens = max(0, int(raw_tokens or 0))
+    if normalize_ai_model_key(model_key) == "nova-pro":
+        effective_tokens *= 2
+    await cl_ai_usage.update_one(
+        {"userId": user_id, "dateKey": tehran_day_key()},
+        {
+            "$inc": {"tokensUsed": effective_tokens},
+            "$set": {"updatedAt": utc_now()},
+            "$setOnInsert": {"createdAt": utc_now()},
+        },
+        upsert=True,
+    )
+    return await get_usage_status(user_id)
 
-    day_key = status["dateKey"]
+
+async def consume_daily_quota(user_id: str, field: str, limit: int) -> bool:
+    day_key = tehran_day_key()
+    row = await cl_ai_usage.find_one({"userId": user_id, "dateKey": day_key})
+    used = max(0, int(row.get(field, 0))) if isinstance(row, dict) else 0
+    if used >= limit:
+        return False
     await cl_ai_usage.update_one(
         {"userId": user_id, "dateKey": day_key},
         {
@@ -5259,30 +5663,224 @@ async def consume_quota(user_id: str, model_key: str) -> Dict[str, Any]:
         },
         upsert=True,
     )
-    next_status = await get_usage_status(user_id)
-    return {
-        **next_status[quota_key],
-        "allowed": True,
-        "modelKey": model_key,
-        "dateKey": day_key,
-    }
+    return True
 
 
+async def consume_file_quota(user_id: str) -> bool:
+    return await consume_daily_quota(user_id, "fileCount", AI_DAILY_FILE_LIMIT)
+
+
+async def consume_search_quota(user_id: str) -> bool:
+    return await consume_daily_quota(user_id, "searchCount", AI_DAILY_SEARCH_LIMIT)
+
+
+def ai_memory_scope(user_id: str) -> str:
+    return f"ai-memory:{user_id}"
+
+
+async def get_user_memories(user_id: str) -> List[Dict[str, str]]:
+    rows = (
+        await cl_ai_memories.find({"userId": user_id})
+        .sort("updatedAt", -1)
+        .limit(MAX_AI_USER_MEMORIES)
+        .to_list(MAX_AI_USER_MEMORIES)
+    )
+    return [
+        {
+            "id": str(row["_id"]),
+            "content": decrypt_with_fallback(
+                row.get("content") or "", "", ai_memory_scope(user_id)
+            ),
+            "updatedAt": dt_to_epoch_ms(row.get("updatedAt")),
+        }
+        for row in rows
+    ]
+
+
+async def sweep_ai_temp_files(max_age_sec: int = AI_TEMP_FILE_TTL_SEC) -> None:
+    AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - max_age_sec
+    for entry in AI_TEMP_DIR.iterdir():
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink(missing_ok=True)
+        except Exception:
+            continue
+    cutoff_dt = utc_now() - timedelta(seconds=max_age_sec)
+    stale = await cl_ai_temp_files.find({"createdAt": {"$lt": cutoff_dt}}).to_list(None)
+    for row in stale:
+        try:
+            Path(str(row.get("filePath") or "")).unlink(missing_ok=True)
+        except Exception:
+            pass
+    await cl_ai_temp_files.delete_many({"createdAt": {"$lt": cutoff_dt}})
+    await cl_ai_usage.delete_many({"dateKey": {"$ne": tehran_day_key()}})
+
+
+async def sweep_ai_temp_files_task() -> None:
+    while True:
+        try:
+            await sweep_ai_temp_files()
+        except Exception as e:
+            print(f"AI temp sweep warning: {e}")
+        await asyncio.sleep(600)
+
+
+@app.get("/ai/usage-status")
 @app.get("/ai/pro-usage-status")
 @limiter.limit("100/minute;2000/hour")
-async def get_ai_pro_usage_status(
+async def get_ai_usage_status(
     request: Request, current_user: dict = Depends(get_current_user)
 ):
-    user_id = current_user["chatId"]
-    status = await get_usage_status(user_id)
+    status = await get_usage_status(current_user["chatId"])
     return {
-        "dateKey": status["dateKey"],
-        "pro": status["pro"],
-        "flash": status["flash"],
-        "limit": status["pro"]["limit"],
-        "used": status["pro"]["used"],
-        "remaining": status["pro"]["remaining"],
+        **status,
+        "limit": AI_DAILY_TOKEN_LIMIT,
+        "used": AI_DAILY_TOKEN_LIMIT - round(
+            (status["tokens"]["remainingPercent"] / 100) * AI_DAILY_TOKEN_LIMIT
+        ),
+        "remaining": round(
+            (status["tokens"]["remainingPercent"] / 100) * AI_DAILY_TOKEN_LIMIT
+        ),
     }
+
+
+class AIMemoryCreateRequest(BaseModel):
+    content: str
+
+
+@app.get("/ai/memories")
+@limiter.limit("100/minute;2000/hour")
+async def list_ai_memories(
+    request: Request, current_user: dict = Depends(get_current_user)
+):
+    return await get_user_memories(current_user["chatId"])
+
+
+@app.post("/ai/memories")
+@limiter.limit("30/minute;300/hour")
+async def add_ai_memory(
+    request: Request,
+    body: AIMemoryCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    content = re.sub(r"\s+", " ", str(body.content or "")).strip()[:200]
+    if not content:
+        raise HTTPException(status_code=400, detail="متن حافظه نمی‌تواند خالی باشد.")
+    count = await cl_ai_memories.count_documents({"userId": user_id})
+    if count >= MAX_AI_USER_MEMORIES:
+        raise HTTPException(
+            status_code=400, detail="حداکثر ۱۰ حافظه قابل ذخیره‌سازی است."
+        )
+    now = utc_now()
+    inserted = await cl_ai_memories.insert_one(
+        {
+            "userId": user_id,
+            "content": encrypt_scoped_text(content, "", ai_memory_scope(user_id)),
+            "contentEncrypted": True,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )
+    await safe_send_ai(user_id, {"type": "ai_memories_updated"})
+    return {"id": str(inserted.inserted_id), "content": content, "updatedAt": dt_to_epoch_ms(now)}
+
+
+@app.delete("/ai/memories/{memory_id}")
+@limiter.limit("30/minute;300/hour")
+async def delete_ai_memory(
+    request: Request,
+    memory_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    oid = await try_object_id(memory_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="Invalid memory ID")
+    result = await cl_ai_memories.delete_one({"_id": oid, "userId": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    await safe_send_ai(user_id, {"type": "ai_memories_updated"})
+    return {"success": True}
+
+
+
+@app.post("/ai/files/upload")
+@limiter.limit("30/minute;300/hour")
+async def upload_ai_file(
+    request: Request,
+    file: UploadFile = FastAPIFile(...),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    usage = await get_usage_status(user_id)
+    if usage["tokens"]["exhausted"]:
+        raise HTTPException(status_code=400, detail="سهمیه توکن امروز شما تکمیل شده است.")
+    if usage["files"]["remaining"] <= 0:
+        raise HTTPException(status_code=400, detail="سقف ۵ فایل روزانه شما تکمیل شده است.")
+
+    original_name = Path(str(file.filename or "")).name
+    extension = Path(original_name).suffix.lower()
+    if extension not in AI_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="فرمت فایل پشتیبانی نمی‌شود.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="فایل خالی است.")
+    if len(data) > AI_MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="حجم فایل بیشتر از ۱۰ مگابایت است.")
+
+    AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = AI_TEMP_DIR / f"{uuid.uuid4().hex}{extension}"
+    await asyncio.to_thread(file_path.write_bytes, data)
+    is_image = extension in AI_IMAGE_EXTENSIONS
+    mime_type = (
+        file.content_type
+        or ("image/" + extension.lstrip(".").replace("jpg", "jpeg") if is_image else "application/octet-stream")
+    )
+    now = utc_now()
+    inserted = await cl_ai_temp_files.insert_one(
+        {
+            "userId": user_id,
+            "tempFileId": file_path.stem,
+            "filePath": str(file_path),
+            "fileName": original_name,
+            "mimeType": mime_type,
+            "fileSize": len(data),
+            "isImage": is_image,
+            "createdAt": now,
+        }
+    )
+    return {
+        "tempFileId": str(inserted.inserted_id),
+        "fileName": original_name,
+        "fileSize": len(data),
+        "mimeType": mime_type,
+        "isImage": is_image,
+    }
+
+
+@app.delete("/ai/files/{temp_file_id}")
+@limiter.limit("60/minute;600/hour")
+async def delete_ai_file(
+    request: Request,
+    temp_file_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    oid = await try_object_id(temp_file_id)
+    if not oid:
+        raise HTTPException(status_code=400, detail="Invalid temp file ID")
+    row = await cl_ai_temp_files.find_one(
+        {"_id": oid, "userId": current_user["chatId"]}
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        await asyncio.to_thread(Path(str(row.get("filePath") or "")).unlink, True)
+    except Exception:
+        pass
+    await cl_ai_temp_files.delete_one({"_id": oid})
+    return {"success": True}
 
 
 @app.get("/ai/chats")
@@ -5422,398 +6020,95 @@ async def delete_ai_chat(
     return {"success": True}
 
 
-@app.websocket("/ws/ai")
-async def websocket_ai_endpoint(websocket: WebSocket, token: str = Query(...)):
-    await websocket.accept()
-    user_id: Optional[str] = None
+class AIStreamRequest(BaseModel):
+    text: str = ""
+    aiChatId: str
+    clientId: Optional[str] = None
+    useReasoner: bool = False
+    modelKey: str = "nova-flash"
+    useWebSearch: bool = False
+    attachment: Optional[Dict[str, Any]] = None
 
-    try:
-        user = await get_user_from_session_token(token)
-        if not user:
-            await websocket.close(code=1008)
-            return
-        user_id = user.get("chatId")
 
-        active_ai_connections.setdefault(user_id, []).append(websocket)
+@app.post("/ai/stream")
+@limiter.limit("30/minute;300/hour")
+async def stream_ai_message_sse(
+    request: Request,
+    body: AIStreamRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    session_token = str(current_user.get("_session_token") or "")
+    profile = (
+        current_user.get("profile", {})
+        if isinstance(current_user.get("profile"), dict)
+        else {}
+    )
+    user_name = profile.get("name", "")
+    username = profile.get("username", "")
+    user_bio = decrypt_user_bio(current_user, session_token)
+    event_queue: asyncio.Queue = asyncio.Queue()
 
-        profile = (
-            user.get("profile", {}) if isinstance(user.get("profile"), dict) else {}
+    async def event_generator():
+        await handle_ai_message(
+            user_id,
+            session_token,
+            user_name,
+            username,
+            user_bio,
+            body.model_dump(),
+            event_queue=event_queue,
         )
-        user_name = profile.get("name", "")
-        username = profile.get("username", "")
-        user_bio = decrypt_user_bio(user, token)
+        try:
+            while True:
+                item = await event_queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            current_stream_task = active_ai_stream_tasks.get(user_id)
+            if current_stream_task and not current_stream_task.done():
+                current_stream_task.cancel()
+            raise
 
-        async def stream_ai_reply(
-            ai_chat_id: str,
-            prompt_messages: List[Dict[str, str]],
-            memory_summary: str,
-            model_name: str,
-            model_key: str,
-            reasoning_mode: bool,
-            should_generate_title: bool = False,
-            first_user_message: str = "",
-            is_temporary_chat: bool = False,
-        ):
-            ai_scope = f"ai:{ai_chat_id}"
-            ai_message_doc = {
-                "userId": user_id,
-                "aiChatId": ai_chat_id,
-                "role": "assistant",
-                "content": encrypt_scoped_text("", token, ai_scope),
-                "contentEncrypted": True,
-                "reasoningContent": encrypt_scoped_text("", token, ai_scope),
-                "reasoningEnabled": bool(reasoning_mode),
-                "streamCompleted": False,
-                "aiModelKey": normalize_ai_model_key(model_key),
-                "aiModelName": ai_model_label_from_key(model_key),
-                "timestamp": utc_now(),
-            }
-            result = await cl_ai_messages.insert_one(ai_message_doc)
-            ai_msg_id = str(result.inserted_id)
-            message_ts_ms = dt_to_epoch_ms(ai_message_doc["timestamp"])
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
-            await safe_send_ai(
-                user_id,
-                {
-                    "type": "ai_response_start",
-                    "message": {
-                        "id": ai_msg_id,
-                        "aiChatId": ai_chat_id,
-                        "senderId": "ai",
-                        "text": "",
-                        "reasoningContent": "",
-                        "reasoningEnabled": bool(reasoning_mode),
-                        "isStreaming": True,
-                        "streamCompleted": False,
-                        "aiModelKey": normalize_ai_model_key(model_key),
-                        "aiModelName": ai_model_label_from_key(model_key),
-                        "timestamp": message_ts_ms,
-                    },
-                },
-            )
 
-            stopped = False
-            full_ai_response = ""
-            full_reasoning_content = ""
-            stream_started_at = time.time()
-            first_main_content_at: Optional[float] = None
-            try:
-                async for chunk in generate_ai_response_stream(
-                    prompt_messages,
-                    user_name=user_name,
-                    username=username,
-                    chat_id=user_id,
-                    bio=user_bio,
-                    conversation_summary=memory_summary,
-                    model=model_name,
-                    reasoning_mode=reasoning_mode,
-                ):
-                    text_chunk = ""
-                    reasoning_chunk = ""
-                    if isinstance(chunk, dict):
-                        text_chunk = str(chunk.get("content") or "")
-                        reasoning_chunk = str(chunk.get("reasoning_content") or "")
-                    elif isinstance(chunk, str):
-                        text_chunk = chunk
+@app.post("/ai/stop")
+@limiter.limit("60/minute;500/hour")
+async def stop_ai_message_stream(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    current_stream_task = active_ai_stream_tasks.get(user_id)
+    if current_stream_task and not current_stream_task.done():
+        current_stream_task.cancel()
+        try:
+            await current_stream_task
+        except asyncio.CancelledError:
+            pass
+    active_ai_stream_tasks.pop(user_id, None)
+    return {"success": True}
 
-                    if text_chunk:
-                        full_ai_response += text_chunk
-                        if first_main_content_at is None:
-                            first_main_content_at = time.time()
-                    if reasoning_chunk:
-                        full_reasoning_content += reasoning_chunk
 
-                    await cl_ai_messages.update_one(
-                        {"_id": result.inserted_id},
-                        {
-                            "$set": {
-                                "content": encrypt_scoped_text(
-                                    full_ai_response, token, ai_scope
-                                ),
-                                "reasoningContent": encrypt_scoped_text(
-                                    full_reasoning_content, token, ai_scope
-                                ),
-                                "streamCompleted": False,
-                            }
-                        },
-                    )
-                    await safe_send_ai(
-                        user_id,
-                        {
-                            "type": "ai_response_chunk",
-                            "aiChatId": ai_chat_id,
-                            "messageId": ai_msg_id,
-                            "chunk": text_chunk,
-                            "reasoningChunk": reasoning_chunk,
-                            "text": full_ai_response,
-                            "reasoningContent": full_reasoning_content,
-                            "hasMainContent": bool(full_ai_response),
-                        },
-                    )
-            except asyncio.CancelledError:
-                stopped = True
-                raise
-            finally:
-                reasoning_duration_sec = int(
-                    max(
-                        0,
-                        round(
-                            (first_main_content_at or time.time()) - stream_started_at
-                        ),
-                    )
-                )
-                await cl_ai_messages.update_one(
-                    {"_id": result.inserted_id},
-                    {
-                        "$set": {
-                            "content": encrypt_scoped_text(
-                                full_ai_response, token, ai_scope
-                            ),
-                            "reasoningContent": encrypt_scoped_text(
-                                full_reasoning_content, token, ai_scope
-                            ),
-                            "streamCompleted": True,
-                            "reasoningDurationSec": reasoning_duration_sec,
-                        }
-                    },
-                )
-                generated_title = ""
-                chat_update: Dict[str, Any] = {"updatedAt": utc_now()}
-                if is_temporary_chat:
-                    chat_update["title"] = encrypt_scoped_text(
-                        "گفتگوی موقت", "", f"ai-chat-meta:{ai_chat_id}"
-                    )
-                    chat_update["titleEncrypted"] = True
-                elif should_generate_title and not stopped:
-                    candidate_title = await generate_chat_title(first_user_message)
-                    if (
-                        isinstance(candidate_title, str)
-                        and candidate_title.strip()
-                        and candidate_title.strip() != "گفتگوی جدید"
-                    ):
-                        generated_title = candidate_title.strip()[:56]
-                        chat_update["title"] = encrypt_scoped_text(
-                            generated_title, "", f"ai-chat-meta:{ai_chat_id}"
-                        )
-                        chat_update["titleEncrypted"] = True
-                await cl_ai_chats.update_one(
-                    {"_id": await try_object_id(ai_chat_id), "userId": user_id},
-                    {"$set": chat_update},
-                )
-
-                await safe_send_ai(
-                    user_id,
-                    {
-                        "type": "ai_response_done",
-                        "stopped": stopped,
-                        "title": generated_title,
-                        "message": {
-                            "id": ai_msg_id,
-                            "aiChatId": ai_chat_id,
-                            "senderId": "ai",
-                            "text": full_ai_response,
-                            "reasoningContent": full_reasoning_content,
-                            "reasoningEnabled": bool(reasoning_mode),
-                            "isStreaming": False,
-                            "streamCompleted": True,
-                            "reasoningDurationSec": reasoning_duration_sec,
-                            "aiModelKey": normalize_ai_model_key(model_key),
-                            "aiModelName": ai_model_label_from_key(model_key),
-                            "timestamp": message_ts_ms,
-                        },
-                    },
-                )
-
-        while True:
-            try:
-                data = await websocket.receive_json()
-            except ValueError:
-                continue
-
-            if data.get("type") == "ai_message":
-                text = data.get("text")
-                client_id = data.get("clientId")
-                ai_chat_id = str(data.get("aiChatId") or "").strip()
-                use_reasoner = bool(data.get("useReasoner"))
-                model_key = normalize_ai_model_key(data.get("modelKey") or "nova-flash")
-                model_name = ai_model_name_from_key(model_key, use_reasoner)
-
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                if len(text) > MAX_AI_MESSAGE_LENGTH:
-                    continue
-
-                quota = await consume_quota(user_id, model_key)
-                if not quota.get("allowed"):
-                    await safe_send_ai(
-                        user_id,
-                        {
-                            "type": "ai_error",
-                            "code": "ai_daily_limit_reached",
-                            "modelKey": model_key,
-                            "remaining": quota.get("remaining", 0),
-                            "message": (
-                                "سقف ۱۰ پیام روزانه Nova Pro شما به پایان رسیده است. لطفاً تا ۰۰:۰۰ صبر کنید یا از Nova Flash استفاده کنید."
-                                if model_key == "nova-pro"
-                                else "سقف ۵۰ پیام روزانه Nova Flash شما به پایان رسیده است. لطفاً تا ۰۰:۰۰ صبر کنید یا از Nova Pro استفاده کنید."
-                            ),
-                        },
-                    )
-                    continue
-
-                try:
-                    ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
-                except HTTPException:
-                    await asyncio.sleep(0.12)
-                    try:
-                        ai_chat = await ensure_ai_chat(user_id, ai_chat_id)
-                    except HTTPException:
-                        await safe_send_ai(
-                            user_id,
-                            {
-                                "type": "ai_error",
-                                "message": "گفتگوی انتخاب‌شده معتبر نیست.",
-                            },
-                        )
-                        continue
-
-                user_msg_count = await cl_ai_messages.count_documents(
-                    {"userId": user_id, "aiChatId": ai_chat_id, "role": "user"}
-                )
-                if user_msg_count >= MAX_AI_MESSAGES_PER_CHAT:
-                    await safe_send_ai(
-                        user_id,
-                        {
-                            "type": "ai_error",
-                            "message": "حداکثر 30 پیام در هر گفتگو مجاز است. لطفاً گفتگوی جدید باز کنید.",
-                        },
-                    )
-                    continue
-
-                user_message_doc = {
-                    "userId": user_id,
-                    "aiChatId": ai_chat_id,
-                    "role": "user",
-                    "content": encrypt_scoped_text(text, token, f"ai:{ai_chat_id}"),
-                    "contentEncrypted": True,
-                    "timestamp": utc_now(),
-                }
-                user_insert = await cl_ai_messages.insert_one(user_message_doc)
-
-                await safe_send_ai(
-                    user_id,
-                    {
-                        "type": "ai_user_message_saved",
-                        "title": "",
-                        "clientId": client_id if isinstance(client_id, str) else None,
-                        "message": {
-                            "id": str(user_insert.inserted_id),
-                            "aiChatId": ai_chat_id,
-                            "senderId": user_id,
-                            "text": text,
-                            "timestamp": dt_to_epoch_ms(user_message_doc["timestamp"]),
-                        },
-                    },
-                )
-
-                memory_summary = ""
-                if isinstance(ai_chat.get("summary"), str):
-                    memory_summary = decrypt_with_fallback(
-                        ai_chat.get("summary", ""),
-                        token,
-                        f"ai-chat-meta:{ai_chat_id}",
-                    ).strip()
-
-                history_docs = (
-                    await cl_ai_messages.find(
-                        {"userId": user_id, "aiChatId": ai_chat_id}
-                    )
-                    .sort("timestamp", -1)
-                    .limit(6)
-                    .to_list(6)
-                )
-                history_docs.reverse()
-
-                messages = [
-                    {
-                        "role": doc["role"],
-                        "content": decrypt_with_fallback(
-                            doc.get("content", ""), token, f"ai:{ai_chat_id}"
-                        ),
-                    }
-                    for doc in history_docs
-                ]
-
-                refreshed_summary = await generate_conversation_summary(
-                    messages,
-                    previous_summary=memory_summary,
-                    user_name=user_name,
-                    username=username,
-                    chat_id=user_id,
-                    bio=user_bio,
-                )
-                await cl_ai_chats.update_one(
-                    {"_id": ai_chat["_id"], "userId": user_id},
-                    {
-                        "$set": {
-                            "summary": encrypt_scoped_text(
-                                refreshed_summary, "", f"ai-chat-meta:{ai_chat_id}"
-                            ),
-                            "summaryEncrypted": True,
-                            "updatedAt": utc_now(),
-                        }
-                    },
-                )
-
-                current_stream_task = active_ai_stream_tasks.get(user_id)
-                if current_stream_task and not current_stream_task.done():
-                    current_stream_task.cancel()
-                    try:
-                        await current_stream_task
-                    except asyncio.CancelledError:
-                        pass
-
-                new_stream_task = asyncio.create_task(
-                    stream_ai_reply(
-                        ai_chat_id,
-                        messages,
-                        refreshed_summary,
-                        model_name,
-                        model_key,
-                        use_reasoner,
-                        should_generate_title=(user_msg_count == 0),
-                        first_user_message=text,
-                        is_temporary_chat=bool(ai_chat.get("isTemporary", False)),
-                    )
-                )
-                active_ai_stream_tasks[user_id] = new_stream_task
-
-            elif data.get("type") == "ai_stop":
-                current_stream_task = active_ai_stream_tasks.get(user_id)
-                if current_stream_task and not current_stream_task.done():
-                    current_stream_task.cancel()
-                    try:
-                        await current_stream_task
-                    except asyncio.CancelledError:
-                        pass
-                active_ai_stream_tasks.pop(user_id, None)
-
-            elif data.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-
-    except WebSocketDisconnect:
-        pass
+def _decode_search_sources(value: Any, token: str, scope: str) -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    raw = decrypt_with_fallback(value, token, scope)
+    try:
+        data = json.loads(raw)
     except Exception:
-        print(f"AI WebSocket Error for {user_id}: {traceback.format_exc()}")
-    finally:
-        if (
-            user_id
-            and user_id in active_ai_connections
-            and websocket in active_ai_connections[user_id]
-        ):
-            active_ai_connections[user_id].remove(websocket)
-            if not active_ai_connections[user_id]:
-                del active_ai_connections[user_id]
+        return []
+    return data if isinstance(data, list) else []
 
 
 @app.get("/ai/messages")
@@ -5837,6 +6132,21 @@ async def get_ai_messages(
     )
     msgs.reverse()
 
+    active_task = active_ai_stream_tasks.get(user_id)
+    has_live_stream = bool(active_task and not active_task.done())
+    stale_ids = [
+        m["_id"]
+        for m in msgs
+        if m.get("role") == "assistant"
+        and not bool(m.get("streamCompleted", True))
+        and not has_live_stream
+    ]
+    if stale_ids:
+        await cl_ai_messages.update_many(
+            {"_id": {"$in": stale_ids}},
+            {"$set": {"streamCompleted": True}},
+        )
+
     return [
         {
             "id": str(m["_id"]),
@@ -5850,10 +6160,29 @@ async def get_ai_messages(
             ),
             "reasoningEnabled": bool(m.get("reasoningEnabled", False)),
             "isStreaming": bool(
-                m["role"] == "assistant" and not bool(m.get("streamCompleted", True))
+                has_live_stream
+                and m["role"] == "assistant"
+                and not bool(m.get("streamCompleted", True))
             ),
-            "streamCompleted": bool(m.get("streamCompleted", True)),
+            "streamCompleted": bool(
+                m.get("streamCompleted", True) or not has_live_stream
+            ),
             "reasoningDurationSec": int(m.get("reasoningDurationSec", 0) or 0),
+            "searchEnabled": bool(m.get("searchEnabled", False)),
+            "searchStatus": (
+                "completed"
+                if (m.get("searchEnabled") and not has_live_stream)
+                else str(m.get("searchStatus") or "")
+            ),
+            "searchSources": _decode_search_sources(
+                m.get("searchSources"), session_token, ai_scope
+            ),
+            "analyzingAttachment": bool(
+                has_live_stream
+                and m.get("analyzingAttachment", False)
+                and not bool(m.get("streamCompleted", True))
+            ),
+            "aiAttachment": m.get("attachmentMeta"),
             "aiModelKey": m.get("aiModelKey"),
             "aiModelName": m.get("aiModelName"),
             "timestamp": dt_to_epoch_ms(m.get("timestamp")),

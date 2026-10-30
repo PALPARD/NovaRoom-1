@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed, X } from 'lucide-react';
+import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed, X, Plus, Paperclip, Globe, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import type { Components } from 'react-markdown';
-import type { Message, Chat, AIChatSummary, AIModelKey, PendingForwardDraft } from '../types';
+import type { Message, Chat, AIChatSummary, AIModelKey, PendingForwardDraft, AIAttachmentMeta, AIUsageStatus, AIMemoryItem, AISearchSource } from '../types';
 import { ChatMessagesSkeleton } from './ChatMessagesSkeleton';
 import { ForwardModal } from './ForwardModal';
 import { notify } from '../utils/notificationBus';
@@ -13,15 +13,18 @@ import { cx } from '../utils/cx';
 import { isElementScrolled } from '../utils/scrollFade';
 import { triggerHaptic } from '../utils/haptics';
 import { copyText } from '../utils/clipboard';
+import { apiFetch } from '../config/api';
 
 interface AIChatRoomProps {
     messages: Message[];
     currentUserId: string;
-    onSendMessage: (text: string, useReasoner?: boolean, modelKey?: AIModelKey) => boolean | Promise<boolean>;
+    onSendMessage: (text: string, useReasoner?: boolean, modelKey?: AIModelKey, useWebSearch?: boolean, attachment?: AIAttachmentMeta | null) => boolean | Promise<boolean>;
     selectedModel: AIModelKey;
     onSelectModel: (modelKey: AIModelKey) => void;
-    proRemainingToday: number;
-    flashRemainingToday: number;
+    usageStatus: AIUsageStatus;
+    memories: AIMemoryItem[];
+    onAddMemory: (content: string) => Promise<boolean>;
+    onDeleteMemory: (memoryId: string) => void;
     onStopGenerating?: () => void;
     onDeleteMessage: (messageId: string) => void;
     onBack: () => void;
@@ -204,8 +207,10 @@ export function AIChatRoom({
     onSendMessage,
     selectedModel,
     onSelectModel,
-    proRemainingToday,
-    flashRemainingToday,
+    usageStatus,
+    memories,
+    onAddMemory,
+    onDeleteMemory,
     onStopGenerating,
     onBack,
     loading = false,
@@ -243,6 +248,17 @@ export function AIChatRoom({
     const longPressOriginRef = useRef({ x: 0, y: 0 });
     const suppressClickRef = useRef(false);
     const [reasoningEnabled, setReasoningEnabled] = useState(false);
+    const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+    const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+    const [stagedAttachment, setStagedAttachment] = useState<AIAttachmentMeta | null>(null);
+    const [attachmentUploading, setAttachmentUploading] = useState(false);
+    const [searchPanelsExpanded, setSearchPanelsExpanded] = useState<Record<string, boolean>>({});
+    const [memoriesExpanded, setMemoriesExpanded] = useState(false);
+    const [chatListCollapsed, setChatListCollapsed] = useState(false);
+    const [memoryDraft, setMemoryDraft] = useState('');
+    const [memorySaving, setMemorySaving] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const composerMenuRef = useRef<HTMLDivElement | null>(null);
     const prevActiveAIChatIdRef = useRef<string | null>(activeAIChatId);
     const [aiChatsDrawerOpen, setAIChatsDrawerOpen] = useState(false);
     const [pendingDeleteChat, setPendingDeleteChat] = useState<AIChatSummary | null>(null);
@@ -290,6 +306,15 @@ export function AIChatRoom({
             setEmptyStatePrompt(pickRandomEmptyPrompt());
         }
     }, [activeAIChatId, temporaryMode, messages.length]);
+
+    useEffect(() => {
+        const onDocClick = (e: MouseEvent) => {
+            if (composerMenuRef.current?.contains(e.target as Node)) return;
+            setComposerMenuOpen(false);
+        };
+        if (composerMenuOpen) document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, [composerMenuOpen]);
 
     const resizeTextarea = () => {
         const textarea = textareaRef.current;
@@ -761,12 +786,13 @@ export function AIChatRoom({
             alert(`حداکثر طول پیام ${MAX_AI_MESSAGE_LENGTH} کاراکتر است`);
             return;
         }
-        if (!t || isResponding) return;
+        if ((!t && !stagedAttachment) || isResponding || attachmentUploading) return;
 
-        const sent = await onSendMessage(t, reasoningEnabled, selectedModel);
+        const sent = await onSendMessage(t, reasoningEnabled, selectedModel, webSearchEnabled, stagedAttachment);
         if (!sent) return;
         playChatSound('send');
         setText('');
+        clearStagedAttachment(false);
         requestAnimationFrame(() => scrollToBottom(true));
     };
 
@@ -779,17 +805,181 @@ export function AIChatRoom({
             return next;
         });
     };
-    const isProDisabled = proRemainingToday <= 0;
-    const isFlashDisabled = flashRemainingToday <= 0;
+
+    const toggleWebSearch = () => {
+        if (usageStatus.search.remaining <= 0 && !webSearchEnabled) {
+            notify({ message: 'سقف ۵ جستجوی روزانه شما تکمیل شده است.', type: 'info' });
+            return;
+        }
+        setWebSearchEnabled((prev) => {
+            const next = !prev;
+            if (next && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+                navigator.vibrate([8, 24, 14]);
+            }
+            return next;
+        });
+    };
+
+    const clearStagedAttachment = (deleteOnServer = true) => {
+        const previous = stagedAttachment;
+        if (!previous) {
+            setStagedAttachment(null);
+            return;
+        }
+        if (deleteOnServer && previous.previewUrl?.startsWith('blob:')) {
+            URL.revokeObjectURL(previous.previewUrl);
+        }
+        if (deleteOnServer && previous.tempFileId) {
+            void apiFetch(`/ai/files/${encodeURIComponent(previous.tempFileId)}`, { method: 'DELETE' }).catch(() => undefined);
+        }
+        setStagedAttachment(null);
+    };
+
+    const readFileAsDataUrl = (file: File): Promise<string> =>
+        new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(file);
+        });
+
+    const handleAttachmentPick = async (file: File | null) => {
+        if (!file) return;
+        setComposerMenuOpen(false);
+        clearStagedAttachment(true);
+        setAttachmentUploading(true);
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            const [uploaded, dataUrl] = await Promise.all([
+                apiFetch('/ai/files/upload', { method: 'POST', body: form }),
+                file.type.startsWith('image/') ? readFileAsDataUrl(file) : Promise.resolve(''),
+            ]);
+            const isImage = Boolean(uploaded?.isImage);
+            setStagedAttachment({
+                tempFileId: String(uploaded?.tempFileId || ''),
+                fileName: String(uploaded?.fileName || file.name),
+                fileSize: Number(uploaded?.fileSize || file.size),
+                mimeType: String(uploaded?.mimeType || file.type || 'application/octet-stream'),
+                isImage,
+                previewUrl: isImage ? (dataUrl || URL.createObjectURL(file)) : undefined,
+            });
+        } catch (error: any) {
+            notify({ message: error?.message || 'آپلود فایل انجام نشد.', type: 'error' });
+        } finally {
+            setAttachmentUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    const formatFileSize = (bytes: number) => {
+        if (bytes >= 1024 * 1024) return `${toPersianDigits((bytes / (1024 * 1024)).toFixed(1))} مگابایت`;
+        if (bytes >= 1024) return `${toPersianDigits(Math.round(bytes / 1024))} کیلوبایت`;
+        return `${toPersianDigits(bytes)} بایت`;
+    };
+
+    const sourceDomain = (source: AISearchSource) => {
+        if (source.domain) return source.domain;
+        try {
+            return new URL(source.url).hostname;
+        } catch {
+            return source.url;
+        }
+    };
+
+    const toggleSearchPanel = (messageId: string) => {
+        setSearchPanelsExpanded((prev) => ({ ...prev, [messageId]: !prev[messageId] }));
+    };
+
+    const renderSearchBlock = (message: Message) => {
+        if (!message.searchEnabled) return null;
+        const sources = message.searchSources || [];
+        const isSearching = Boolean(
+            message.isStreaming &&
+            (message.searchStatus === 'searching' || !(message.text || '').trim())
+        );
+        const expanded = searchPanelsExpanded[message.id] ?? false;
+        return (
+            <div className="ai-search-block">
+                <button
+                    type="button"
+                    className="ai-search-block__header"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        if (sources.length > 0) toggleSearchPanel(message.id);
+                    }}
+                >
+                    <span className="ai-search-block__header-main">
+                        <Globe size={15} />
+                        <span className={isSearching ? 'thinking-indicator__text' : 'ai-search-block__title'}>
+                            {isSearching
+                                ? 'در حال جستجو در وب...'
+                                : `جستجو در وب · ${toPersianDigits(sources.length)} منبع`}
+                        </span>
+                    </span>
+                    {sources.length > 0 && (
+                        <ChevronDown size={15} className={expanded ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
+                    )}
+                </button>
+                <AnimatePresence initial={false}>
+                    {expanded && sources.length > 0 && (
+                        <motion.div
+                            className="ai-search-block__body"
+                            initial={{ height: 0, opacity: 1 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 1 }}
+                            transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+                        >
+                            {sources.map((source) => (
+                                <a
+                                    key={`${source.index}-${source.url}`}
+                                    className="ai-search-source-card"
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <span className="ai-search-source-card__title">{source.title || sourceDomain(source)}</span>
+                                    <span className="ai-search-source-card__domain">{sourceDomain(source)}</span>
+                                    {source.snippet && <span className="ai-search-source-card__snippet">{source.snippet}</span>}
+                                </a>
+                            ))}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+        );
+    };
+
+    const renderSourcePills = (message: Message) => {
+        const sources = message.searchSources || [];
+        if (!message.searchEnabled || message.searchStatus !== 'completed' || sources.length === 0) return null;
+        return (
+            <div className="ai-search-pills">
+                {sources.map((source) => (
+                    <a
+                        key={`${source.index}-${source.url}`}
+                        className="ai-search-pill"
+                        href={source.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={source.title}
+                    >
+                        <Globe size={12} />
+                        <span>{sourceDomain(source)}</span>
+                    </a>
+                ))}
+            </div>
+        );
+    };
+
+    const isModelExhausted = usageStatus.tokens.exhausted;
     const selectedModelLabel = selectedModel === 'nova-pro' ? 'Nova Pro' : 'Nova Flash';
 
     const handleSelectModel = (modelKey: AIModelKey) => {
-        if (modelKey === 'nova-pro' && isProDisabled) {
-            notify({ message: 'سهمیه روزانه Nova Pro شما تمام شده است. این مدل بعد از ۰۰:۰۰ دوباره فعال می‌شود.', type: 'info' });
-            return;
-        }
-        if (modelKey === 'nova-flash' && isFlashDisabled) {
-            notify({ message: 'سهمیه روزانه Nova Flash شما تمام شده است. این مدل بعد از ۰۰:۰۰ دوباره فعال می‌شود.', type: 'info' });
+        if (isModelExhausted) {
+            notify({ message: 'سهمیه توکن روزانه شما تمام شده است. این مدل بعد از ۰۰:۰۰ دوباره فعال می‌شود.', type: 'info' });
             return;
         }
         onSelectModel(modelKey);
@@ -954,6 +1144,14 @@ export function AIChatRoom({
     };
 
     const activeMsg = msgMenu ? messages.find((m) => m.id === msgMenu.id) : null;
+    const hasComposerChips = Boolean(reasoningEnabled || webSearchEnabled || stagedAttachment || attachmentUploading);
+    const isInAIChat = Boolean(temporaryMode || activeAIChatId || messages.length > 0 || isResponding || isTyping);
+
+    useEffect(() => {
+        if (hasComposerChips && isAtBottomRef.current) {
+            requestAnimationFrame(() => scrollToBottom(true));
+        }
+    }, [hasComposerChips]);
 
     const toastVariants: Variants = {
         hidden: { x: 0 },
@@ -1047,13 +1245,13 @@ export function AIChatRoom({
                                     exit={{ opacity: 0, y: -8 }}
                                     transition={{ duration: 0.2, ease: 'easeOut' }}
                                 >
-                                    <button type="button" className={`${selectedModel === 'nova-flash' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isFlashDisabled ? ' ai-model-option--disabled' : ''}`} onClick={() => handleSelectModel('nova-flash')}>
+                                    <button type="button" className={`${selectedModel === 'nova-flash' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isModelExhausted ? ' ai-model-option--disabled' : ''}`} onClick={() => handleSelectModel('nova-flash')}>
                                         <div className="ai-model-option__title" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>Nova Flash</div>
                                         <div className="ai-model-option__desc" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>سریع و سبک برای گفتگوهای روزانه، سوال‌های کوتاه و پاسخ‌ فوری</div>
                                     </button>
                                     <button
                                         type="button"
-                                        className={`${selectedModel === 'nova-pro' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isProDisabled ? ' ai-model-option--disabled' : ''}`}
+                                        className={`${selectedModel === 'nova-pro' ? 'ai-model-option ai-model-option--active' : 'ai-model-option'}${isModelExhausted ? ' ai-model-option--disabled' : ''}`}
                                         onClick={() => handleSelectModel('nova-pro')}
                                     >
                                         <div className="ai-model-option__title" style={{ fontFamily: "'Nunito', 'Vazir', sans-serif" }}>Nova Pro</div>
@@ -1064,20 +1262,38 @@ export function AIChatRoom({
                         </AnimatePresence>
                     </div>
                 </div>
-                <button
-                    type="button"
-                    className="chat-room__back-btn"
-                    onClick={() => setAIChatsDrawerOpen(true)}
-                    aria-label="AI chats menu"
-                    style={{ display: 'flex' }}
-                >
-                    <PanelRight size={18} />
-                </button>
+                <div className="ai-chat-room__header-actions">
+                    <button
+                        type="button"
+                        className="chat-room__back-btn"
+                        onClick={() => {
+                            if (isInAIChat) {
+                                onCreateAIChat();
+                            } else {
+                                onCreateTemporaryAIChat?.();
+                            }
+                        }}
+                        aria-label={isInAIChat ? 'گفتگوی جدید' : 'گفتگوی موقت'}
+                        title={isInAIChat ? 'گفتگوی جدید' : 'گفتگوی موقت'}
+                        style={{ display: 'flex' }}
+                    >
+                        {isInAIChat ? <PencilLine size={18} /> : <MessageSquareDashed size={18} />}
+                    </button>
+                    <button
+                        type="button"
+                        className="chat-room__back-btn"
+                        onClick={() => setAIChatsDrawerOpen(true)}
+                        aria-label="AI chats menu"
+                        style={{ display: 'flex' }}
+                    >
+                        <PanelRight size={18} />
+                    </button>
+                </div>
             </div>
             )}
 
             <div
-                className="chat-room__messages"
+                className={cx('chat-room__messages', hasComposerChips && 'chat-room__messages--with-chips')}
                 ref={messagesContainerRef}
                 onScroll={onMessagesScroll}
             >
@@ -1099,10 +1315,12 @@ export function AIChatRoom({
 
                         </div>
                     ) : (
-                        messages.map((message) => {
+                        messages.map((message, index) => {
                             const isMine = message.senderId === currentUserId;
                             const isSelected = selectedMessageIds.includes(message.id);
                             const isReasoningMessage = !isMine && Boolean(message.reasoningEnabled);
+                            const prevMsg = index > 0 ? messages[index - 1] : null;
+                            const isAnalyzingAttachment = !isMine && Boolean(message.isStreaming) && !(message.text || '').trim() && Boolean(message.analyzingAttachment || prevMsg?.aiAttachment);
                             const elapsed = reasoningElapsedByMessage[message.id] ?? Number(message.reasoningDurationSec || 0);
                             const elapsedLabel = `${toPersianDigits(Math.floor(elapsed / 60))}:${toPersianDigits(String(elapsed % 60).padStart(2, '0'))}`;
 
@@ -1194,6 +1412,12 @@ export function AIChatRoom({
                                             style={{ cursor: isResponding || isTyping ? 'default' : 'pointer' }}
                                         >
                                             <div className="ai-reasoning-message-stack">
+                                                {renderSearchBlock(message)}
+                                                {isAnalyzingAttachment && (
+                                                    <div className="thinking-indicator">
+                                                        <span className="thinking-indicator__text">در حال آنالیز تصویر و فایل</span>
+                                                    </div>
+                                                )}
                                                 <button
                                                     type="button"
                                                     className="ai-reasoning-header"
@@ -1237,6 +1461,7 @@ export function AIChatRoom({
                                                             {normalizeMessageTextForRender(message.text ?? '')}
                                                         </ReactMarkdown>
                                                     </div>
+                                                    {renderSourcePills(message)}
                                                 </div>
                                             </div>
                                             <div className="message-meta message-meta--theirs">
@@ -1270,15 +1495,46 @@ export function AIChatRoom({
                                             }}
                                             style={{ cursor: isResponding || isTyping ? 'default' : 'pointer' }}
                                         >
-                                            <div className="message-text message-text--markdown">
-                                                <ReactMarkdown
-                                                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                                            {!isMine && renderSearchBlock(message)}
+                                            {isAnalyzingAttachment && (
+                                                <div className="thinking-indicator">
+                                                    <span className="thinking-indicator__text">در حال آنالیز تصویر و فایل</span>
+                                                </div>
+                                            )}
+                                            {!isMine && Boolean(message.isStreaming) && !(message.text || '').trim() && !isAnalyzingAttachment && !message.searchEnabled && (
+                                                <div className="typing-indicator">
+                                                    <span></span>
+                                                    <span></span>
+                                                    <span></span>
+                                                </div>
+                                            )}
+                                            {isMine && message.aiAttachment && (
+                                                <div className="ai-attachment-badge">
+                                                    {message.aiAttachment.isImage ? (
+                                                        message.aiAttachment.previewUrl ? (
+                                                            <img className="ai-attachment-badge__thumb" src={message.aiAttachment.previewUrl} alt={message.aiAttachment.fileName} />
+                                                        ) : (
+                                                            <Paperclip size={14} />
+                                                        )
+                                                    ) : (
+                                                        <Paperclip size={14} />
+                                                    )}
+                                                    <span className="ai-attachment-badge__name">{message.aiAttachment.fileName}</span>
+                                                    <span className="ai-attachment-badge__size">{formatFileSize(message.aiAttachment.fileSize)}</span>
+                                                </div>
+                                            )}
+                                            {Boolean(message.text) && (
+                                                <div className="message-text message-text--markdown">
+                                                    <ReactMarkdown
+                                                        remarkPlugins={[remarkGfm, remarkBreaks]}
 
-                                                    components={markdownComponents}
-                                                >
-                                                    {normalizeMessageTextForRender(message.text ?? '')}
-                                                </ReactMarkdown>
-                                            </div>
+                                                        components={markdownComponents}
+                                                    >
+                                                        {normalizeMessageTextForRender(message.text ?? '')}
+                                                    </ReactMarkdown>
+                                                </div>
+                                            )}
+                                            {!isMine && renderSourcePills(message)}
                                             <div className={isMine ? 'message-meta message-meta--mine' : 'message-meta message-meta--theirs'}>
                                                 {message.aiModelName && <span className="message-ai-model-label">{message.aiModelName}</span>}
                                                 <span className="message-time">{formatMessageTime(message.timestamp)}</span>
@@ -1300,7 +1556,15 @@ export function AIChatRoom({
                     {isTyping && !messages.some((m) => m.senderId !== currentUserId && m.isStreaming) && (
                         <div className="message-row message-row--theirs">
                             <div className="message-bubble message-bubble--theirs msg-shape--single">
-                                {isReasoningPending ? (<div className="thinking-indicator"><span className="thinking-indicator__text">در حال استدلال</span></div>) : (
+                                {Boolean(messages[messages.length - 1]?.aiAttachment) ? (
+                                    <div className="thinking-indicator">
+                                        <span className="thinking-indicator__text">در حال آنالیز تصویر و فایل</span>
+                                    </div>
+                                ) : isReasoningPending ? (
+                                    <div className="thinking-indicator">
+                                        <span className="thinking-indicator__text">در حال استدلال</span>
+                                    </div>
+                                ) : (
                                     <div className="typing-indicator">
                                         <span></span>
                                         <span></span>
@@ -1379,66 +1643,181 @@ export function AIChatRoom({
                                 </button>
                             </div>
 
-                            <div className="ai-chat-drawer__section-header">
-                                <div className="ai-chat-drawer__section-title">تاریخچه</div>
-                                <History size={15} />
-                            </div>
-                            <div
-                                className="ai-chat-drawer__list"
-                                ref={aiDrawerListRef}
-                                onScroll={(e) => {
-                                    aiDrawerScrollTopRef.current = e.currentTarget.scrollTop;
-                                    if (aiChatActionMenu) setAIChatActionMenu(null);
-                                }}
-                            >
-                                {sortedAIChats.map((chat) => (
-                                    <div key={chat.id} className="ai-chat-drawer__item">
-                                        <button
-                                            type="button"
-                                            className={chat.id === activeAIChatId ? 'ai-chat-drawer__item-title ai-chat-drawer__item-title--active' : 'ai-chat-drawer__item-title'}
-                                            onClick={() => {
-                                                if (aiChatActionMenu?.chatId === chat.id) {
-                                                    aiChatActionMenuClosedAtRef.current = Date.now();
-                                                    setAIChatActionMenu(null);
-                                                    return;
-                                                }
-                                                if (Date.now() - aiChatActionMenuClosedAtRef.current < 400) return;
-                                                onSelectAIChat(chat.id);
-                                                setAIChatsDrawerOpen(false);
-                                            }}
-                                            onMouseDown={(e) => {
-                                                if (aiChatActionMenu) {
-                                                    setAIChatMenuPressSuppressed(true);
-                                                    return;
-                                                }
-                                                if (Date.now() - aiChatLastTouchAtRef.current < 800) return;
-                                                startAIChatLongPress(chat.id, e.currentTarget);
-                                            }}
-                                            onMouseUp={cancelAIChatLongPress}
-                                            onMouseLeave={cancelAIChatLongPress}
-                                            onTouchStart={(e) => {
-                                                if (aiChatActionMenu) {
-                                                    setAIChatMenuPressSuppressed(true);
-                                                    return;
-                                                }
-                                                aiChatLastTouchAtRef.current = Date.now();
-                                                startAIChatLongPress(chat.id, e.currentTarget);
-                                            }}
-                                            onTouchEnd={cancelAIChatLongPress}
-                                            onTouchMove={cancelAIChatLongPress}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                cancelAIChatLongPress();
-                                                openAIChatActionMenu(chat.id, e.currentTarget, !aiChatIsLongPressTriggeredRef.current);
-                                            }}
-                                        >
-                                            {respondingAIChatId === chat.id && <span className="ai-chat-drawer__loader" />}
-                                            {pinnedAIChatIds.includes(chat.id) && <Pin size={13} className="ai-chat-drawer__pin" style={{ fill: 'currentColor' }} />}
-                                            {chat.title || 'گفتگوی جدید'}
-                                        </button>
+                            <div className="ai-chat-drawer__usage">
+                                <div className="ai-chat-drawer__section-title">میزان استفاده</div>
+                                <div className="ai-usage-row">
+                                    <span>توکن روزانه</span>
+                                    <span className="ai-usage-row__value">{toPersianDigits(usageStatus.tokens.usedPercent)}٪</span>
+                                </div>
+                                <div className="ai-usage-bar">
+                                    <span style={{ width: `${Math.min(100, Math.max(0, usageStatus.tokens.usedPercent))}%` }} />
+                                </div>
+                                <div className="ai-usage-counters">
+                                    <div className="ai-usage-counter">
+                                        <span>فایل</span>
+                                        <strong>{toPersianDigits(usageStatus.files.remaining)} / {toPersianDigits(usageStatus.files.limit)}</strong>
                                     </div>
-                                ))}
+                                    <div className="ai-usage-counter">
+                                        <span>جستجو</span>
+                                        <strong>{toPersianDigits(usageStatus.search.remaining)} / {toPersianDigits(usageStatus.search.limit)}</strong>
+                                    </div>
+                                </div>
                             </div>
+
+                            <button
+                                type="button"
+                                className={memoriesExpanded ? 'ai-chat-drawer__new-chat ai-chat-drawer__memory-entry ai-chat-drawer__memory-entry--active' : 'ai-chat-drawer__new-chat ai-chat-drawer__memory-entry'}
+                                onClick={() => {
+                                    if (aiChatActionMenu) setAIChatActionMenu(null);
+                                    setMemoriesExpanded((prev) => !prev);
+                                }}
+                                aria-expanded={memoriesExpanded}
+                            >
+                                <div className="ai-chat-drawer__memory-entry-right">
+                                    <span>حافظه</span>
+                                    <span className="ai-chat-drawer__memory-count">{toPersianDigits(memories.length)}/۱۰</span>
+                                </div>
+                                <ChevronDown size={15} className={memoriesExpanded ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
+                            </button>
+
+                            {memoriesExpanded ? (
+                                <div className="ai-memory-panel">
+                                    <form
+                                        className="ai-memory-form"
+                                        onSubmit={async (e) => {
+                                            e.preventDefault();
+                                            const value = memoryDraft.trim();
+                                            if (!value || memorySaving || memories.length >= 10) return;
+                                            setMemorySaving(true);
+                                            const ok = await onAddMemory(value);
+                                            setMemorySaving(false);
+                                            if (ok) setMemoryDraft('');
+                                        }}
+                                    >
+                                        <input
+                                            className="ai-memory-input"
+                                            value={memoryDraft}
+                                            onChange={(e) => setMemoryDraft(e.target.value)}
+                                            placeholder="یک نکته درباره خودت بنویس..."
+                                            maxLength={200}
+                                            disabled={memories.length >= 10 || memorySaving}
+                                        />
+                                        <button
+                                            type="submit"
+                                            className="ai-memory-add-btn"
+                                            disabled={!memoryDraft.trim() || memories.length >= 10 || memorySaving}
+                                            aria-label="افزودن حافظه"
+                                        >
+                                            <Plus size={16} />
+                                        </button>
+                                    </form>
+                                    <div className="ai-memory-list">
+                                        {memories.length === 0 ? (
+                                            <div className="ai-memory-empty">هنوز حافظه‌ای ذخیره نشده است.</div>
+                                        ) : (
+                                            memories.map((memory) => (
+                                                <div key={memory.id} className="ai-memory-item">
+                                                    <span>{memory.content}</span>
+                                                    <button
+                                                        type="button"
+                                                        className="ai-memory-delete"
+                                                        onClick={() => onDeleteMemory(memory.id)}
+                                                        aria-label="حذف حافظه"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="ai-chat-drawer__section-header ai-chat-drawer__section-toggle"
+                                        onClick={() => {
+                                            if (aiChatActionMenu) setAIChatActionMenu(null);
+                                            setChatListCollapsed((prev) => !prev);
+                                        }}
+                                        aria-expanded={!chatListCollapsed}
+                                    >
+                                        <ChevronDown size={15} className={!chatListCollapsed ? 'ai-reasoning-chevron ai-reasoning-chevron--open' : 'ai-reasoning-chevron'} />
+                                        <div className="ai-chat-drawer__section-header-main">
+                                            <div className="ai-chat-drawer__section-title">تاریخچه</div>
+                                            <History size={15} />
+                                        </div>
+                                    </button>
+                                    <AnimatePresence initial={false}>
+                                        {!chatListCollapsed && (
+                                            <motion.div
+                                                className="ai-chat-drawer__list"
+                                                ref={aiDrawerListRef}
+                                                initial={{ height: 0, opacity: 0 }}
+                                                animate={{ height: 'auto', opacity: 1 }}
+                                                exit={{ height: 0, opacity: 0 }}
+                                                transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+                                                onScroll={(e) => {
+                                                    aiDrawerScrollTopRef.current = e.currentTarget.scrollTop;
+                                                    if (aiChatActionMenu) setAIChatActionMenu(null);
+                                                }}
+                                            >
+                                                {sortedAIChats.map((chat) => (
+                                                    <div key={chat.id} className="ai-chat-drawer__item">
+                                                        <button
+                                                            type="button"
+                                                            className={cx(
+                                                                'ai-chat-drawer__item-title',
+                                                                chat.id === activeAIChatId && 'ai-chat-drawer__item-title--active',
+                                                                aiChatActionMenu?.chatId === chat.id && 'ai-chat-drawer__item-title--menu-open',
+                                                            )}
+                                                            onClick={() => {
+                                                                if (aiChatActionMenu?.chatId === chat.id) {
+                                                                    aiChatActionMenuClosedAtRef.current = Date.now();
+                                                                    setAIChatActionMenu(null);
+                                                                    return;
+                                                                }
+                                                                if (Date.now() - aiChatActionMenuClosedAtRef.current < 400) return;
+                                                                onSelectAIChat(chat.id);
+                                                                setAIChatsDrawerOpen(false);
+                                                            }}
+                                                            onMouseDown={(e) => {
+                                                                if (aiChatActionMenu) {
+                                                                    setAIChatMenuPressSuppressed(true);
+                                                                    return;
+                                                                }
+                                                                if (Date.now() - aiChatLastTouchAtRef.current < 800) return;
+                                                                startAIChatLongPress(chat.id, e.currentTarget);
+                                                            }}
+                                                            onMouseUp={cancelAIChatLongPress}
+                                                            onMouseLeave={cancelAIChatLongPress}
+                                                            onTouchStart={(e) => {
+                                                                if (aiChatActionMenu) {
+                                                                    setAIChatMenuPressSuppressed(true);
+                                                                    return;
+                                                                }
+                                                                aiChatLastTouchAtRef.current = Date.now();
+                                                                startAIChatLongPress(chat.id, e.currentTarget);
+                                                            }}
+                                                            onTouchEnd={cancelAIChatLongPress}
+                                                            onTouchMove={cancelAIChatLongPress}
+                                                            onContextMenu={(e) => {
+                                                                e.preventDefault();
+                                                                cancelAIChatLongPress();
+                                                                openAIChatActionMenu(chat.id, e.currentTarget, !aiChatIsLongPressTriggeredRef.current);
+                                                            }}
+                                                        >
+                                                            {respondingAIChatId === chat.id && <span className="ai-chat-drawer__loader" />}
+                                                            {pinnedAIChatIds.includes(chat.id) && <Pin size={13} className="ai-chat-drawer__pin" style={{ fill: 'currentColor' }} />}
+                                                            {chat.title || 'گفتگوی جدید'}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </>
+                            )}
                         </motion.aside>
                     </motion.div>
                 )}
@@ -1661,7 +2040,7 @@ export function AIChatRoom({
                         style={{
                             position: 'absolute',
                             right: 18,
-                            bottom: 96,
+                            bottom: hasComposerChips ? 136 : 96,
                             width: newMsgCount > 0 ? 'auto' : 44,
                             height: newMsgCount > 0 ? 'auto' : 44,
                             justifyContent: 'center',
@@ -1703,37 +2082,120 @@ export function AIChatRoom({
             <div
                 className="chat-room__input-area"
             >
+                {(reasoningEnabled || webSearchEnabled || stagedAttachment || attachmentUploading) && (
+                    <div className="ai-composer-chips">
+                        {attachmentUploading && (
+                            <div className="ai-composer-chip ai-composer-chip--attachment">
+                                <Loader2 size={13} className="ai-composer-chip__spinner" />
+                                <span>در حال آپلود...</span>
+                            </div>
+                        )}
+                        {stagedAttachment && (
+                            <div className="ai-composer-chip ai-composer-chip--attachment">
+                                {stagedAttachment.isImage && stagedAttachment.previewUrl ? (
+                                    <img className="ai-composer-chip__thumb" src={stagedAttachment.previewUrl} alt={stagedAttachment.fileName} />
+                                ) : (
+                                    <Paperclip size={13} />
+                                )}
+                                <span className="ai-composer-chip__name">{stagedAttachment.fileName}</span>
+                                <button type="button" className="ai-composer-chip__close" onClick={() => clearStagedAttachment(true)} aria-label="حذف فایل">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        )}
+                        {reasoningEnabled && (
+                            <div className="ai-composer-chip">
+                                <Brain size={13} />
+                                <span>استدلال</span>
+                                <button type="button" className="ai-composer-chip__close" onClick={toggleReasoning} aria-label="خاموش کردن استدلال">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        )}
+                        {webSearchEnabled && (
+                            <div className="ai-composer-chip">
+                                <Globe size={13} />
+                                <span>جستجوی وب</span>
+                                <button type="button" className="ai-composer-chip__close" onClick={toggleWebSearch} aria-label="خاموش کردن جستجوی وب">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
                 <div className="chat-room__input-wrapper">
-                    <button
-                        type="button"
-                        onClick={toggleReasoning}
-                        aria-label="Reasoning mode"
-                        title="حالت استدلال"
-                        style={{
-                            height: 46,
-                            padding: '0 14px',
-                            borderRadius: 9999,
-                            border: `1px solid ${reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 50%, transparent)' : 'var(--glass-border)'}`,
-                            background: reasoningEnabled ? 'color-mix(in srgb, var(--accent-primary) 22%, var(--glass-surface))' : 'var(--glass-surface)',
-                            backdropFilter: 'var(--glass-blur)',
-                            WebkitBackdropFilter: 'var(--glass-blur)',
-                            boxShadow: 'var(--glass-shadow), var(--glass-specular)',
-                            color: reasoningEnabled ? 'var(--accent-hover)' : 'var(--text-secondary)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            justifyContent: 'center',
-                            flexShrink: 0,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            fontFamily: 'inherit',
-                        }}
-                    >
-                        <Brain size={15} />
-                        <span>استدلال</span>
-                    </button>
+                    <div className="ai-composer-plus-wrap" ref={composerMenuRef}>
+                        <button
+                            type="button"
+                            className={cx(
+                                'ai-composer-plus-btn',
+                                composerMenuOpen && 'ai-composer-plus-btn--open',
+                                (reasoningEnabled || webSearchEnabled || stagedAttachment) && 'ai-composer-plus-btn--active',
+                            )}
+                            onClick={() => setComposerMenuOpen((prev) => !prev)}
+                            aria-label="افزودن"
+                            title="افزودن"
+                        >
+                            <Plus size={20} />
+                        </button>
+                        <AnimatePresence initial={false}>
+                            {composerMenuOpen && (
+                                <motion.div
+                                    className="ai-composer-plus-menu"
+                                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                    exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                                >
+                                    <button
+                                        type="button"
+                                        className="ai-composer-plus-menu__item"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={attachmentUploading}
+                                    >
+                                        <Paperclip size={15} />
+                                        <span className="ai-composer-plus-menu__label">آپلود فایل یا تصویر</span>
+                                        <span className="ai-composer-plus-menu__badge">
+                                            {toPersianDigits(usageStatus.files.remaining)}/{toPersianDigits(usageStatus.files.limit)}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={reasoningEnabled ? 'ai-composer-plus-menu__item ai-composer-plus-menu__item--active' : 'ai-composer-plus-menu__item'}
+                                        onClick={() => {
+                                            toggleReasoning();
+                                            setComposerMenuOpen(false);
+                                        }}
+                                    >
+                                        <Brain size={15} />
+                                        <span className="ai-composer-plus-menu__label">حالت استدلال</span>
+                                        {reasoningEnabled && <Check size={14} />}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={webSearchEnabled ? 'ai-composer-plus-menu__item ai-composer-plus-menu__item--active' : 'ai-composer-plus-menu__item'}
+                                        onClick={() => {
+                                            toggleWebSearch();
+                                            setComposerMenuOpen(false);
+                                        }}
+                                    >
+                                        <Globe size={15} />
+                                        <span className="ai-composer-plus-menu__label">جستجو در وب</span>
+                                        <span className="ai-composer-plus-menu__badge">
+                                            {toPersianDigits(usageStatus.search.remaining)}/{toPersianDigits(usageStatus.search.limit)}
+                                        </span>
+                                    </button>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            hidden
+                            accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.md,.txt,.csv,.json,.yaml,.yml,.xml,.html,.css,.js,.ts,.tsx,.py,.sql,.sh,.log"
+                            onChange={(e) => void handleAttachmentPick(e.target.files?.[0] ?? null)}
+                        />
+                    </div>
                     <textarea
                         ref={textareaRef}
                         className="chat-room__text-input"
@@ -1756,12 +2218,12 @@ export function AIChatRoom({
                     />
                     <button
                         className={
-                            isResponding || (text.trim() && !isResponding)
+                            isResponding || ((text.trim() || stagedAttachment) && !isResponding)
                                 ? 'chat-room__send-btn chat-room__send-btn--active'
                                 : 'chat-room__send-btn chat-room__send-btn--disabled'
                         }
                         onClick={isResponding ? onStopGenerating : submit}
-                        disabled={isResponding ? false : !text.trim()}
+                        disabled={isResponding ? false : (!text.trim() && !stagedAttachment) || attachmentUploading}
                         aria-label={isResponding ? 'Stop response' : 'Send'}
                         type="button"
                     >
@@ -2076,6 +2538,7 @@ export function AIChatRoom({
                 .ai-chat-drawer__new-chat-row {
                     display: flex;
                     gap: 8px;
+                    flex-shrink: 0;
                 }
                 .ai-chat-drawer__new-chat-row .ai-chat-drawer__new-chat {
                     flex: 1;

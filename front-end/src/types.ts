@@ -76,6 +76,11 @@ export interface Message {
     reasoningDurationSec?: number;
     aiModelKey?: AIModelKey;
     aiModelName?: string;
+    searchEnabled?: boolean;
+    searchStatus?: 'searching' | 'completed';
+    searchSources?: AISearchSource[];
+    analyzingAttachment?: boolean;
+    aiAttachment?: AIAttachmentMeta;
 }
 
 export interface ChatLastMessage {
@@ -114,5 +119,49 @@ export interface AIChatSummary {
 }
 
 export type AIModelKey = 'nova-flash' | 'nova-pro';
+
+export interface AISearchSource {
+    index: number;
+    title: string;
+    url: string;
+    domain: string;
+    snippet: string;
+}
+
+export interface AIAttachmentMeta {
+    tempFileId?: string;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    isImage: boolean;
+    previewUrl?: string;
+}
+
+export interface AIUsageStatus {
+    dateKey: string;
+    resetTimezone: string;
+    tokens: {
+        usedPercent: number;
+        remainingPercent: number;
+        exhausted: boolean;
+    };
+    files: {
+        used: number;
+        remaining: number;
+        limit: number;
+    };
+    search: {
+        used: number;
+        remaining: number;
+        limit: number;
+    };
+}
+
+export interface AIMemoryItem {
+    id: string;
+    content: string;
+    updatedAt: number;
+}
+
 
 export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage' | 'settingsPrivacy';

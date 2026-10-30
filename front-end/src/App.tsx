@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey, PendingForwardDraft } from './types';
+import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey, PendingForwardDraft, AIUsageStatus, AIMemoryItem, AIAttachmentMeta, AISearchSource } from './types';
 import { apiFetch } from './config/api';
 import { useWebSocket } from './hooks/useWebSocket';
 import { ChatList } from './components/ChatList';
@@ -259,8 +259,14 @@ export function App() {
     const [aiRespondingChatId, setAIRespondingChatId] = useState<string | null>(null);
     const [temporaryAIChat, setTemporaryAIChat] = useState(false);
     const [selectedAIModel, setSelectedAIModel] = useState<AIModelKey>('nova-flash');
-    const [aiProRemaining, setAIProRemaining] = useState<number>(10);
-    const [aiFlashRemaining, setAIFlashRemaining] = useState<number>(50);
+    const [aiUsageStatus, setAIUsageStatus] = useState<AIUsageStatus>({
+        dateKey: '',
+        resetTimezone: 'Asia/Tehran',
+        tokens: { usedPercent: 0, remainingPercent: 100, exhausted: false },
+        files: { used: 0, remaining: 5, limit: 5 },
+        search: { used: 0, remaining: 5, limit: 5 },
+    });
+    const [aiMemories, setAIMemories] = useState<AIMemoryItem[]>([]);
 
     
     const [isInitialChatsLoad, setIsInitialChatsLoad] = useState(true);
@@ -506,18 +512,23 @@ export function App() {
 
     useEffect(() => {
         if (!isAuthenticated) return;
-        const loadProStatus = async () => {
+        const loadAIUsage = async () => {
             try {
-                const status = await apiFetch('/ai/pro-usage-status');
-                const proRemaining = Number(status?.pro?.remaining ?? status?.remaining ?? 10);
-                const flashRemaining = Number(status?.flash?.remaining ?? 50);
-                setAIProRemaining(Number.isFinite(proRemaining) ? Math.max(0, proRemaining) : 10);
-                setAIFlashRemaining(Number.isFinite(flashRemaining) ? Math.max(0, flashRemaining) : 50);
+                const [status, memories] = await Promise.all([
+                    apiFetch('/ai/usage-status'),
+                    apiFetch('/ai/memories'),
+                ]);
+                if (status?.tokens && status?.files && status?.search) {
+                    setAIUsageStatus(status);
+                }
+                if (Array.isArray(memories)) {
+                    setAIMemories(memories);
+                }
             } catch (error) {
-                console.error('Failed to load AI pro usage status:', error);
+                console.error('Failed to load AI usage status:', error);
             }
         };
-        loadProStatus();
+        loadAIUsage();
     }, [isAuthenticated]);
 
     useEffect(() => {
@@ -1325,6 +1336,30 @@ export function App() {
         });
     }, [activeAIChatId, vibrate]);
 
+    const handleAISearchResults = useCallback((payload: any) => {
+        const messageId = String(payload?.messageId || '');
+        const aiChatId = String(payload?.aiChatId || activeAIChatId || '');
+        if (!messageId || !aiChatId) return;
+        const sources: AISearchSource[] = Array.isArray(payload?.searchSources) ? payload.searchSources : [];
+        setAIMessagesByChat((prev) => {
+            const current = prev[aiChatId] || [];
+            const idx = current.findIndex((m) => m.id === messageId);
+            if (idx === -1) return prev;
+            const next = [...current];
+            next[idx] = { ...next[idx], searchEnabled: true, searchStatus: 'completed', searchSources: sources };
+            return { ...prev, [aiChatId]: next };
+        });
+    }, [activeAIChatId]);
+
+    const handleAIMemoriesUpdated = useCallback(async () => {
+        try {
+            const memories = await apiFetch('/ai/memories');
+            if (Array.isArray(memories)) setAIMemories(memories);
+        } catch (error) {
+            console.error('Failed to reload AI memories:', error);
+        }
+    }, []);
+
     const handleAIStreamDone = useCallback((payload: any) => {
         const message = payload?.message || payload;
         const aiChatId = String(message.aiChatId || activeAIChatId || '');
@@ -1357,6 +1392,9 @@ export function App() {
                 chat.id === aiChatId ? { ...chat, title: nextTitle } : chat
             )));
         }
+        if (payload?.usage?.tokens) {
+            setAIUsageStatus(payload.usage);
+        }
         vibrate([18]);
     }, [vibrate, activeAIChatId]);
 
@@ -1377,7 +1415,13 @@ export function App() {
             }
             const next = [...current];
             const targetIndex = idx !== -1 ? idx : existingByServerId;
-            next[targetIndex] = { ...next[targetIndex], ...messageWithChatId };
+            next[targetIndex] = {
+                ...next[targetIndex],
+                ...messageWithChatId,
+                ...(messageWithChatId.aiAttachment
+                    ? { aiAttachment: { ...next[targetIndex].aiAttachment, ...messageWithChatId.aiAttachment } }
+                    : {}),
+            };
             return { ...prev, [aiChatId]: next };
         });
         setAIChats(prev => prev.map((c) => (
@@ -1387,12 +1431,11 @@ export function App() {
         )));
     }, [activeAIChatId]);
 
-    const handleAIError = useCallback((payload: { message: string; code?: string; remaining?: number }) => {
+    const handleAIError = useCallback((payload: { message: string; code?: string; remaining?: number; usage?: AIUsageStatus }) => {
         const message = String(payload?.message || 'خطا در سرویس هوش مصنوعی');
-        notify({ message, type: payload?.code === 'ai_pro_daily_limit_reached' ? 'info' : 'error' });
-        if (payload?.code === 'ai_pro_daily_limit_reached') {
-            setSelectedAIModel('nova-flash');
-            setAIProRemaining(Math.max(0, Number(payload?.remaining ?? 0)));
+        notify({ message, type: payload?.code === 'ai_daily_limit_reached' ? 'info' : 'error' });
+        if (payload?.usage?.tokens) {
+            setAIUsageStatus(payload.usage);
         }
         setAITyping(false);
         setAIResponding(false);
@@ -1421,6 +1464,8 @@ export function App() {
         onAIStreamStart: handleAIStreamStart,
         onAIStreamChunk: handleAIStreamChunk,
         onAIStreamDone: handleAIStreamDone,
+        onAISearchResults: handleAISearchResults,
+        onAIMemoriesUpdated: handleAIMemoriesUpdated,
     });
 
     useEffect(() => {
@@ -2721,6 +2766,32 @@ export function App() {
         }
     }, []);
 
+    const handleAddAIMemory = useCallback(async (content: string): Promise<boolean> => {
+        const trimmed = content.trim();
+        if (!trimmed) return false;
+        try {
+            const created = await apiFetch('/ai/memories', {
+                method: 'POST',
+                body: JSON.stringify({ content: trimmed }),
+            });
+            setAIMemories((prev) => [created, ...prev].slice(0, 10));
+            return true;
+        } catch (error: any) {
+            notify({ message: error?.message || 'ذخیره حافظه انجام نشد.', type: 'error' });
+            return false;
+        }
+    }, []);
+
+    const handleDeleteAIMemory = useCallback(async (memoryId: string) => {
+        try {
+            await apiFetch(`/ai/memories/${encodeURIComponent(memoryId)}`, { method: 'DELETE' });
+            setAIMemories((prev) => prev.filter((item) => item.id !== memoryId));
+        } catch (error) {
+            console.error('Failed to delete AI memory', error);
+            notify({ message: 'حذف حافظه انجام نشد.', type: 'error' });
+        }
+    }, []);
+
     const handleOpenSavedMessages = useCallback(() => {
         if (!currentUser) return;
         const savedMessagesId = `saved_messages_${currentUser.chatId}`;
@@ -2728,9 +2799,22 @@ export function App() {
         handleSelectChat(savedMessagesId, { navigateToRoute: false });
     }, [currentUser, handleSelectChat, navigate]);
 
-    const handleSendAIMessage = useCallback(async (text: string, useReasoner = false, modelKey: AIModelKey = 'nova-flash'): Promise<boolean> => {
+    const handleSendAIMessage = useCallback(async (text: string, useReasoner = false, modelKey: AIModelKey = 'nova-flash', useWebSearch = false, attachment: AIAttachmentMeta | null = null): Promise<boolean> => {
         if (!currentUser) return false;
+        if (!text.trim() && !attachment) return false;
         if (aiSendInFlightRef.current) return false;
+        if (aiUsageStatus.tokens.exhausted) {
+            notify({ message: 'سهمیه ۲۰٬۰۰۰ توکنی امروز شما تکمیل شده است. تا ۰۰:۰۰ به وقت تهران صبر کنید.', type: 'info' });
+            return false;
+        }
+        if (useWebSearch && aiUsageStatus.search.remaining <= 0) {
+            notify({ message: 'سقف ۵ جستجوی روزانه شما تکمیل شده است.', type: 'info' });
+            return false;
+        }
+        if (attachment && aiUsageStatus.files.remaining <= 0) {
+            notify({ message: 'سقف ۵ فایل روزانه شما تکمیل شده است.', type: 'info' });
+            return false;
+        }
         aiSendInFlightRef.current = true;
         try {
 
@@ -2771,8 +2855,8 @@ export function App() {
 
             const currentAIChatMessages = aiMessagesByChat[finalChatId] || [];
             const sentCount = currentAIChatMessages.filter((m) => m.senderId === currentUser.chatId).length;
-            if (sentCount >= 30) {
-                alert('حداکثر 30 پیام در هر گفتگو مجاز است. لطفاً یک چت جدید باز کنید.');
+            if (sentCount >= 60) {
+                alert('حداکثر ۶۰ پیام در هر گفتگو مجاز است. لطفاً یک چت جدید باز کنید.');
                 return false;
             }
             const clientId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2784,6 +2868,7 @@ export function App() {
                 text,
                 timestamp: Date.now(),
                 seen: false,
+                ...(attachment ? { aiAttachment: attachment } : {}),
             };
 
             setAIMessagesByChat((prev) => ({
@@ -2792,18 +2877,23 @@ export function App() {
             }));
             setAIRespondingChatId(finalChatId);
 
-            if (modelKey === 'nova-pro' && aiProRemaining <= 0) {
-                notify({ message: 'سقف ۱۰ پیام روزانه Nova Pro تکمیل شده است. تا ۰۰:۰۰ صبر کنید یا از Nova Flash استفاده کنید.', type: 'info' });
-                setSelectedAIModel('nova-flash');
-                return false;
-            }
-            if (modelKey === 'nova-flash' && aiFlashRemaining <= 0) {
-                notify({ message: 'سقف ۵۰ پیام روزانه Nova Flash تکمیل شده است. تا ۰۰:۰۰ صبر کنید یا از Nova Pro استفاده کنید.', type: 'info' });
-                setSelectedAIModel('nova-pro');
-                return false;
-            }
-
-            const success = sendAIMessage(text, finalChatId, clientId, useReasoner, modelKey);
+            const success = sendAIMessage(
+                text,
+                finalChatId,
+                clientId,
+                useReasoner,
+                modelKey,
+                useWebSearch,
+                attachment?.tempFileId
+                    ? {
+                        tempFileId: attachment.tempFileId,
+                        fileName: attachment.fileName,
+                        fileSize: attachment.fileSize,
+                        mimeType: attachment.mimeType,
+                        isImage: attachment.isImage,
+                    }
+                    : null,
+            );
             if (!success) {
                 console.warn('Failed to send message to AI');
                 setAIMessagesByChat((prev) => ({
@@ -2817,13 +2907,11 @@ export function App() {
                 notify({ message: 'ارتباط با سرویس هوش مصنوعی برقرار نیست. لطفاً دوباره تلاش کنید.', type: 'error' });
                 return false;
             }
-            if (modelKey === 'nova-pro') setAIProRemaining((prev) => Math.max(0, prev - 1));
-            if (modelKey === 'nova-flash') setAIFlashRemaining((prev) => Math.max(0, prev - 1));
             return true;
         } finally {
             aiSendInFlightRef.current = false;
         }
-    }, [currentUser, activeAIChatId, aiMessagesByChat, sendAIMessage, aiResponding, aiRespondingChatId, aiChats, aiProRemaining, aiFlashRemaining, location.pathname, navigate]);
+    }, [currentUser, activeAIChatId, aiMessagesByChat, sendAIMessage, aiResponding, aiRespondingChatId, aiChats, aiUsageStatus, location.pathname, navigate]);
 
     const handleStopAIResponse = useCallback(() => {
         const success = stopAIGeneration();
@@ -3000,8 +3088,10 @@ export function App() {
                             onSendMessage={handleSendAIMessage}
                             selectedModel={selectedAIModel}
                             onSelectModel={setSelectedAIModel}
-                            proRemainingToday={aiProRemaining}
-                            flashRemainingToday={aiFlashRemaining}
+                            usageStatus={aiUsageStatus}
+                            memories={aiMemories}
+                            onAddMemory={handleAddAIMemory}
+                            onDeleteMemory={handleDeleteAIMemory}
                             onStopGenerating={handleStopAIResponse}
                             onDeleteMessage={handleDeleteAIMessage}
                             onBack={handleBack}
