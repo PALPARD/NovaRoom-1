@@ -1306,7 +1306,7 @@ body,
     -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow), var(--glass-specular);
-    padding: 5px 16px 5px 8px;
+    padding: 4px 16px 4px 4px;
     cursor: pointer;
     text-align: left;
     font-family: inherit;
@@ -1324,7 +1324,7 @@ body,
 
 .chat-room__header-clickable--full {
     align-self: stretch;
-    padding: 5px 16px 5px 8px;
+    padding: 4px 16px 4px 4px;
 }
 
 .chat-room__header-clickable--full:focus-visible {
@@ -2655,8 +2655,8 @@ body,
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.38);
-    border-top-color: #ffffff;
+    border: 2px solid var(--glass-border);
+    border-top-color: var(--text-primary);
     animation: chatRangeSpin 0.85s linear infinite;
 }
 
@@ -5413,18 +5413,19 @@ body[data-music-player='active'] .app {
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow), var(--glass-specular);
     cursor: pointer;
-    transition: background 0.15s ease, transform 0.12s ease;
+    transition: background 0.15s ease;
     direction: rtl;
     text-align: right;
     user-select: none;
 }
 
 .chat-room__pinned-bar:hover {
-    background: color-mix(in srgb, var(--text-primary) 5%, var(--glass-surface));
+    background: var(--glass-surface-elevated);
 }
 
 .chat-room__pinned-bar:active {
-    transform: scale(0.99);
+    background: color-mix(in srgb, var(--text-primary) 8%, var(--glass-surface));
+    transform: none;
 }
 
 .chat-room__pinned-bar__indicator {
@@ -5758,8 +5759,22 @@ html.no-blur-effect .chat-room__jump-box {
     background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 
+.message-row--swiping {
+    isolation: isolate;
+    content-visibility: visible !important;
+    overflow: visible !important;
+}
+
 .message-row--selecting {
     cursor: pointer;
+}
+
+.message-row--selecting a,
+.message-row--selecting .message-reactions,
+.message-row--selecting .file-message-interactive,
+.message-row--selecting img,
+.message-row--selecting video {
+    pointer-events: none;
 }
 
 .chat-room__toast {
@@ -5826,7 +5841,6 @@ html.no-blur-effect .chat-room__jump-box {
     .new-chat-screen__user:hover,
     .reaction-picker__emoji:hover,
     .reaction-picker__menu-item:hover,
-    .chat-room__pinned-bar:hover,
     .chat-room__pinned-bar__unpin:hover,
     .chat-room__selection-close-btn:hover,
     .message-select-indicator:hover,
@@ -5865,7 +5879,6 @@ html.no-blur-effect .chat-room__jump-box {
     .forward-sheet__item:active,
     .new-chat-screen__user:active,
     .reaction-picker__menu-item:active,
-    .chat-room__pinned-bar:active,
     .chat-room__pinned-bar__unpin:active,
     .chat-room__selection-close-btn:active,
     .message-select-indicator:active,
@@ -5919,6 +5932,7 @@ html.no-blur-effect .chat-room__jump-box {
     }
 
     .chat-room__header-clickable:active,
+    .chat-room__pinned-bar:active,
     .chat-room__header-actions > .icon-btn:active,
     .chat-room__back-btn:active {
         background-color: color-mix(in srgb, var(--text-primary) 8%, var(--glass-surface));
@@ -5926,7 +5940,9 @@ html.no-blur-effect .chat-room__jump-box {
     }
 
     .chat-room__header-actions > .icon-btn:hover,
-    .chat-room__back-btn:hover {
+    .chat-room__back-btn:hover,
+    .chat-room__header-clickable:hover,
+    .chat-room__pinned-bar:hover {
         background-color: var(--glass-surface-elevated);
     }
 
@@ -5975,6 +5991,7 @@ html.no-blur-effect .chat-room__jump-box {
 
 .chat-room .header-fade--bottom {
     background: linear-gradient(to top, var(--header-fade-room) 0%, color-mix(in srgb, var(--header-fade-room) 52%, transparent) 58%, transparent 100%);
+    height: 70px;
 }
 
 .header-fade--room {

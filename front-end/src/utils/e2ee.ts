@@ -378,6 +378,7 @@ const encryptFileBytesV1 = async (plain: Uint8Array, chatId: string): Promise<Ui
 export const encryptFileBytesClientSide = async (plain: Uint8Array, _token: string, chatId: string): Promise<Uint8Array> => {
     if (!plain.length) return plain;
     if (typeof crypto === 'undefined' || !crypto.subtle) {
+        if (plain.length > 512 * 1024) return plain;
         return encryptFileBytesV1(plain, chatId);
     }
     try {
@@ -395,6 +396,7 @@ export const encryptFileBytesClientSide = async (plain: Uint8Array, _token: stri
         full.set(encrypted, FILE_MAGIC_V2.length + iv.length);
         return full;
     } catch {
+        if (plain.length > 512 * 1024) return plain;
         return encryptFileBytesV1(plain, chatId);
     }
 };

@@ -41,19 +41,17 @@ export const MiniMusicPlayer: React.FC = () => {
   return (
     <div style={{
       position: 'fixed',
-      top: 6,
-      left: 12,
-      right: 12,
+      top: 0,
+      left: 0,
+      right: 0,
       zIndex: 1500,
-      background: 'var(--glass-surface-elevated)',
-      backdropFilter: 'var(--glass-blur)',
-      WebkitBackdropFilter: 'var(--glass-blur)',
-      border: '1px solid var(--glass-border)',
-      borderRadius: 20,
-      boxShadow: 'var(--glass-shadow), var(--glass-specular)',
+      background: 'var(--bg-secondary)',
+      borderBottom: '1px solid var(--border-primary)',
+      borderRadius: 0,
+      boxShadow: 'var(--shadow-sm)',
       display: 'flex',
       flexDirection: 'column',
-      padding: '7px 14px 6px',
+      padding: '8px 16px',
       fontFamily: 'Vazir, sans-serif',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

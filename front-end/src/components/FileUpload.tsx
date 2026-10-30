@@ -264,16 +264,21 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             xhrRef.current = xhr;
             task.phase = 'upload';
 
-            
+            let lastReportTime = 0;
+            let lastProgress = -1;
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const progress = Math.round((e.loaded / e.total) * 100);
-                    task.uploadProgress = Math.max(task.uploadProgress, progress);
-                    pushTaskUpdate(task);
+                    const now = performance.now();
+                    if (progress === 100 || progress >= lastProgress + 2 || now - lastReportTime > 120) {
+                        lastProgress = progress;
+                        lastReportTime = now;
+                        task.uploadProgress = Math.max(task.uploadProgress, progress);
+                        pushTaskUpdate(task);
+                    }
                 }
             });
 
-            
             xhr.addEventListener('load', () => {
                 if (xhr.status === 200) {
                     const response = JSON.parse(xhr.responseText);
@@ -284,7 +289,9 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                             fileSize: file.size,
                             mimeType: file.type || response.file.mimeType,
                         };
-                        void saveBlobToCache(`chat:${chatId}:file:${result.fileId}`, file);
+                        window.setTimeout(() => {
+                            void saveBlobToCache(`chat:${chatId}:file:${result.fileId}`, file);
+                        }, 100);
                         task.uploadProgress = 100;
                         task.phase = 'encrypt';
                         pushTaskUpdate(task);
@@ -483,11 +490,25 @@ async function readMediaDuration(file: File): Promise<number> {
         const duration = await new Promise<number>((resolve) => {
             const media = document.createElement(file.type.startsWith('audio/') ? 'audio' : 'video');
             media.preload = 'metadata';
-            media.onloadedmetadata = () => resolve(Number.isFinite(media.duration) ? media.duration : 0);
-            media.onerror = () => resolve(0);
+            const cleanup = () => {
+                URL.revokeObjectURL(objectUrl);
+            };
+            const timer = window.setTimeout(() => {
+                cleanup();
+                resolve(0);
+            }, 1500);
+            media.onloadedmetadata = () => {
+                window.clearTimeout(timer);
+                cleanup();
+                resolve(Number.isFinite(media.duration) ? media.duration : 0);
+            };
+            media.onerror = () => {
+                window.clearTimeout(timer);
+                cleanup();
+                resolve(0);
+            };
             media.src = objectUrl;
         });
-        URL.revokeObjectURL(objectUrl);
         return duration;
     } catch {
         return 0;

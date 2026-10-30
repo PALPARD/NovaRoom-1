@@ -932,7 +932,7 @@ export function ChatRoom({
         highlightTimeoutRef.current = window.setTimeout(() => setHighlightId(null), 1500);
     };
 
-    const scrollToMessage = (messageId: string) => {
+    const scrollToMessage = (messageId: string, retry = 1) => {
         const el = messageElsRef.current.get(messageId);
         const container = messagesContainerRef.current;
         if (!el || !container) {
@@ -943,52 +943,43 @@ export function ChatRoom({
             }
             return;
         }
+        if (highlightRafRef.current) cancelAnimationFrame(highlightRafRef.current);
+        const topBarOffset = pinnedMessage ? 122 : 68;
+        const cr = container.getBoundingClientRect();
+        const tr = el.getBoundingClientRect();
+        const isFullyVisible = tr.top >= cr.top + topBarOffset && tr.bottom <= cr.bottom - 70;
+        if (isFullyVisible) {
+            startHighlight(messageId);
+            return;
+        }
+
         markProgrammaticScroll();
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (highlightRafRef.current) cancelAnimationFrame(highlightRafRef.current);
+        let lastTop = container.scrollTop;
+        let sameCount = 0;
         const startedAt = performance.now();
-        let lastScrollTop = container.scrollTop;
-        let stableFrames = 0;
-        let settled = false;
-        let centeredFrames = 0;
-        const finish = () => {
-            startHighlight(messageId);
-            highlightRafRef.current = null;
-        };
         const check = () => {
-            const target = messageElsRef.current.get(messageId);
             const cont = messagesContainerRef.current;
-            if (!target || !cont) return;
-            const elapsed = performance.now() - startedAt;
-            if (elapsed > 3000) {
-                finish();
-                return;
+            const target = messageElsRef.current.get(messageId);
+            if (!cont || !target) return;
+            const now = performance.now();
+            if (cont.scrollTop === lastTop) {
+                sameCount += 1;
+            } else {
+                sameCount = 0;
+                lastTop = cont.scrollTop;
             }
-            const cr = cont.getBoundingClientRect();
-            const tr = target.getBoundingClientRect();
-            const delta = (tr.top + tr.bottom) / 2 - (cr.top + cr.bottom) / 2;
-
-            if (!settled) {
-                if (cont.scrollTop === lastScrollTop) {
-                    stableFrames += 1;
-                } else {
-                    stableFrames = 0;
-                    lastScrollTop = cont.scrollTop;
-                }
-                if (stableFrames >= 2 && elapsed > 250) settled = true;
-            }
-
-            if (settled) {
-                if (Math.abs(delta) > 4) {
-                    cont.scrollTop += delta;
-                    centeredFrames = 0;
-                } else {
-                    centeredFrames += 1;
-                }
-                if (centeredFrames >= 12) {
-                    finish();
+            if (sameCount >= 4 || now - startedAt > 650) {
+                const targetRect = target.getBoundingClientRect();
+                const contRect = cont.getBoundingClientRect();
+                const inView = targetRect.top >= contRect.top + topBarOffset - 20 && targetRect.bottom <= contRect.bottom - 50;
+                if (!inView && retry > 0) {
+                    scrollToMessage(messageId, retry - 1);
                     return;
                 }
+                startHighlight(messageId);
+                highlightRafRef.current = null;
+                return;
             }
             highlightRafRef.current = requestAnimationFrame(check);
         };
@@ -1822,24 +1813,26 @@ export function ChatRoom({
 
     const jumpToLatest = async () => {
         if (isJumpingToLatest) return;
-        setIsJumpingToLatest(true);
         setNewMsgCount(0);
-        try {
-            if (onJumpToLatestMessages) {
-                await Promise.resolve(onJumpToLatestMessages(chatId));
-            } else if (hasNewerMessages && onSelectChat) {
-                await Promise.resolve(onSelectChat(chatId));
-            } else if (hasNewerMessages && onLoadNewerMessages) {
-                await Promise.resolve(onLoadNewerMessages(chatId));
+        if (hasNewerMessages) {
+            setIsJumpingToLatest(true);
+            try {
+                if (onJumpToLatestMessages) {
+                    await Promise.resolve(onJumpToLatestMessages(chatId));
+                } else if (onSelectChat) {
+                    await Promise.resolve(onSelectChat(chatId));
+                } else if (onLoadNewerMessages) {
+                    await Promise.resolve(onLoadNewerMessages(chatId));
+                }
+            } finally {
+                setIsJumpingToLatest(false);
             }
-            scrollToBottom(true);
-            window.setTimeout(() => {
-                scrollToBottom(true);
-                if (computeNearBottom()) setShowScrollBtn(false);
-            }, 260);
-        } finally {
-            setIsJumpingToLatest(false);
         }
+        scrollToBottom(true);
+        window.setTimeout(() => {
+            scrollToBottom(true);
+            if (computeNearBottom()) setShowScrollBtn(false);
+        }, 260);
     };
 
     const handleComposerSend = useCallback((payload: ChatComposerSendPayload) => {
@@ -2486,7 +2479,13 @@ export function ChatRoom({
             {pinnedMessage && (
                 <div
                     className="chat-room__pinned-bar"
-                    onClick={() => onJumpToMessage?.(chatId, pinnedMessage.id)}
+                    onClick={() => {
+                        if (messagesById.has(pinnedMessage.id)) {
+                            scrollToMessage(pinnedMessage.id);
+                        } else {
+                            onJumpToMessage?.(chatId, pinnedMessage.id);
+                        }
+                    }}
                     role="button"
                     tabIndex={0}
                 >
@@ -2503,7 +2502,7 @@ export function ChatRoom({
                     <button
                         type="button"
                         className="chat-room__pinned-bar__unpin"
-                        title="برداشتن پین"
+                        title="برداشتن سنجاق"
                         aria-label="Unpin message"
                         onClick={(e) => {
                             e.stopPropagation();
@@ -2614,7 +2613,7 @@ export function ChatRoom({
                                 type="button"
                             >
                                 <Pin size={16} />
-                                {pinnedMessage?.id === activeMsg.id ? 'برداشتن پین' : 'پین کردن پیام'}
+                                {pinnedMessage?.id === activeMsg.id ? 'برداشتن سنجاق' : 'سنجاق کردن پیام'}
                             </button>
                         )}
                         <button className="popover__item" onClick={() => openForwardModal(activeMsg.id)} type="button"><CornerUpLeft size={16} />فوروارد</button>
@@ -2785,7 +2784,7 @@ export function ChatRoom({
                         initial={{ opacity: 0 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.14, ease: 'easeOut' }}
-                        style={{ position: 'absolute', right: 12, bottom: scrollButtonBottom, zIndex: 12, color: '#ffffff', cursor: 'pointer' }}>
+                        style={{ position: 'absolute', right: 12, bottom: scrollButtonBottom, zIndex: 12, color: 'var(--text-primary)', cursor: 'pointer' }}>
                         {isJumpingToLatest ? (
                             <span className="chat-room__scroll-btn-spinner" aria-hidden="true" />
                         ) : (
@@ -2825,7 +2824,11 @@ export function ChatRoom({
             </div>
 
             {!isSelectionModeActive && (
-                <div className="header-fade header-fade--bottom header-fade--visible" aria-hidden="true" />
+                <div
+                    className="header-fade header-fade--bottom header-fade--visible"
+                    aria-hidden="true"
+                    style={{ height: `${(composerHeight || 54) + 12}px` }}
+                />
             )}
 
             <ForwardModal
@@ -2921,7 +2924,7 @@ export function ChatRoom({
                 {confirmPin && (
                     <ConfirmDialog
                         overlayRef={confirmPinRef}
-                        title={confirmPin.action === 'pin' ? 'پیام سنجاق شود؟' : 'پین برداشته شود؟'}
+                        title={confirmPin.action === 'pin' ? 'پیام سنجاق شود؟' : 'سنجاق برداشته شود؟'}
                         text={confirmPin.action === 'pin'
                             ? 'این پیام در بالای گفتگو سنجاق میشود.'
                             : 'پیام سنجاق‌شده از بالای گفتگو برداشته میشود.'}

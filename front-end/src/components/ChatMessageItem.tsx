@@ -245,6 +245,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     actions,
 }: ChatMessageItemProps) {
     const bubbleRef = useRef<HTMLDivElement | null>(null);
+    const [isSwiping, setIsSwiping] = useState(false);
     const swipeRef = useRef({ startX: 0, startY: 0, active: false, captured: false, pointerId: null as number | null, blockClickUntil: 0 });
     const longPressTimerRef = useRef<number | null>(null);
     const longPressOriginRef = useRef({ x: 0, y: 0 });
@@ -297,6 +298,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             el.style.transform = '';
             el.style.touchAction = '';
         }
+        setIsSwiping(false);
         actions.swipeLock(false);
     };
 
@@ -338,7 +340,16 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             )}
 
             <div
-                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isHighlighted ? 'message-row--flash' : ''} ${isSelected ? 'message-row--selected' : ''} ${isSelectionModeActive ? 'message-row--selecting' : ''}`}
+                className={`${isMine ? 'message-row message-row--mine' : `message-row message-row--theirs${isGroupChat ? ' message-row--group' : ''}`} ${isHighlighted ? 'message-row--flash' : ''} ${isSelected ? 'message-row--selected' : ''} ${isSelectionModeActive ? 'message-row--selecting' : ''} ${isSwiping ? 'message-row--swiping' : ''}`}
+                onClickCapture={(e) => {
+                    if (!isSelectionModeActive) return;
+                    const target = e.target as HTMLElement;
+                    if (!target.closest('.message-select-indicator')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        actions.toggleSelect(message.id);
+                    }
+                }}
                 onClick={(e) => {
                     if (!isSelectionModeActive) return;
                     if (consumeSuppressedClick()) return;
@@ -362,6 +373,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                         if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
                         swipeRef.current.captured = true;
                         actions.swipeLock(true);
+                        setIsSwiping(true);
                         try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { void 0; }
                     }
                     e.preventDefault();
@@ -406,6 +418,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                         if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) || dx <= 0) return;
                         swipeRef.current.captured = true;
                         actions.swipeLock(true);
+                        setIsSwiping(true);
                     }
                     applyDragOffset(dx);
                 }}
@@ -541,8 +554,20 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                             chatId={chatId}
                             onMediaLoad={() => actions.mediaReady(message.id)}
                             onMediaError={() => actions.mediaReady(message.id)}
-                            onImageClick={(imageUrl, file) => actions.openImage(imageUrl, file)}
-                            onVideoClick={(videoUrl, file) => actions.openVideo(videoUrl, file)}
+                            onImageClick={(imageUrl, file) => {
+                                if (isSelectionModeActive) {
+                                    actions.toggleSelect(message.id);
+                                    return;
+                                }
+                                actions.openImage(imageUrl, file);
+                            }}
+                            onVideoClick={(videoUrl, file) => {
+                                if (isSelectionModeActive) {
+                                    actions.toggleSelect(message.id);
+                                    return;
+                                }
+                                actions.openVideo(videoUrl, file);
+                            }}
                         />
                     )}
                     {message.reasoningEnabled && message.reasoningContent && (
@@ -597,6 +622,10 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                                         className={isMyReaction ? 'message-reaction message-reaction--active' : 'message-reaction'}
                                         onClick={(e) => {
                                             e.stopPropagation();
+                                            if (isSelectionModeActive) {
+                                                actions.toggleSelect(message.id);
+                                                return;
+                                            }
                                             if (isMyReaction) actions.deleteReaction(message.id);
                                             else actions.react(message.id, reaction.emoji);
                                         }}
