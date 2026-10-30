@@ -78,6 +78,7 @@ export function ContactInfo({
     }, [user]);
 
     const displayBio = bio === 'گروه' ? '' : bio;
+    const bioIsLatin = displayBio !== '' && !/[\u0600-\u06FF]/.test(displayBio);
 
     useEffect(() => {
         
@@ -489,18 +490,25 @@ export function ContactInfo({
 
                     {!isGroup ? (
                         <>
+                            {displayBio && (
+                                <div className="profile__card">
+                                    <div className="profile__section-title">
+                                        <span className="profile__section-icon"><FileText size={15} /></span>
+                                        بیوگرافی
+                                    </div>
+                                    <p
+                                        className="profile__bio-text"
+                                        style={bioIsLatin ? { direction: 'ltr', textAlign: 'left' } : undefined}
+                                    >
+                                        {displayBio}
+                                    </p>
+                                </div>
+                            )}
+
                             <div className="profile__card">
                                 <div className="profile__section-title">
                                     <span className="profile__section-icon"><UserRound size={15} /></span>
                                     اطلاعات حساب
-                                </div>
-
-                                <div className="profile__info-row">
-                                    <span className="profile__info-icon"><UserRound size={16} /></span>
-                                    <div className="profile__info-body">
-                                        <span className="profile__info-label">نام</span>
-                                        <span className="profile__info-value">{user.name}</span>
-                                    </div>
                                 </div>
 
                                 {user.username && (
@@ -553,18 +561,6 @@ export function ContactInfo({
                                     </div>
                                 )}
                             </div>
-
-                            {displayBio && (
-                                <div className="profile__card">
-                                    <div className="profile__section-title">
-                                        <span className="profile__section-icon"><FileText size={15} /></span>
-                                        بیوگرافی
-                                    </div>
-                                    <p className="profile__bio-text">
-                                        {displayBio}
-                                    </p>
-                                </div>
-                            )}
                         </>
                     ) : (
                         <>
@@ -574,7 +570,10 @@ export function ContactInfo({
                                         <span className="profile__section-icon"><FileText size={15} /></span>
                                         بیوگرافی
                                     </div>
-                                    <p className="profile__bio-text">
+                                    <p
+                                        className="profile__bio-text"
+                                        style={bioIsLatin ? { direction: 'ltr', textAlign: 'left' } : undefined}
+                                    >
                                         {displayBio}
                                     </p>
                                 </div>

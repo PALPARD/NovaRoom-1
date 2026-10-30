@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed } from 'lucide-react';
+import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed, X } from 'lucide-react';
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,8 @@ import { ForwardModal } from './ForwardModal';
 import { notify } from '../utils/notificationBus';
 import { cx } from '../utils/cx';
 import { isElementScrolled } from '../utils/scrollFade';
+import { triggerHaptic } from '../utils/haptics';
+import { copyText } from '../utils/clipboard';
 
 interface AIChatRoomProps {
     messages: Message[];
@@ -43,6 +45,7 @@ interface AIChatRoomProps {
 }
 
 const IRAN_OFFSET_MS = 210 * 60 * 1000; 
+const MAX_SELECTED_MESSAGES = 30;
 
 function normalizeTs(ts: unknown): number {
     if (ts == null) return Date.now();
@@ -232,6 +235,13 @@ export function AIChatRoom({
     const [hideScrollBtnUntilBottom, setHideScrollBtnUntilBottom] = useState(false);
     const [forwardModalOpen, setForwardModalOpen] = useState(false);
     const [forwardingMessageId, setForwardingMessageId] = useState<string | null>(null);
+    const [forwardingMessageIds, setForwardingMessageIds] = useState<string[]>([]);
+    const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+    const [selectionShake, setSelectionShake] = useState(0);
+    const [copyToast, setCopyToast] = useState<string | null>(null);
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressOriginRef = useRef({ x: 0, y: 0 });
+    const suppressClickRef = useRef(false);
     const [reasoningEnabled, setReasoningEnabled] = useState(false);
     const prevActiveAIChatIdRef = useRef<string | null>(activeAIChatId);
     const [aiChatsDrawerOpen, setAIChatsDrawerOpen] = useState(false);
@@ -371,8 +381,19 @@ export function AIChatRoom({
         setNewMsgCount(0);
         setShowScrollBtn(false);
         setHideScrollBtnUntilBottom(false);
+        setSelectedMessageIds([]);
         requestAnimationFrame(() => scrollToBottom(false));
     }, [activeAIChatId]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && selectedMessageIds.length > 0) {
+                setSelectedMessageIds([]);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [selectedMessageIds.length]);
 
     const playChatSound = (kind: 'send' | 'receive') => {
         const audio = kind === 'send' ? sendSoundRef.current : receiveSoundRef.current;
@@ -775,6 +796,76 @@ export function AIChatRoom({
         setModelDropdownOpen(false);
     };
 
+    const isSelectionModeActive = selectedMessageIds.length > 0;
+
+    const toggleMessageSelection = (messageId: string) => {
+        if (!selectedMessageIds.includes(messageId) && selectedMessageIds.length >= MAX_SELECTED_MESSAGES) {
+            triggerHaptic();
+            setSelectionShake((value) => value + 1);
+            return;
+        }
+        setSelectedMessageIds((prev) => (
+            prev.includes(messageId)
+                ? prev.filter((id) => id !== messageId)
+                : [...prev, messageId]
+        ));
+    };
+
+    const handleCopySelected = async () => {
+        if (selectedMessageIds.length === 0) return;
+        const selectedMsgs = messages
+            .filter((m) => selectedMessageIds.includes(m.id))
+            .sort((a, b) => normalizeTs(a.timestamp) - normalizeTs(b.timestamp));
+
+        const textLines = selectedMsgs
+            .map((m) => (m.text ?? '').trim())
+            .filter(Boolean);
+
+        if (textLines.length > 0) {
+            try {
+                await copyText(textLines.join('\n\n'));
+                setCopyToast('متن پیام‌ها کپی شد');
+                window.setTimeout(() => setCopyToast(null), 2000);
+            } catch {
+                alert('کپی با خطا مواجه شد');
+            }
+        }
+        setSelectedMessageIds([]);
+    };
+
+    const handleOpenForwardSelected = () => {
+        if (selectedMessageIds.length === 0) return;
+        setForwardingMessageIds([...selectedMessageIds]);
+        setForwardModalOpen(true);
+    };
+
+    const cancelMessageLongPress = () => {
+        if (longPressTimerRef.current === null) return;
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+    };
+
+    const startMessageLongPress = (messageId: string, x: number, y: number) => {
+        cancelMessageLongPress();
+        suppressClickRef.current = false;
+        if (isSelectionModeActive || isResponding || isTyping) return;
+        longPressOriginRef.current = { x, y };
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTimerRef.current = null;
+            suppressClickRef.current = true;
+            setMsgMenu(null);
+            toggleMessageSelection(messageId);
+            triggerHaptic();
+        }, 450);
+    };
+
+    const trackMessageLongPressMove = (x: number, y: number) => {
+        if (longPressTimerRef.current === null) return;
+        const dx = x - longPressOriginRef.current.x;
+        const dy = y - longPressOriginRef.current.y;
+        if (Math.hypot(dx, dy) > 8) cancelMessageLongPress();
+    };
+
     const openMessageMenu = (messageId: string, targetEl: HTMLElement, clientX?: number, clientY?: number) => {
         if (isResponding || isTyping) return;
         const room = roomRef.current;
@@ -791,7 +882,7 @@ export function AIChatRoom({
         let top = clickY - roomRect.top + 8;
         let left = clickX - roomRect.left - 12;
 
-        const menuHeight = 80;
+        const menuHeight = 120;
         const menuWidth = 180;
 
         const maxTop = roomRect.height - menuHeight - 16;
@@ -828,21 +919,37 @@ export function AIChatRoom({
 
     const openForwardModal = (messageId: string) => {
         setForwardingMessageId(messageId);
+        setForwardingMessageIds([]);
         setForwardModalOpen(true);
         setMsgMenu(null);
     };
 
     const handleForwardFromModal = (targetChatId: string) => {
-        if (!forwardingMessageId) return;
-        const sourceMessage = messages.find((m) => m.id === forwardingMessageId);
-        onSetPendingForwardDraft?.(targetChatId, {
-            sourceChatId: `ai_chat_${currentUserId}`,
-            messageId: forwardingMessageId,
-            previewText: sourceMessage?.text || '',
-            previewFile: sourceMessage?.file || null,
-        });
-        setForwardingMessageId(null);
+        const idsToForward = forwardingMessageIds.length > 0
+            ? [...forwardingMessageIds]
+            : (forwardingMessageId ? [forwardingMessageId] : []);
+        if (idsToForward.length === 0) return;
+
         setForwardModalOpen(false);
+        setForwardingMessageId(null);
+        setForwardingMessageIds([]);
+        setSelectedMessageIds([]);
+
+        const sortedMsgs = messages
+            .filter((m) => idsToForward.includes(m.id))
+            .sort((a, b) => normalizeTs(a.timestamp) - normalizeTs(b.timestamp));
+        const messageIds = sortedMsgs.map((m) => m.id);
+        if (messageIds.length === 0) return;
+
+        const firstMessage = sortedMsgs[0];
+        onSetPendingForwardDraft?.(targetChatId, {
+            sourceChatId: activeAIChatId || `ai_chat_${currentUserId}`,
+            messageId: messageIds[0],
+            messageIds: messageIds.length > 1 ? messageIds : undefined,
+            sourceChatName: 'هوش مصنوعی',
+            previewText: firstMessage.text || '',
+            previewFile: messageIds.length === 1 ? (firstMessage.file || null) : null,
+        });
         onSelectChat?.(targetChatId);
     };
 
@@ -862,7 +969,51 @@ export function AIChatRoom({
             animate="visible"
             exit="exit"
         >
-            <div className="header-fade header-fade--room header-fade--visible" aria-hidden="true" />
+            {!isSelectionModeActive && (
+                <div className="header-fade header-fade--room header-fade--visible" aria-hidden="true" />
+            )}
+            {isSelectionModeActive ? (
+                <div className="chat-room__header chat-room__header--selection">
+                    <div className="chat-room__selection-left">
+                        <button
+                            className="icon-btn chat-room__selection-close-btn"
+                            onClick={() => setSelectedMessageIds([])}
+                            aria-label="Cancel selection"
+                            title="لغو انتخاب"
+                            type="button"
+                        >
+                            <X size={20} />
+                        </button>
+                        <span
+                            key={selectionShake}
+                            className={cx('chat-room__selection-count', selectionShake > 0 && 'chat-room__selection-count--shake')}
+                        >
+                            {toPersianDigits(selectedMessageIds.length)} پیام انتخاب شده
+                        </span>
+                    </div>
+
+                    <div className="chat-room__selection-actions">
+                        <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={handleCopySelected}
+                            title="کپی متن پیام‌ها"
+                            aria-label="Copy selected messages"
+                        >
+                            <Copy size={19} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={handleOpenForwardSelected}
+                            title="فوروارد پیام‌های انتخاب‌شده"
+                            aria-label="Forward selected messages"
+                        >
+                            <CornerUpLeft size={19} />
+                        </button>
+                    </div>
+                </div>
+            ) : (
             <div className="chat-room__header">
                 <button
                     className={cx('chat-room__back-btn', 'back-icon-btn', messagesScrolled && 'chat-room__back-btn--scrolled')}
@@ -923,6 +1074,7 @@ export function AIChatRoom({
                     <PanelRight size={18} />
                 </button>
             </div>
+            )}
 
             <div
                 className="chat-room__messages"
@@ -949,19 +1101,88 @@ export function AIChatRoom({
                     ) : (
                         messages.map((message) => {
                             const isMine = message.senderId === currentUserId;
+                            const isSelected = selectedMessageIds.includes(message.id);
                             const isReasoningMessage = !isMine && Boolean(message.reasoningEnabled);
                             const elapsed = reasoningElapsedByMessage[message.id] ?? Number(message.reasoningDurationSec || 0);
                             const elapsedLabel = `${toPersianDigits(Math.floor(elapsed / 60))}:${toPersianDigits(String(elapsed % 60).padStart(2, '0'))}`;
 
                             return (
+                                <div key={message.id} className="message-item">
                                 <div
-                                    key={message.id}
-                                    className={isMine ? 'message-row message-row--mine' : 'message-row message-row--theirs'}
+                                    className={cx(
+                                        isMine ? 'message-row message-row--mine' : 'message-row message-row--theirs',
+                                        isSelected && 'message-row--selected',
+                                        isSelectionModeActive && 'message-row--selecting'
+                                    )}
+                                    onClickCapture={(e) => {
+                                        if (suppressClickRef.current) {
+                                            suppressClickRef.current = false;
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            return;
+                                        }
+                                        if (!isSelectionModeActive) return;
+                                        const target = e.target as HTMLElement;
+                                        if (!target.closest('.message-select-indicator')) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            toggleMessageSelection(message.id);
+                                        }
+                                    }}
+                                    onClick={(e) => {
+                                        if (!isSelectionModeActive) return;
+                                        if (suppressClickRef.current) {
+                                            suppressClickRef.current = false;
+                                            return;
+                                        }
+                                        e.stopPropagation();
+                                        toggleMessageSelection(message.id);
+                                    }}
+                                    onPointerDown={(e) => {
+                                        if (e.pointerType === 'mouse' && e.button === 0) startMessageLongPress(message.id, e.clientX, e.clientY);
+                                    }}
+                                    onPointerMove={(e) => {
+                                        if (e.pointerType === 'mouse') trackMessageLongPressMove(e.clientX, e.clientY);
+                                    }}
+                                    onPointerUp={cancelMessageLongPress}
+                                    onPointerCancel={cancelMessageLongPress}
+                                    onTouchStart={(e) => {
+                                        const t = e.touches[0];
+                                        startMessageLongPress(message.id, t.clientX, t.clientY);
+                                    }}
+                                    onTouchMove={(e) => {
+                                        const t = e.touches[0];
+                                        trackMessageLongPressMove(t.clientX, t.clientY);
+                                    }}
+                                    onTouchEnd={cancelMessageLongPress}
+                                    onTouchCancel={cancelMessageLongPress}
                                 >
+                                    {isSelectionModeActive && (
+                                        <div
+                                            className={`message-select-indicator ${isSelected ? 'message-select-indicator--selected' : ''}`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleMessageSelection(message.id);
+                                            }}
+                                            role="checkbox"
+                                            aria-checked={isSelected}
+                                            title={isSelected ? 'لغو انتخاب' : 'انتخاب پیام'}
+                                        >
+                                            {isSelected && <Check size={13} strokeWidth={3} />}
+                                        </div>
+                                    )}
                                     {isReasoningMessage ? (
                                         <div
-                                            className="message-bubble message-bubble--theirs msg-shape--single ai-reasoning-wrap"
+                                            className={`message-bubble message-bubble--theirs msg-shape--single ai-reasoning-wrap ${isSelected ? 'message-bubble--selected' : ''}`}
                                             onClick={(e) => {
+                                                if (suppressClickRef.current) {
+                                                    suppressClickRef.current = false;
+                                                    return;
+                                                }
+                                                if (isSelectionModeActive) {
+                                                    toggleMessageSelection(message.id);
+                                                    return;
+                                                }
                                                 const ne = e.nativeEvent as MouseEvent;
                                                 openMessageMenu(message.id, e.currentTarget, ne.clientX, ne.clientY);
                                             }}
@@ -1027,10 +1248,18 @@ export function AIChatRoom({
                                         <div
                                             className={
                                                 isMine
-                                                    ? 'message-bubble message-bubble--mine msg-shape--single'
-                                                    : 'message-bubble message-bubble--theirs msg-shape--single'
+                                                    ? `message-bubble message-bubble--mine msg-shape--single ${isSelected ? 'message-bubble--selected' : ''}`
+                                                    : `message-bubble message-bubble--theirs msg-shape--single ${isSelected ? 'message-bubble--selected' : ''}`
                                             }
                                             onClick={(e) => {
+                                                if (suppressClickRef.current) {
+                                                    suppressClickRef.current = false;
+                                                    return;
+                                                }
+                                                if (isSelectionModeActive) {
+                                                    toggleMessageSelection(message.id);
+                                                    return;
+                                                }
                                                 const ne = e.nativeEvent as MouseEvent;
                                                 openMessageMenu(message.id, e.currentTarget, ne.clientX, ne.clientY);
                                             }}
@@ -1062,6 +1291,7 @@ export function AIChatRoom({
                                             </div>
                                         </div>
                                     )}
+                                </div>
                                 </div>
                             );
                         })
@@ -1378,6 +1608,23 @@ export function AIChatRoom({
                         <CornerUpLeft size={16} />
                         فوروارد
                     </button>
+                    <button
+                        className="popover__item"
+                        onClick={() => {
+                            setMsgMenu(null);
+                            setSelectedMessageIds([activeMsg.id]);
+                        }}
+                        type="button"
+                    >
+                        <Check size={16} />
+                        انتخاب
+                    </button>
+                </div>
+            )}
+
+            {copyToast && (
+                <div className="chat-room__toast">
+                    {copyToast}
                 </div>
             )}
 
@@ -1386,7 +1633,12 @@ export function AIChatRoom({
                 chats={chats}
                 currentUserId={currentUserId}
                 currentUserVerified={currentUserVerified}
-                onClose={() => setForwardModalOpen(false)}
+                forwardCount={forwardingMessageIds.length || (forwardingMessageId ? 1 : 0)}
+                onClose={() => {
+                    setForwardModalOpen(false);
+                    setForwardingMessageId(null);
+                    setForwardingMessageIds([]);
+                }}
                 onSelectTargetChat={handleForwardFromModal}
                 onSelectChat={onSelectChat}
             />

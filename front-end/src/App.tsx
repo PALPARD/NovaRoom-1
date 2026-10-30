@@ -928,13 +928,14 @@ export function App() {
         }));
     }, []);
 
-    const handleMessageDeleted = useCallback((chatId: string, messageId: string, lastMessage?: any) => {
+    const handleMessageDeleted = useCallback((chatId: string, messageId: string, lastMessage?: any, messageIds?: string[]) => {
+        const idsSet = new Set(messageIds && messageIds.length > 0 ? messageIds : [messageId]);
         setMessages(prev => {
             const arr = prev[chatId];
             if (!arr) return prev;
             return {
                 ...prev,
-                [chatId]: arr.filter(m => m.id !== messageId)
+                [chatId]: arr.filter(m => !idsSet.has(m.id))
             };
         });
 
@@ -2126,36 +2127,127 @@ export function App() {
         deleteViaWS(activeChatId, messageId);
     }, [activeChatId, deleteViaWS]);
 
-    const handleForwardMessage = useCallback(async (sourceChatId: string, messageId: string, targetChatId: string) => {
-        const sourceChatMessage = (messages[sourceChatId] || []).find((m) => m.id === messageId);
-        const sourceAIMessageExact = (aiMessagesByChat[sourceChatId] || []).find((m) => m.id === messageId);
-        const sourceAIMessageFallback = sourceAIMessageExact
-            ? null
-            : Object.values(aiMessagesByChat).flat().find((m) => m.id === messageId);
-        const sourceMessage = sourceChatMessage || sourceAIMessageExact || sourceAIMessageFallback || null;
+    const handleDeleteMessages = useCallback(async (messageIds: string[]) => {
+        if (!activeChatId || messageIds.length === 0) return;
+        const currentMessages = messages[activeChatId] || [];
+        const sendingIds = new Set<string>();
+        const persistedIds: string[] = [];
+
+        for (const id of messageIds) {
+            const msg = currentMessages.find((m) => m.id === id);
+            if (msg?.deliveryStatus === 'sending') {
+                sendingIds.add(id);
+            } else {
+                persistedIds.push(id);
+            }
+        }
+
+        if (sendingIds.size > 0) {
+            setMessages((prev) => ({
+                ...prev,
+                [activeChatId]: (prev[activeChatId] || []).filter((m) => !sendingIds.has(m.id)),
+            }));
+        }
+
+        if (persistedIds.length === 0) return;
+
+        setMessages((prev) => ({
+            ...prev,
+            [activeChatId]: (prev[activeChatId] || []).filter((m) => !persistedIds.includes(m.id)),
+        }));
+
+        try {
+            await apiFetch(`/chats/${encodeURIComponent(activeChatId)}/messages/batch-delete`, {
+                method: 'POST',
+                body: JSON.stringify({ messageIds: persistedIds }),
+            });
+        } catch (err) {
+            console.error('Failed to batch delete messages:', err);
+            void fetchPagedMessages(activeChatId, { direction: 'latest', mode: 'replace' });
+        }
+    }, [activeChatId, messages, fetchPagedMessages]);
+
+    const handleForwardMessage = useCallback(async (sourceChatId: string, messageIdOrIds: string | string[], targetChatId: string) => {
+        const messageIds = (Array.isArray(messageIdOrIds) ? messageIdOrIds : [messageIdOrIds]).filter(Boolean);
+        if (messageIds.length === 0) return;
+
         const sourceChat = chats.find((c) => c.id === sourceChatId);
-        const sourceSenderId = String(sourceMessage?.senderId || '');
-        const sourceSenderProfile = sourceSenderId === currentUser?.chatId
-            ? currentUser
-            : (sourceChat as any)?.otherUser;
-        const fallbackForwardedFrom = sourceMessage ? {
-            originalSenderId: sourceSenderId || String((sourceChat as any)?.otherUser?.chatId || ''),
-            name: String((sourceSenderProfile as any)?.name || (sourceSenderProfile as any)?.username || sourceSenderId || 'ناشناس'),
-            username: String((sourceSenderProfile as any)?.username || ''),
-        } : undefined;
-        const forwardClientId = `fwd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const now = Date.now();
-        if (sourceMessage) {
-            const optimisticForward: Message = {
+        const chatMsgs = messages[sourceChatId] || [];
+        const aiMsgsExact = aiMessagesByChat[sourceChatId] || [];
+        const aiMsgsAll = Object.values(aiMessagesByChat).flat();
+
+        const findSourceMessage = (id: string) =>
+            chatMsgs.find((m) => m.id === id)
+            || aiMsgsExact.find((m) => m.id === id)
+            || aiMsgsAll.find((m) => m.id === id)
+            || null;
+
+        const resolvedEntries = messageIds
+            .map((id, idx) => {
+                const sourceMessage = findSourceMessage(id);
+                if (!sourceMessage) return null;
+                const forwardClientId = `fwd-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 8)}`;
+                return { id, sourceMessage, forwardClientId };
+            })
+            .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+        if (resolvedEntries.length === 0) return;
+
+        const oldIdToClientId = new Map<string, string>();
+        const oldIdToSourceMsg = new Map<string, Message>();
+        for (const entry of resolvedEntries) {
+            oldIdToClientId.set(entry.id, entry.forwardClientId);
+            oldIdToSourceMsg.set(entry.id, entry.sourceMessage);
+        }
+
+        const baseNow = Date.now();
+        const optimisticForwards: Message[] = resolvedEntries.map((entry, idx) => {
+            const { sourceMessage, forwardClientId } = entry;
+            const sourceSenderId = String(sourceMessage.senderId || '');
+            const isAI = sourceChatId.startsWith('ai_chat_') || Boolean(aiMsgsAll.find((m) => m.id === entry.id));
+            const sourceSenderProfile = sourceSenderId === currentUser?.chatId
+                ? currentUser
+                : (sourceChat as any)?.otherUser;
+            const fallbackForwardedFrom = isAI
+                ? (sourceSenderId === currentUser?.chatId
+                    ? {
+                        originalSenderId: currentUser.chatId,
+                        name: currentUser.name || currentUser.username || currentUser.chatId,
+                        username: currentUser.username || '',
+                    }
+                    : {
+                        originalSenderId: 'ai',
+                        name: 'NovaRoom AI',
+                        username: 'novaroom_ai',
+                    })
+                : {
+                    originalSenderId: sourceSenderId || String((sourceChat as any)?.otherUser?.chatId || ''),
+                    name: String((sourceSenderProfile as any)?.name || (sourceSenderProfile as any)?.username || sourceSenderId || 'ناشناس'),
+                    username: String((sourceSenderProfile as any)?.username || ''),
+                };
+
+            const origReplyId = sourceMessage.replyTo?.id;
+            const mappedReplyClientId = origReplyId ? oldIdToClientId.get(origReplyId) : undefined;
+            const repliedSourceMsg = origReplyId ? oldIdToSourceMsg.get(origReplyId) : undefined;
+            const optimisticReplyTo = mappedReplyClientId
+                ? {
+                    id: mappedReplyClientId,
+                    senderId: currentUser?.chatId || '',
+                    text: String(repliedSourceMsg?.text || sourceMessage.replyTo?.text || ''),
+                }
+                : undefined;
+
+            return {
                 id: forwardClientId,
                 clientId: forwardClientId,
                 chatId: targetChatId,
                 senderId: currentUser?.chatId || '',
                 text: String(sourceMessage.text || ''),
-                timestamp: now,
+                timestamp: baseNow + idx,
                 seen: false,
                 deliveryStatus: 'sending',
                 file: sourceMessage.file,
+                replyTo: optimisticReplyTo,
                 forwardedFrom: sourceMessage.forwardedFrom || fallbackForwardedFrom,
                 reasoningContent: sourceMessage.reasoningContent,
                 reasoningEnabled: sourceMessage.reasoningEnabled,
@@ -2163,28 +2255,46 @@ export function App() {
                 aiModelKey: sourceMessage.aiModelKey,
                 aiModelName: sourceMessage.aiModelName,
             };
-            setMessages((prev) => ({
-                ...prev,
-                [targetChatId]: [...(prev[targetChatId] || []), optimisticForward],
-            }));
-        }
-        if (!sourceMessage) return;
+        });
+
+        setMessages((prev) => ({
+            ...prev,
+            [targetChatId]: [...(prev[targetChatId] || []), ...optimisticForwards],
+        }));
+
+        const clientIdsSet = new Set(resolvedEntries.map((e) => e.forwardClientId));
+
         try {
-            const encryptedText = await encryptChatTextClientSide(String(sourceMessage.text || ''), authToken || '', targetChatId);
-            const encryptedReasoning = sourceMessage?.reasoningContent
-                ? await encryptChatTextClientSide(String(sourceMessage.reasoningContent || ''), authToken || '', targetChatId)
-                : undefined;
+            const items = await Promise.all(resolvedEntries.map(async ({ id, sourceMessage, forwardClientId }) => {
+                const encryptedText = await encryptChatTextClientSide(String(sourceMessage.text || ''), authToken || '', targetChatId);
+                const encryptedReasoningContent = sourceMessage.reasoningContent
+                    ? await encryptChatTextClientSide(String(sourceMessage.reasoningContent || ''), authToken || '', targetChatId)
+                    : undefined;
+                const origReplyId = sourceMessage.replyTo?.id;
+                let encryptedReplyText: string | undefined;
+                if (origReplyId && oldIdToSourceMsg.has(origReplyId)) {
+                    const parentMsg = oldIdToSourceMsg.get(origReplyId);
+                    const rawReplyText = String(parentMsg?.text || sourceMessage.replyTo?.text || '');
+                    encryptedReplyText = await encryptChatTextClientSide(rawReplyText, authToken || '', targetChatId);
+                }
+                return {
+                    messageId: id,
+                    encryptedText,
+                    encryptedReasoningContent,
+                    encryptedReplyText,
+                    clientId: forwardClientId,
+                };
+            }));
+
             await apiFetch('/messages/forward', {
                 method: 'POST',
                 body: JSON.stringify({
                     sourceChatId,
-                    messageId,
                     targetChatId,
-                    encryptedText,
-                    encryptedReasoningContent: encryptedReasoning,
-                    clientId: forwardClientId,
+                    items,
                 }),
             });
+
             if (activeChatId === targetChatId) {
                 try {
                     await fetchPagedMessages(targetChatId, { direction: 'latest', mode: 'replace' });
@@ -2193,12 +2303,12 @@ export function App() {
                 }
             }
         } catch (e) {
-            console.error('Failed to refresh forwarded target chat messages', e);
-            
+            console.error('Failed to forward messages', e);
             setMessages((prev) => ({
                 ...prev,
-                [targetChatId]: (prev[targetChatId] || []).filter((m) => m.id !== forwardClientId),
+                [targetChatId]: (prev[targetChatId] || []).filter((m) => !clientIdsSet.has(m.id)),
             }));
+            throw e;
         }
         loadChats(false);
     }, [loadChats, messages, aiMessagesByChat, authToken, currentUser, chats, activeChatId, fetchPagedMessages]);
@@ -3001,6 +3111,7 @@ export function App() {
                                 interactiveOnlineUsers={interactiveOnlineUsers}
                                 onSendMessage={handleSendMessage}
                                 onDeleteMessage={handleDeleteMessage}
+                                onDeleteMessages={handleDeleteMessages}
                                 onBack={handleBack}
                                 onCloseChat={handleCloseChat}
                                 onChatDeleted={handleChatDeleted}

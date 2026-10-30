@@ -8,7 +8,7 @@ interface UseWebSocketProps {
     token: string | null;
     onNewMessage: (chatId: string, message: any) => void;
     onMessageEdited?: (chatId: string, message: any) => void;
-    onMessageDeleted?: (chatId: string, messageId: string, lastMessage?: any) => void;
+    onMessageDeleted?: (chatId: string, messageId: string, lastMessage?: any, messageIds?: string[]) => void;
     onUserStatusChange?: (userId: string, online: boolean, lastSeen?: number | null) => void;
     onMessagesSeen?: (chatId: string, byUserId?: string) => void;
     onReactionUpdated?: (chatId: string, messageId: string, reactions: any[]) => void;
@@ -225,7 +225,13 @@ export function useWebSocket({
                     const lastMessage = data.lastMessage
                         ? await decryptMessageClientSide(data.lastMessage, token, resolvedChatId)
                         : data.lastMessage;
-                    onMessageDeletedRef.current?.(resolvedChatId, String(data.messageId || data.message_id || data?.message?.id || ''), lastMessage);
+                    const rawIds = Array.isArray(data.messageIds) ? data.messageIds.map((id: any) => String(id || '')).filter(Boolean) : undefined;
+                    onMessageDeletedRef.current?.(
+                        resolvedChatId,
+                        String(data.messageId || data.message_id || data?.message?.id || ''),
+                        lastMessage,
+                        rawIds
+                    );
                 } else if (dataType === 'user_status' || dataType === 'presence' || dataType === 'status_update') {
                     const resolvedUserId = String(
                         data.userId

@@ -63,6 +63,7 @@ interface ChatRoomProps {
     currentUser?: User | null;
     onSendMessage: (payload: { text: string; replyToId?: string; editMessageId?: string; file?: FileMetadata }) => void;
     onDeleteMessage: (messageId: string) => void;
+    onDeleteMessages?: (messageIds: string[]) => void | Promise<void>;
     onBack: () => void;
     onCloseChat: () => void;
     onChatDeleted?: (chatId: string) => void;
@@ -79,7 +80,7 @@ interface ChatRoomProps {
     onConsumeInitialUnread?: (chatId: string) => void;
     onReactMessage?: (chatId: string, messageId: string, emoji: string) => Promise<void>;
     onUnreactMessage?: (chatId: string, messageId: string) => Promise<void>;
-    onForwardMessage?: (sourceChatId: string, messageId: string, targetChatId: string) => Promise<void>;
+    onForwardMessage?: (sourceChatId: string, messageIdOrIds: string | string[], targetChatId: string) => Promise<void>;
     pendingForwardDraft?: PendingForwardDraft | null;
     onSetPendingForwardDraft?: (targetChatId: string, draft: PendingForwardDraft) => void;
     onClearPendingForwardDraft?: (targetChatId: string) => void;
@@ -223,6 +224,7 @@ export function ChatRoom({
     currentUser,
     onSendMessage,
     onDeleteMessage,
+    onDeleteMessages,
     onBack,
     onCloseChat,
     onChatDeleted,
@@ -1147,9 +1149,16 @@ export function ChatRoom({
         });
     }, [messages]);
 
-    const forwardOne = useCallback((sourceChatId: string, messageId: string, targetChatId: string) => {
-        if (onForwardMessage) return onForwardMessage(sourceChatId, messageId, targetChatId);
-        return apiFetch('/messages/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, messageId, targetChatId }) });
+    const forwardBatch = useCallback((sourceChatId: string, messageIds: string[], targetChatId: string) => {
+        if (onForwardMessage) return onForwardMessage(sourceChatId, messageIds, targetChatId);
+        return apiFetch('/messages/forward', {
+            method: 'POST',
+            body: JSON.stringify({
+                sourceChatId,
+                targetChatId,
+                items: messageIds.map((messageId) => ({ messageId })),
+            }),
+        });
     }, [onForwardMessage]);
 
     const handleForwardDraft = useCallback(async () => {
@@ -1160,21 +1169,14 @@ export function ChatRoom({
         const ids = draft.messageIds?.length ? draft.messageIds : [draft.messageId];
         onClearPendingForwardDraft?.(chatId);
         try {
-            const results = await Promise.allSettled(ids.map((id) => forwardOne(draft.sourceChatId, id, chatId)));
-            const failed = results.filter((result) => result.status === 'rejected').length;
-            if (failed === ids.length) {
-                onSetPendingForwardDraft?.(chatId, draft);
-                alert('فوروارد پیام با خطا مواجه شد');
-            } else if (failed > 0) {
-                alert('برخی پیام‌ها فوروارد نشدند');
-            }
+            await forwardBatch(draft.sourceChatId, ids, chatId);
         } catch {
             onSetPendingForwardDraft?.(chatId, draft);
             alert('فوروارد پیام با خطا مواجه شد');
         } finally {
             forwardingInFlightRef.current = false;
         }
-    }, [pendingForwardDraft, chatId, onClearPendingForwardDraft, onSetPendingForwardDraft, forwardOne]);
+    }, [pendingForwardDraft, chatId, onClearPendingForwardDraft, onSetPendingForwardDraft, forwardBatch]);
 
     const handleForwardFromModal = async (targetChatId: string) => {
         const idsToForward = forwardingMessageIds.length > 0
@@ -2877,8 +2879,14 @@ export function ChatRoom({
                             const idsToDelete = [...deletableSelectedIds];
                             setSelectedMessageIds([]);
                             for (const id of idsToDelete) {
-                                onDeleteMessage(id);
                                 cleanupMessageCache(id);
+                            }
+                            if (onDeleteMessages) {
+                                void onDeleteMessages(idsToDelete);
+                            } else {
+                                for (const id of idsToDelete) {
+                                    onDeleteMessage(id);
+                                }
                             }
                         }}
                     />

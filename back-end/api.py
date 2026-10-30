@@ -743,12 +743,26 @@ class ReactionRequest(BaseModel):
     emoji: str
 
 
-class ForwardMessageRequest(BaseModel):
+class ForwardBatchItem(BaseModel):
     messageId: str
+    encryptedText: Optional[str] = None
+    encryptedReasoningContent: Optional[str] = None
+    encryptedReplyText: Optional[str] = None
+    clientId: Optional[str] = None
+
+
+class ForwardMessageRequest(BaseModel):
+    messageId: Optional[str] = None
     targetChatId: str
     encryptedText: Optional[str] = None
     encryptedReasoningContent: Optional[str] = None
+    encryptedReplyText: Optional[str] = None
     clientId: Optional[str] = None
+    items: Optional[List[ForwardBatchItem]] = None
+
+
+class BatchDeleteMessagesRequest(BaseModel):
+    messageIds: List[str]
 
 
 class OfficialChSendRequest(BaseModel):
@@ -3515,6 +3529,108 @@ async def unpin_message(
     return {"ok": True}
 
 
+@app.post("/chats/{chat_id}/messages/batch-delete")
+@limiter.limit("30/minute;500/hour")
+async def batch_delete_messages(
+    request: Request,
+    chat_id: str,
+    req: BatchDeleteMessagesRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user["chatId"]
+    session_token = str(current_user.get("_session_token") or "")
+    raw_ids = [str(mid or "").strip() for mid in (req.messageIds or []) if str(mid or "").strip()]
+    if not raw_ids:
+        return {"ok": True, "deletedIds": []}
+
+    saved_chat_id = get_saved_messages_id(user_id)
+    is_saved = chat_id == saved_chat_id
+    is_official = is_official_channel_chat(chat_id)
+    chat_doc = None
+
+    if not is_saved and not is_official:
+        chat_doc = await cl_chats.find_one(
+            {"_id": chat_id}, {"participants": 1, "pinnedMessage": 1}
+        )
+        if not chat_doc or user_id not in (chat_doc.get("participants", []) or []):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    oids = []
+    for mid in dict.fromkeys(raw_ids):
+        oid = await try_object_id(mid)
+        if oid:
+            oids.append(oid)
+
+    if not oids:
+        return {"ok": True, "deletedIds": []}
+
+    msgs = await cl_messages.find({"_id": {"$in": oids}, "chatId": chat_id}).to_list(len(oids))
+    if not msgs:
+        return {"ok": True, "deletedIds": []}
+
+    is_verified = bool(current_user.get("verified", False))
+    authorized_msgs = [m for m in msgs if m.get("senderId") == user_id or is_verified]
+    if not authorized_msgs:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    authorized_oids = [m["_id"] for m in authorized_msgs]
+    deleted_ids = [str(m["_id"]) for m in authorized_msgs]
+    deleted_id_set = set(deleted_ids)
+
+    for m in authorized_msgs:
+        if should_delete_file_with_message(m):
+            for file_id in extract_message_file_ids(m):
+                await delete_file(file_id)
+
+    await cl_messages.delete_many({"_id": {"$in": authorized_oids}})
+
+    participants = [user_id] if is_saved else []
+    if is_official:
+        participants = await cl_users.distinct("chatId", {})
+    elif chat_doc:
+        participants = chat_doc.get("participants", []) or []
+
+    last_msg = None
+    if not is_saved and not is_official:
+        last_msg = await build_last_message(chat_id, session_token)
+        update_fields = {"lastMessage": last_msg, "updatedAt": utc_now()}
+        curr_pinned = (chat_doc.get("pinnedMessage") or {}) if chat_doc else {}
+        unpinned = False
+        if isinstance(curr_pinned, dict) and curr_pinned.get("id") in deleted_id_set:
+            update_fields["pinnedMessage"] = None
+            unpinned = True
+        await cl_chats.update_one({"_id": chat_id}, {"$set": update_fields})
+        if unpinned and participants:
+            await broadcast(
+                participants,
+                {
+                    "type": "message_unpinned",
+                    "chatId": chat_id,
+                },
+            )
+
+    out_last = None
+    if last_msg:
+        out_last = {
+            **last_msg,
+            "timestamp": dt_to_epoch_ms(last_msg.get("timestamp")),
+        }
+
+    if participants:
+        await broadcast(
+            participants,
+            {
+                "type": "message_deleted",
+                "chatId": chat_id,
+                "messageId": deleted_ids[-1],
+                "messageIds": deleted_ids,
+                "lastMessage": out_last,
+            },
+        )
+
+    return {"ok": True, "deletedIds": deleted_ids, "lastMessage": out_last}
+
+
 @app.post("/messages/forward")
 @limiter.limit("60/minute;1000/hour")
 async def forward_message(
@@ -3524,44 +3640,26 @@ async def forward_message(
 ):
     user_id = current_user["chatId"]
     session_token = str(current_user.get("_session_token") or "")
-    message_id = req.messageId
     target_chat_id = req.targetChatId
 
-    oid = await try_object_id(message_id)
-    if not oid:
-        raise HTTPException(status_code=400, detail="Invalid message ID")
+    batch_items: List[ForwardBatchItem] = []
+    if req.items:
+        batch_items = list(req.items)
+    elif req.messageId:
+        batch_items = [
+            ForwardBatchItem(
+                messageId=req.messageId,
+                encryptedText=req.encryptedText,
+                encryptedReasoningContent=req.encryptedReasoningContent,
+                encryptedReplyText=req.encryptedReplyText,
+                clientId=req.clientId,
+            )
+        ]
+    if not batch_items:
+        raise HTTPException(status_code=400, detail="No messages to forward")
 
-    original_msg = await cl_messages.find_one({"_id": oid})
-    is_ai_message = False
-
-    if not original_msg:
-        original_msg = await cl_ai_messages.find_one({"_id": oid})
-        is_ai_message = True
-
-    if not original_msg:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    if is_ai_message:
-        if original_msg.get("userId") != user_id:
-            raise HTTPException(status_code=403, detail="Not authorized")
-    else:
-        original_chat_id = original_msg.get("chatId")
-        saved_chat_id = get_saved_messages_id(user_id)
-
-        if original_chat_id == saved_chat_id:
-            pass
-        elif is_official_channel_chat(original_chat_id):
-            pass
-        else:
-            chat_doc = await cl_chats.find_one({"_id": original_chat_id})
-            if not chat_doc:
-                raise HTTPException(status_code=404, detail="Original chat not found")
-
-            participants = chat_doc.get("participants", [])
-            if user_id not in participants:
-                raise HTTPException(status_code=403, detail="Not authorized")
-
-    is_target_saved = target_chat_id == get_saved_messages_id(user_id)
+    saved_chat_id = get_saved_messages_id(user_id)
+    is_target_saved = target_chat_id == saved_chat_id
     is_target_official = is_official_channel_chat(target_chat_id)
     if is_target_official and not bool(current_user.get("verified", False)):
         raise HTTPException(
@@ -3584,181 +3682,288 @@ async def forward_message(
                     status_code=403, detail="Direct chat is blocked between users"
                 )
 
-    provided_encrypted_text = (
-        str(req.encryptedText).strip() if isinstance(req.encryptedText, str) else ""
-    )
-    provided_encrypted_reasoning = (
-        str(req.encryptedReasoningContent).strip()
-        if isinstance(req.encryptedReasoningContent, str)
-        else ""
-    )
-    client_id = str(req.clientId or "").strip()
+    target_scope = f"chat:{target_chat_id}"
+    prepared: List[Dict[str, Any]] = []
+    old_id_to_new_id: Dict[str, str] = {}
+    old_id_to_plain_text: Dict[str, str] = {}
 
-    file_data = None
-    source_chat_for_file = ""
-    if is_ai_message:
-        ai_role = str(original_msg.get("role") or "").strip().lower()
-        if ai_role == "assistant":
-            forwarded_from_info = {
-                "originalSenderId": "ai",
-                "name": "NovaRoom AI",
-                "username": "novaroom_ai",
-            }
-        else:
-            profile = current_user.get("profile", {})
-            forwarded_from_info = {
-                "originalSenderId": user_id,
-                "name": profile.get("name") or profile.get("username") or user_id,
-                "username": profile.get("username", ""),
-            }
-        source_ai_scope = f"ai:{original_msg.get('aiChatId', '')}"
-        message_text = decrypt_with_fallback(
-            original_msg.get("content", ""), session_token, source_ai_scope
-        )
-        reasoning_content = decrypt_with_fallback(
-            str(original_msg.get("reasoningContent") or ""),
-            session_token,
-            source_ai_scope,
-        )
-        reasoning_enabled = bool(original_msg.get("reasoningEnabled", False))
-        reasoning_duration_sec = int(original_msg.get("reasoningDurationSec", 0) or 0)
-        ai_model_key = (
-            normalize_ai_model_key(original_msg.get("aiModelKey") or "nova-flash")
-            if ai_role == "assistant"
-            else None
-        )
-        ai_model_name = (
-            ai_model_label_from_key(ai_model_key) if ai_role == "assistant" else None
-        )
-    else:
-        existing_forwarded_from = (
-            original_msg.get("forwardedFrom")
-            or original_msg.get("forwarded_from")
-            or original_msg.get("forwardedfrom")
-        )
-        existing_original_sender_id = ""
-        existing_name = "Unknown"
-        existing_username = ""
-        if isinstance(existing_forwarded_from, dict):
-            existing_original_sender_id = str(
-                existing_forwarded_from.get("originalSenderId")
-                or existing_forwarded_from.get("original_sender_id")
-                or ""
-            ).strip()
-            existing_name = (
-                str(
-                    existing_forwarded_from.get("name")
-                    or existing_forwarded_from.get("fullName")
-                    or "Unknown"
-                ).strip()
-                or "Unknown"
-            )
-            existing_username = str(
-                existing_forwarded_from.get("username")
-                or existing_forwarded_from.get("userName")
-                or ""
-            ).strip()
+    for item in batch_items:
+        oid = await try_object_id(item.messageId)
+        if not oid:
+            continue
 
-        if existing_original_sender_id:
-            forwarded_from_info = {
-                "originalSenderId": existing_original_sender_id,
-                "name": existing_name,
-                "username": existing_username,
-            }
+        original_msg = await cl_messages.find_one({"_id": oid})
+        is_ai_message = False
+        if not original_msg:
+            original_msg = await cl_ai_messages.find_one({"_id": oid})
+            is_ai_message = True
+        if not original_msg:
+            continue
+
+        if is_ai_message:
+            if original_msg.get("userId") != user_id:
+                continue
         else:
-            original_sender_id = original_msg.get("senderId")
-            if is_official_channel_chat(str(original_msg.get("chatId") or "")):
+            original_chat_id = original_msg.get("chatId")
+            if original_chat_id == saved_chat_id:
+                pass
+            elif is_official_channel_chat(original_chat_id):
+                pass
+            else:
+                source_chat_doc = await cl_chats.find_one({"_id": original_chat_id})
+                if not source_chat_doc:
+                    continue
+                if user_id not in (source_chat_doc.get("participants", []) or []):
+                    continue
+
+        file_data = None
+        source_chat_for_file = ""
+        if is_ai_message:
+            ai_role = str(original_msg.get("role") or "").strip().lower()
+            if ai_role == "assistant":
                 forwarded_from_info = {
-                    "originalSenderId": OFFICIAL_CHANNEL_CHAT_ID,
-                    "name": OFFICIAL_CHANNEL_NAME,
-                    "username": OFFICIAL_CHANNEL_CHAT_ID,
+                    "originalSenderId": "ai",
+                    "name": "NovaRoom AI",
+                    "username": "novaroom_ai",
                 }
             else:
-                original_sender = await cl_users.find_one(
-                    {"chatId": original_sender_id}
-                )
+                profile = current_user.get("profile", {})
                 forwarded_from_info = {
-                    "originalSenderId": original_sender_id,
-                    "name": (
-                        original_sender["profile"]["name"]
-                        if original_sender
-                        else "Unknown"
-                    ),
-                    "username": (
-                        original_sender["profile"]["username"]
-                        if original_sender
-                        else ""
-                    ),
+                    "originalSenderId": user_id,
+                    "name": profile.get("name") or profile.get("username") or user_id,
+                    "username": profile.get("username", ""),
                 }
-        source_chat_for_file = str(original_msg.get("chatId") or "")
-        source_chat_scope = f"chat:{source_chat_for_file}"
-        message_text = decrypt_with_fallback(
-            original_msg.get("text", ""), session_token, source_chat_scope
+            source_ai_scope = f"ai:{original_msg.get('aiChatId', '')}"
+            message_text = decrypt_with_fallback(
+                original_msg.get("content", ""), session_token, source_ai_scope
+            )
+            reasoning_content = decrypt_with_fallback(
+                str(original_msg.get("reasoningContent") or ""),
+                session_token,
+                source_ai_scope,
+            )
+            reasoning_enabled = bool(original_msg.get("reasoningEnabled", False))
+            reasoning_duration_sec = int(
+                original_msg.get("reasoningDurationSec", 0) or 0
+            )
+            ai_model_key = (
+                normalize_ai_model_key(original_msg.get("aiModelKey") or "nova-flash")
+                if ai_role == "assistant"
+                else None
+            )
+            ai_model_name = (
+                ai_model_label_from_key(ai_model_key)
+                if ai_role == "assistant"
+                else None
+            )
+        else:
+            existing_forwarded_from = (
+                original_msg.get("forwardedFrom")
+                or original_msg.get("forwarded_from")
+                or original_msg.get("forwardedfrom")
+            )
+            existing_original_sender_id = ""
+            existing_name = "Unknown"
+            existing_username = ""
+            if isinstance(existing_forwarded_from, dict):
+                existing_original_sender_id = str(
+                    existing_forwarded_from.get("originalSenderId")
+                    or existing_forwarded_from.get("original_sender_id")
+                    or ""
+                ).strip()
+                existing_name = (
+                    str(
+                        existing_forwarded_from.get("name")
+                        or existing_forwarded_from.get("fullName")
+                        or "Unknown"
+                    ).strip()
+                    or "Unknown"
+                )
+                existing_username = str(
+                    existing_forwarded_from.get("username")
+                    or existing_forwarded_from.get("userName")
+                    or ""
+                ).strip()
+
+            if existing_original_sender_id:
+                forwarded_from_info = {
+                    "originalSenderId": existing_original_sender_id,
+                    "name": existing_name,
+                    "username": existing_username,
+                }
+            else:
+                original_sender_id = original_msg.get("senderId")
+                if is_official_channel_chat(str(original_msg.get("chatId") or "")):
+                    forwarded_from_info = {
+                        "originalSenderId": OFFICIAL_CHANNEL_CHAT_ID,
+                        "name": OFFICIAL_CHANNEL_NAME,
+                        "username": OFFICIAL_CHANNEL_CHAT_ID,
+                    }
+                else:
+                    original_sender = await cl_users.find_one(
+                        {"chatId": original_sender_id}
+                    )
+                    forwarded_from_info = {
+                        "originalSenderId": original_sender_id,
+                        "name": (
+                            original_sender["profile"]["name"]
+                            if original_sender
+                            else "Unknown"
+                        ),
+                        "username": (
+                            original_sender["profile"]["username"]
+                            if original_sender
+                            else ""
+                        ),
+                    }
+            source_chat_for_file = str(original_msg.get("chatId") or "")
+            source_chat_scope = f"chat:{source_chat_for_file}"
+            message_text = decrypt_with_fallback(
+                original_msg.get("text", ""), session_token, source_chat_scope
+            )
+            file_data = original_msg.get("file")
+            reasoning_content = decrypt_with_fallback(
+                str(original_msg.get("reasoningContent") or ""),
+                session_token,
+                source_chat_scope,
+            )
+            reasoning_enabled = bool(original_msg.get("reasoningEnabled", False))
+            reasoning_duration_sec = int(
+                original_msg.get("reasoningDurationSec", 0) or 0
+            )
+            ai_model_key = (
+                normalize_ai_model_key(original_msg.get("aiModelKey") or "")
+                if original_msg.get("aiModelKey")
+                else None
+            )
+            ai_model_name = str(original_msg.get("aiModelName") or "").strip() or (
+                ai_model_label_from_key(ai_model_key) if ai_model_key else None
+            )
+
+        plain_for_reply = message_text or (
+            str((file_data or {}).get("fileName") or "") if file_data else ""
         )
-        file_data = original_msg.get("file")
-        reasoning_content = decrypt_with_fallback(
-            str(original_msg.get("reasoningContent") or ""),
-            session_token,
-            source_chat_scope,
-        )
-        reasoning_enabled = bool(original_msg.get("reasoningEnabled", False))
-        reasoning_duration_sec = int(original_msg.get("reasoningDurationSec", 0) or 0)
-        ai_model_key = (
-            normalize_ai_model_key(original_msg.get("aiModelKey") or "")
-            if original_msg.get("aiModelKey")
-            else None
-        )
-        ai_model_name = str(original_msg.get("aiModelName") or "").strip() or (
-            ai_model_label_from_key(ai_model_key) if ai_model_key else None
+        new_oid = ObjectId()
+        old_id_to_new_id[item.messageId] = str(new_oid)
+        old_id_to_plain_text[item.messageId] = plain_for_reply
+
+        prepared.append(
+            {
+                "item": item,
+                "new_oid": new_oid,
+                "original_msg": original_msg,
+                "is_ai_message": is_ai_message,
+                "message_text": message_text,
+                "reasoning_content": reasoning_content,
+                "reasoning_enabled": reasoning_enabled,
+                "reasoning_duration_sec": reasoning_duration_sec,
+                "ai_model_key": ai_model_key,
+                "ai_model_name": ai_model_name,
+                "forwarded_from_info": forwarded_from_info,
+                "file_data": file_data,
+                "source_chat_for_file": source_chat_for_file,
+            }
         )
 
-    target_scope = f"chat:{target_chat_id}"
-    encrypted_forward_text = (
-        provided_encrypted_text
-        if provided_encrypted_text
-        else encrypt_scoped_text(message_text, session_token, target_scope)
-    )
-    encrypted_forward_reasoning = (
-        provided_encrypted_reasoning
-        if provided_encrypted_reasoning
-        else encrypt_scoped_text(reasoning_content, session_token, target_scope)
-    )
-    forwarded_msg = {
-        "chatId": target_chat_id,
-        "senderId": user_id,
-        "text": encrypted_forward_text,
-        "textEncrypted": True,
-        "timestamp": utc_now(),
-        "seenBy": [user_id],
-        "replyTo": None,
-        "reactions": [],
-        "forwardedFrom": forwarded_from_info,
-        "reasoningContent": encrypted_forward_reasoning,
-        "reasoningEnabled": reasoning_enabled,
-        "reasoningDurationSec": reasoning_duration_sec,
-        "aiModelKey": ai_model_key,
-        "aiModelName": ai_model_name,
-    }
+    if not prepared:
+        raise HTTPException(status_code=404, detail="Message not found")
 
-    if file_data:
-        remapped_file = await _remap_forward_file_to_target_chat(
-            dict(file_data),
-            source_chat_for_file,
-            target_chat_id,
-            user_id,
+    base_now = utc_now()
+    forwarded_docs: List[Dict[str, Any]] = []
+
+    for idx, entry in enumerate(prepared):
+        item = entry["item"]
+        original_msg = entry["original_msg"]
+        is_ai_message = entry["is_ai_message"]
+        message_text = entry["message_text"]
+        provided_encrypted_text = (
+            str(item.encryptedText).strip()
+            if isinstance(item.encryptedText, str)
+            else ""
         )
-        forwarded_msg["file"] = remapped_file
-        file_data = remapped_file
+        provided_encrypted_reasoning = (
+            str(item.encryptedReasoningContent).strip()
+            if isinstance(item.encryptedReasoningContent, str)
+            else ""
+        )
+        encrypted_forward_text = (
+            provided_encrypted_text
+            if provided_encrypted_text
+            else encrypt_scoped_text(message_text, session_token, target_scope)
+        )
+        encrypted_forward_reasoning = (
+            provided_encrypted_reasoning
+            if provided_encrypted_reasoning
+            else encrypt_scoped_text(
+                entry["reasoning_content"], session_token, target_scope
+            )
+        )
 
-    result = await cl_messages.insert_one(forwarded_msg)
-    msg_id = str(result.inserted_id)
+        reply_to_doc = None
+        raw_reply = None if is_ai_message else original_msg.get("replyTo")
+        orig_reply_id = (
+            str(raw_reply.get("id") or "").strip()
+            if isinstance(raw_reply, dict)
+            else ""
+        )
+        if orig_reply_id and orig_reply_id in old_id_to_new_id:
+            mapped_reply_id = old_id_to_new_id[orig_reply_id]
+            provided_enc_reply = (
+                str(item.encryptedReplyText).strip()
+                if isinstance(item.encryptedReplyText, str)
+                else ""
+            )
+            if not provided_enc_reply:
+                provided_enc_reply = encrypt_scoped_text(
+                    old_id_to_plain_text.get(orig_reply_id, ""),
+                    session_token,
+                    target_scope,
+                )
+            reply_to_doc = {
+                "id": mapped_reply_id,
+                "senderId": user_id,
+                "text": provided_enc_reply,
+            }
 
+        forwarded_msg = {
+            "_id": entry["new_oid"],
+            "chatId": target_chat_id,
+            "senderId": user_id,
+            "text": encrypted_forward_text,
+            "textEncrypted": True,
+            "timestamp": base_now + timedelta(milliseconds=idx),
+            "seenBy": [user_id],
+            "replyTo": reply_to_doc,
+            "reactions": [],
+            "forwardedFrom": entry["forwarded_from_info"],
+            "reasoningContent": encrypted_forward_reasoning,
+            "reasoningEnabled": entry["reasoning_enabled"],
+            "reasoningDurationSec": entry["reasoning_duration_sec"],
+            "aiModelKey": entry["ai_model_key"],
+            "aiModelName": entry["ai_model_name"],
+        }
+
+        file_data = entry["file_data"]
+        if file_data:
+            remapped_file = await _remap_forward_file_to_target_chat(
+                dict(file_data),
+                entry["source_chat_for_file"],
+                target_chat_id,
+                user_id,
+            )
+            forwarded_msg["file"] = remapped_file
+
+        forwarded_docs.append(forwarded_msg)
+
+    await cl_messages.insert_many(forwarded_docs)
+
+    last_doc = forwarded_docs[-1]
     last_msg = {
-        "id": msg_id,
-        "text": encrypted_forward_text if message_text else "[File]",
+        "id": str(last_doc["_id"]),
+        "text": last_doc["text"] if prepared[-1]["message_text"] else "[File]",
         "senderId": user_id,
-        "timestamp": forwarded_msg["timestamp"],
-        "file": file_data,
+        "timestamp": last_doc["timestamp"],
+        "file": last_doc.get("file"),
     }
 
     if not is_target_saved and not is_target_official:
@@ -3778,7 +3983,17 @@ async def forward_message(
             target_chat_doc.get("participants", []) if target_chat_doc else []
         )
 
-    if participants_to_notify:
+    created_ids: List[str] = []
+    for entry, forwarded_msg in zip(prepared, forwarded_docs):
+        item = entry["item"]
+        msg_id = str(forwarded_msg["_id"])
+        created_ids.append(msg_id)
+        if not participants_to_notify:
+            continue
+        message_text = entry["message_text"]
+        reply_payload = None
+        if isinstance(forwarded_msg.get("replyTo"), dict):
+            reply_payload = dict(forwarded_msg["replyTo"])
         msg_payload = {
             "type": "new_message",
             "chatId": target_chat_id,
@@ -3786,27 +4001,28 @@ async def forward_message(
                 "id": msg_id,
                 "chatId": target_chat_id,
                 "senderId": user_id,
-                "text": encrypted_forward_text if message_text else "",
+                "text": forwarded_msg["text"] if message_text else "",
                 "timestamp": dt_to_epoch_ms(forwarded_msg["timestamp"]),
                 "seen": False,
-                "replyTo": None,
+                "replyTo": reply_payload,
                 "edited": False,
                 "reactions": [],
-                "forwardedFrom": forwarded_from_info,
-                "file": file_data,
-                "reasoningContent": encrypted_forward_reasoning,
-                "reasoningEnabled": reasoning_enabled,
-                "reasoningDurationSec": reasoning_duration_sec,
-                "aiModelKey": ai_model_key,
-                "aiModelName": ai_model_name,
-                "clientId": client_id or None,
+                "forwardedFrom": entry["forwarded_from_info"],
+                "file": forwarded_msg.get("file"),
+                "reasoningContent": forwarded_msg["reasoningContent"],
+                "reasoningEnabled": entry["reasoning_enabled"],
+                "reasoningDurationSec": entry["reasoning_duration_sec"],
+                "aiModelKey": entry["ai_model_key"],
+                "aiModelName": entry["ai_model_name"],
+                "clientId": str(item.clientId or "").strip() or None,
             },
         }
         await broadcast(participants_to_notify, msg_payload)
 
     return {
         "success": True,
-        "messageId": msg_id,
+        "messageId": created_ids[-1],
+        "messageIds": created_ids,
         "chatId": target_chat_id,
     }
 
