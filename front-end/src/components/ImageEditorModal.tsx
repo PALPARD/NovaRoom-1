@@ -96,6 +96,11 @@ export function ImageEditorModal({
     // Drawing state
     const [strokes, setStrokes] = useState<Stroke[]>(initialStrokes || []);
     const [redoStack, setRedoStack] = useState<Stroke[]>(initialRedoStack || []);
+    const strokesRef = useRef<Stroke[]>(strokes);
+    strokesRef.current = strokes;
+    const redoStackRef = useRef<Stroke[]>(redoStack);
+    redoStackRef.current = redoStack;
+
     const currentStrokeRef = useRef<Stroke | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const stageRef = useRef<HTMLDivElement | null>(null);
@@ -283,30 +288,32 @@ export function ImageEditorModal({
     };
 
     // Undo last stroke
-    const handleUndo = () => {
-        if (strokes.length === 0) return;
+    const handleUndo = useCallback(() => {
+        if (strokesRef.current.length === 0) return;
         triggerHaptic();
-        const last = strokes[strokes.length - 1];
-        setStrokes((prev) => prev.slice(0, -1));
+        const current = strokesRef.current;
+        const last = current[current.length - 1];
+        setStrokes(current.slice(0, -1));
         setRedoStack((prev) => [...prev, last]);
-    };
+    }, []);
 
     // Redo last undone stroke
-    const handleRedo = () => {
-        if (redoStack.length === 0) return;
+    const handleRedo = useCallback(() => {
+        if (redoStackRef.current.length === 0) return;
         triggerHaptic();
-        const toRestore = redoStack[redoStack.length - 1];
-        setRedoStack((prev) => prev.slice(0, -1));
+        const current = redoStackRef.current;
+        const toRestore = current[current.length - 1];
+        setRedoStack(current.slice(0, -1));
         setStrokes((prev) => [...prev, toRestore]);
-    };
+    }, []);
 
     // Clear all strokes
-    const handleClearStrokes = () => {
-        if (strokes.length === 0) return;
+    const handleClearStrokes = useCallback(() => {
+        if (strokesRef.current.length === 0) return;
         triggerHaptic();
         setStrokes([]);
         setRedoStack([]);
-    };
+    }, []);
 
     // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES)
     const handleCropPointerDown = (handle: string, e: React.PointerEvent) => {
@@ -390,24 +397,53 @@ export function ImageEditorModal({
     };
 
     // Keyboard Shortcuts: Esc to cancel, Ctrl+Z to undo, Ctrl+Y / Ctrl+Shift+Z to redo
+    // Supports physical keys (e.code), Persian keyboard layout ('ظ', 'غ'), and capture phase
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
                 onCancel();
-            } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+                return;
+            }
+
+            const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+            if (!isCtrlOrMeta) return;
+
+            // Physical key codes or Persian/English characters
+            const isZ =
+                e.code === 'KeyZ' ||
+                e.key === 'z' ||
+                e.key === 'Z' ||
+                e.key === 'ظ';
+
+            const isY =
+                e.code === 'KeyY' ||
+                e.key === 'y' ||
+                e.key === 'Y' ||
+                e.key === 'غ';
+
+            if (e.shiftKey && isZ) {
+                // Ctrl + Shift + Z -> Redo
                 e.preventDefault();
+                e.stopPropagation();
                 handleRedo();
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+            } else if (!e.shiftKey && isY) {
+                // Ctrl + Y -> Redo
                 e.preventDefault();
+                e.stopPropagation();
                 handleRedo();
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+            } else if (!e.shiftKey && isZ) {
+                // Ctrl + Z -> Undo
                 e.preventDefault();
+                e.stopPropagation();
                 handleUndo();
             }
         };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [strokes, redoStack, onCancel]);
+
+        window.addEventListener('keydown', onKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+    }, [handleUndo, handleRedo, onCancel]);
 
     // Handle Send Action
     const handleSend = async () => {
