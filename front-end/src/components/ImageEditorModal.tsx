@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
-import { Paintbrush, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Crop, Paintbrush, RotateCcw, Send, Trash2, X, RefreshCw } from 'lucide-react';
 import { toPersianDigits } from '../utils/format';
 import { triggerHaptic } from '../utils/haptics';
 import './ImageEditorModal.css';
-
-export type ImageSizePreset = 'original' | '1080p' | '720p';
 
 export interface ImageEditorModalProps {
     imageFile: File;
@@ -14,6 +13,14 @@ export interface ImageEditorModalProps {
 
 type Point = { x: number; y: number };
 type Stroke = { points: Point[]; color: string; width: number };
+
+// Crop in natural image coordinates
+type CropRect = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
 
 const COLOR_PALETTE = [
     { label: 'سفید', value: '#ffffff' },
@@ -36,25 +43,47 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
     const [imgElement, setImgElement] = useState<HTMLImageElement | null>(null);
     const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-    // Mode: 'preview' (default, just preview and send) vs 'draw' (drawing tool active)
-    const [isDrawingMode, setIsDrawingMode] = useState(false);
-    const [selectedColor, setSelectedColor] = useState<string>('#ef4444');
+    // Tool Modes: 'none' | 'draw' | 'crop'
+    const [activeTool, setActiveTool] = useState<'none' | 'draw' | 'crop'>('none');
+    const [selectedColor, setSelectedColor] = useState<string>('#ffffff');
     const [selectedThickness, setSelectedThickness] = useState<number>(10);
-    const [sizePreset, setSizePreset] = useState<ImageSizePreset>('original');
 
     // Drawing state
     const [strokes, setStrokes] = useState<Stroke[]>([]);
     const currentStrokeRef = useRef<Stroke | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const containerRef = useRef<HTMLDivElement | null>(null);
+    const stageRef = useRef<HTMLDivElement | null>(null);
+
+    // Crop state in natural pixels
+    const [cropRect, setCropRect] = useState<CropRect>({ x: 0, y: 0, width: 0, height: 0 });
+    const isCropped =
+        imgNaturalSize.width > 0 &&
+        (Math.round(cropRect.x) > 0 ||
+            Math.round(cropRect.y) > 0 ||
+            Math.round(cropRect.width) < imgNaturalSize.width - 2 ||
+            Math.round(cropRect.height) < imgNaturalSize.height - 2);
+
+    // Crop dragging state
+    const cropDragRef = useRef<{
+        handle: string; // 'top' | 'bottom' | 'left' | 'right' | 'tl' | 'tr' | 'bl' | 'br' | 'move'
+        startX: number;
+        startY: number;
+        initialCrop: CropRect;
+    } | null>(null);
+
+    // Canvas display scale tracker
+    const [canvasDisplaySize, setCanvasDisplaySize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
     // Load Image
     useEffect(() => {
         const objectUrl = URL.createObjectURL(imageFile);
         const img = new Image();
         img.onload = () => {
+            const nw = img.naturalWidth;
+            const nh = img.naturalHeight;
             setImgElement(img);
-            setImgNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+            setImgNaturalSize({ width: nw, height: nh });
+            setCropRect({ x: 0, y: 0, width: nw, height: nh });
             setImageLoaded(true);
         };
         img.src = objectUrl;
@@ -64,7 +93,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         };
     }, [imageFile]);
 
-    // Redraw Canvas
+    // Redraw Canvas (Image + Strokes)
     const redrawCanvas = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas || !imgElement) return;
@@ -108,6 +137,12 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                 ctx.stroke();
             }
         }
+
+        // Update display dimensions for crop overlay alignment
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            setCanvasDisplaySize({ width: rect.width, height: rect.height });
+        }
     }, [imgElement, imgNaturalSize, strokes]);
 
     useEffect(() => {
@@ -116,7 +151,21 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         }
     }, [imageLoaded, redrawCanvas]);
 
-    // Convert screen coordinates to canvas coordinates
+    // Track window resize to keep crop overlay aligned with canvas
+    useEffect(() => {
+        const updateSize = () => {
+            if (canvasRef.current) {
+                const rect = canvasRef.current.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    setCanvasDisplaySize({ width: rect.width, height: rect.height });
+                }
+            }
+        };
+        window.addEventListener('resize', updateSize);
+        return () => window.removeEventListener('resize', updateSize);
+    }, []);
+
+    // Convert screen coordinates to canvas natural coordinates
     const getCanvasCoordinates = (e: ReactPointerEvent<HTMLCanvasElement>): Point | null => {
         const canvas = canvasRef.current;
         if (!canvas) return null;
@@ -130,9 +179,9 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         };
     };
 
-    // Pointer event handlers for drawing
-    const handlePointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (!isDrawingMode) return;
+    // Drawing pointer handlers
+    const handleDrawingPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+        if (activeTool !== 'draw') return;
         e.preventDefault();
         const pt = getCanvasCoordinates(e);
         if (!pt) return;
@@ -151,8 +200,8 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         redrawCanvas();
     };
 
-    const handlePointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (!isDrawingMode || !currentStrokeRef.current) return;
+    const handleDrawingPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+        if (activeTool !== 'draw' || !currentStrokeRef.current) return;
         e.preventDefault();
         const pt = getCanvasCoordinates(e);
         if (!pt) return;
@@ -161,8 +210,8 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         redrawCanvas();
     };
 
-    const handlePointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (!isDrawingMode || !currentStrokeRef.current) return;
+    const handleDrawingPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+        if (activeTool !== 'draw' || !currentStrokeRef.current) return;
         e.preventDefault();
         const finishedStroke = currentStrokeRef.current;
         currentStrokeRef.current = null;
@@ -180,19 +229,112 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
     };
 
     // Clear all strokes
-    const handleClear = () => {
+    const handleClearStrokes = () => {
         if (strokes.length === 0) return;
         triggerHaptic();
         setStrokes([]);
     };
 
-    // Toggle drawing mode
-    const toggleDrawingMode = () => {
+    // Reset crop to 100% full image
+    const handleResetCrop = () => {
         triggerHaptic();
-        setIsDrawingMode((prev) => !prev);
+        setCropRect({
+            x: 0,
+            y: 0,
+            width: imgNaturalSize.width,
+            height: imgNaturalSize.height,
+        });
     };
 
-    // Keyboard Shortcuts: Esc to close, Ctrl+Z to undo
+    // Full Reset (Crop + Strokes)
+    const handleFullReset = () => {
+        triggerHaptic();
+        setStrokes([]);
+        handleResetCrop();
+    };
+
+    // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES)
+    const handleCropPointerDown = (handle: string, e: React.PointerEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerHaptic();
+
+        cropDragRef.current = {
+            handle,
+            startX: e.clientX,
+            startY: e.clientY,
+            initialCrop: { ...cropRect },
+        };
+
+        const onPointerMove = (ev: PointerEvent) => {
+            if (!cropDragRef.current || !canvasRef.current) return;
+            const { handle, startX, startY, initialCrop } = cropDragRef.current;
+
+            const rect = canvasRef.current.getBoundingClientRect();
+            const scaleX = imgNaturalSize.width / rect.width;
+            const scaleY = imgNaturalSize.height / rect.height;
+
+            const dx = (ev.clientX - startX) * scaleX;
+            const dy = (ev.clientY - startY) * scaleY;
+
+            const MIN_DIM = 40; // minimum 40px crop
+            const nw = imgNaturalSize.width;
+            const nh = imgNaturalSize.height;
+
+            let newX = initialCrop.x;
+            let newY = initialCrop.y;
+            let newW = initialCrop.width;
+            let newH = initialCrop.height;
+
+            // 1. Move Entire Box
+            if (handle === 'move') {
+                newX = Math.max(0, Math.min(nw - newW, initialCrop.x + dx));
+                newY = Math.max(0, Math.min(nh - newH, initialCrop.y + dy));
+            }
+
+            // 2. Independent Top Edge (Changes ONLY top; bottom edge remains stationary)
+            if (handle === 'top' || handle === 'tl' || handle === 'tr') {
+                const bottomEdge = initialCrop.y + initialCrop.height;
+                newY = Math.max(0, Math.min(bottomEdge - MIN_DIM, initialCrop.y + dy));
+                newH = bottomEdge - newY;
+            }
+
+            // 3. Independent Bottom Edge (Changes ONLY bottom; top edge remains stationary)
+            if (handle === 'bottom' || handle === 'bl' || handle === 'br') {
+                newH = Math.max(MIN_DIM, Math.min(nh - newY, initialCrop.height + dy));
+            }
+
+            // 4. Independent Left Edge (Changes ONLY left; right edge remains stationary)
+            if (handle === 'left' || handle === 'tl' || handle === 'bl') {
+                const rightEdge = initialCrop.x + initialCrop.width;
+                newX = Math.max(0, Math.min(rightEdge - MIN_DIM, initialCrop.x + dx));
+                newW = rightEdge - newX;
+            }
+
+            // 5. Independent Right Edge (Changes ONLY right; left edge remains stationary)
+            if (handle === 'right' || handle === 'tr' || handle === 'br') {
+                newW = Math.max(MIN_DIM, Math.min(nw - newX, initialCrop.width + dx));
+            }
+
+            setCropRect({
+                x: Math.round(newX),
+                y: Math.round(newY),
+                width: Math.round(newW),
+                height: Math.round(newH),
+            });
+        };
+
+        const onPointerUp = () => {
+            cropDragRef.current = null;
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+    };
+
+    // Keyboard Shortcuts: Esc to cancel, Ctrl+Z to undo
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
@@ -210,58 +352,35 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
     const handleSend = async () => {
         triggerHaptic();
 
-        // 1. If not edited and size is original, send raw file directly (preserves 100% original quality)
+        // 1. If not drawn AND not cropped, send raw file directly (preserves 100% original quality)
         const hasDrawn = strokes.length > 0;
-        if (!hasDrawn && sizePreset === 'original') {
+        if (!hasDrawn && !isCropped) {
             onSend(imageFile);
             return;
         }
 
-        // 2. Otherwise, export canvas at target preset dimensions
+        // 2. Otherwise, export cropped & drawn canvas
         if (!imgElement || !canvasRef.current) {
             onSend(imageFile);
             return;
         }
 
-        let targetWidth = imgNaturalSize.width;
-        let targetHeight = imgNaturalSize.height;
+        const targetW = Math.round(cropRect.width > 0 ? cropRect.width : imgNaturalSize.width);
+        const targetH = Math.round(cropRect.height > 0 ? cropRect.height : imgNaturalSize.height);
+        const sourceX = Math.round(cropRect.x);
+        const sourceY = Math.round(cropRect.y);
 
-        if (sizePreset === '1080p') {
-            const maxDim = 1080;
-            if (targetWidth > maxDim || targetHeight > maxDim) {
-                if (targetWidth > targetHeight) {
-                    targetHeight = Math.round((targetHeight * maxDim) / targetWidth);
-                    targetWidth = maxDim;
-                } else {
-                    targetWidth = Math.round((targetWidth * maxDim) / targetHeight);
-                    targetHeight = maxDim;
-                }
-            }
-        } else if (sizePreset === '720p') {
-            const maxDim = 720;
-            if (targetWidth > maxDim || targetHeight > maxDim) {
-                if (targetWidth > targetHeight) {
-                    targetHeight = Math.round((targetHeight * maxDim) / targetWidth);
-                    targetWidth = maxDim;
-                } else {
-                    targetWidth = Math.round((targetWidth * maxDim) / targetHeight);
-                    targetHeight = maxDim;
-                }
-            }
-        }
-
-        // Create export canvas
         const exportCanvas = document.createElement('canvas');
-        exportCanvas.width = targetWidth;
-        exportCanvas.height = targetHeight;
+        exportCanvas.width = targetW;
+        exportCanvas.height = targetH;
         const ctx = exportCanvas.getContext('2d');
         if (!ctx) {
             onSend(imageFile);
             return;
         }
 
-        // Draw current full canvas onto export canvas
-        ctx.drawImage(canvasRef.current, 0, 0, targetWidth, targetHeight);
+        // Draw cropped section from base canvas
+        ctx.drawImage(canvasRef.current, sourceX, sourceY, targetW, targetH, 0, 0, targetW, targetH);
 
         exportCanvas.toBlob(
             (blob) => {
@@ -283,13 +402,24 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
 
     const formattedFileSize = (imageFile.size / (1024 * 1024)).toFixed(1);
 
-    return (
+    // Compute screen coordinates for crop overlay
+    const scaleToDisplayX = canvasDisplaySize.width / (imgNaturalSize.width || 1);
+    const scaleToDisplayY = canvasDisplaySize.height / (imgNaturalSize.height || 1);
+
+    const screenCrop = {
+        left: cropRect.x * scaleToDisplayX,
+        top: cropRect.y * scaleToDisplayY,
+        width: cropRect.width * scaleToDisplayX,
+        height: cropRect.height * scaleToDisplayY,
+    };
+
+    const modalContent = (
         <div className="image-editor-overlay" role="dialog" aria-modal="true">
             {/* Top Bar */}
             <div className="image-editor-header">
                 <div className="image-editor-header__right">
                     <button
-                        className="image-editor-btn"
+                        className="image-editor-icon-btn"
                         onClick={onCancel}
                         title="انصراف (Esc)"
                         aria-label="Close image preview"
@@ -300,7 +430,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                         <span className="image-editor-header__title">{imageFile.name}</span>
                         {imgNaturalSize.width > 0 && (
                             <span className="image-editor-header__meta">
-                                {toPersianDigits(imgNaturalSize.width)} × {toPersianDigits(imgNaturalSize.height)} •{' '}
+                                {toPersianDigits(Math.round(cropRect.width))} × {toPersianDigits(Math.round(cropRect.height))} •{' '}
                                 {toPersianDigits(formattedFileSize)} MB
                             </span>
                         )}
@@ -308,144 +438,256 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                 </div>
 
                 <div className="image-editor-header__left">
-                    {/* Brush Toggle Button */}
-                    <button
-                        className={`image-editor-btn ${isDrawingMode ? 'image-editor-btn--active' : ''}`}
-                        onClick={toggleDrawingMode}
-                        title={isDrawingMode ? 'خروج از حالت نقاشی' : 'نقاشی روی عکس'}
-                    >
-                        <Paintbrush size={18} />
-                    </button>
-
-                    {/* Undo */}
-                    <button
-                        className="image-editor-btn"
-                        onClick={handleUndo}
-                        disabled={strokes.length === 0}
-                        title="بازگشت حرکت آخر (Ctrl+Z)"
-                    >
-                        <RotateCcw size={18} />
-                    </button>
-
-                    {/* Clear All */}
-                    <button
-                        className="image-editor-btn"
-                        onClick={handleClear}
-                        disabled={strokes.length === 0}
-                        title="پاک کردن همه خطوط"
-                    >
-                        <Trash2 size={18} />
-                    </button>
+                    {(strokes.length > 0 || isCropped) && (
+                        <button className="image-editor-btn-ghost" onClick={handleFullReset} title="بازنشانی تمام تغییرات">
+                            <RefreshCw size={14} />
+                            <span>بازنشانی</span>
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Canvas Viewport */}
-            <div className="image-editor-body" ref={containerRef}>
-                <div className="image-editor-canvas-container">
+            <div className="image-editor-body">
+                <div className="image-editor-canvas-stage" ref={stageRef}>
                     <canvas
                         ref={canvasRef}
-                        className={`image-editor-canvas ${isDrawingMode ? 'image-editor-canvas--drawable' : ''}`}
-                        onPointerDown={handlePointerDown}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerUp}
+                        className={`image-editor-canvas ${activeTool === 'draw' ? 'image-editor-canvas--drawable' : ''}`}
+                        onPointerDown={handleDrawingPointerDown}
+                        onPointerMove={handleDrawingPointerMove}
+                        onPointerUp={handleDrawingPointerUp}
+                        onPointerCancel={handleDrawingPointerUp}
                     />
+
+                    {/* CROP OVERLAY (Always active when in crop mode or cropped) */}
+                    {(activeTool === 'crop' || isCropped) && canvasDisplaySize.width > 0 && (
+                        <div className="image-editor-crop-overlay">
+                            {/* Dark Shading Outside Crop Box */}
+                            <div
+                                className="image-editor-crop-shade"
+                                style={{ top: 0, left: 0, right: 0, height: `${screenCrop.top}px` }}
+                            />
+                            <div
+                                className="image-editor-crop-shade"
+                                style={{
+                                    top: `${screenCrop.top + screenCrop.height}px`,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                }}
+                            />
+                            <div
+                                className="image-editor-crop-shade"
+                                style={{
+                                    top: `${screenCrop.top}px`,
+                                    height: `${screenCrop.height}px`,
+                                    left: 0,
+                                    width: `${screenCrop.left}px`,
+                                }}
+                            />
+                            <div
+                                className="image-editor-crop-shade"
+                                style={{
+                                    top: `${screenCrop.top}px`,
+                                    height: `${screenCrop.height}px`,
+                                    left: `${screenCrop.left + screenCrop.width}px`,
+                                    right: 0,
+                                }}
+                            />
+
+                            {/* The Active Crop Box */}
+                            <div
+                                className="image-editor-crop-box"
+                                style={{
+                                    left: `${screenCrop.left}px`,
+                                    top: `${screenCrop.top}px`,
+                                    width: `${screenCrop.width}px`,
+                                    height: `${screenCrop.height}px`,
+                                }}
+                                onPointerDown={(e) => activeTool === 'crop' && handleCropPointerDown('move', e)}
+                            >
+                                {activeTool === 'crop' && (
+                                    <>
+                                        {/* Rule of Thirds Grid */}
+                                        <div className="image-editor-crop-grid-h1" />
+                                        <div className="image-editor-crop-grid-h2" />
+                                        <div className="image-editor-crop-grid-v1" />
+                                        <div className="image-editor-crop-grid-v2" />
+
+                                        {/* 4 Independent Edge Handles */}
+                                        <div
+                                            className="image-editor-crop-edge image-editor-crop-edge--top"
+                                            onPointerDown={(e) => handleCropPointerDown('top', e)}
+                                        >
+                                            <div className="image-editor-crop-edge-bar-h" />
+                                        </div>
+                                        <div
+                                            className="image-editor-crop-edge image-editor-crop-edge--bottom"
+                                            onPointerDown={(e) => handleCropPointerDown('bottom', e)}
+                                        >
+                                            <div className="image-editor-crop-edge-bar-h" />
+                                        </div>
+                                        <div
+                                            className="image-editor-crop-edge image-editor-crop-edge--left"
+                                            onPointerDown={(e) => handleCropPointerDown('left', e)}
+                                        >
+                                            <div className="image-editor-crop-edge-bar-v" />
+                                        </div>
+                                        <div
+                                            className="image-editor-crop-edge image-editor-crop-edge--right"
+                                            onPointerDown={(e) => handleCropPointerDown('right', e)}
+                                        >
+                                            <div className="image-editor-crop-edge-bar-v" />
+                                        </div>
+
+                                        {/* 4 Corner Handles */}
+                                        <div
+                                            className="image-editor-crop-corner image-editor-crop-corner--tl"
+                                            onPointerDown={(e) => handleCropPointerDown('tl', e)}
+                                        />
+                                        <div
+                                            className="image-editor-crop-corner image-editor-crop-corner--tr"
+                                            onPointerDown={(e) => handleCropPointerDown('tr', e)}
+                                        />
+                                        <div
+                                            className="image-editor-crop-corner image-editor-crop-corner--bl"
+                                            onPointerDown={(e) => handleCropPointerDown('bl', e)}
+                                        />
+                                        <div
+                                            className="image-editor-crop-corner image-editor-crop-corner--br"
+                                            onPointerDown={(e) => handleCropPointerDown('br', e)}
+                                        />
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* UNIFIED TOOLBAR DIRECTLY UNDER THE IMAGE */}
+                <div className="image-editor-sub-tools">
+                    {/* Drawing Sub-dock (Colors & Thickness) */}
+                    {activeTool === 'draw' && (
+                        <div className="image-editor-draw-controls">
+                            <div className="image-editor-colors">
+                                {COLOR_PALETTE.map((c) => (
+                                    <div
+                                        key={c.value}
+                                        className={`image-editor-color-circle ${selectedColor === c.value ? 'image-editor-color-circle--selected' : ''}`}
+                                        style={{ backgroundColor: c.value }}
+                                        onClick={() => {
+                                            triggerHaptic();
+                                            setSelectedColor(c.value);
+                                        }}
+                                        title={c.label}
+                                    />
+                                ))}
+                            </div>
+
+                            <div className="image-editor-divider" />
+
+                            <div className="image-editor-thicknesses">
+                                {THICKNESS_PRESETS.map((t) => (
+                                    <button
+                                        key={t.value}
+                                        className={`image-editor-thickness-btn ${selectedThickness === t.value ? 'image-editor-thickness-btn--selected' : ''}`}
+                                        onClick={() => {
+                                            triggerHaptic();
+                                            setSelectedThickness(t.value);
+                                        }}
+                                        title={t.label}
+                                    >
+                                        <span
+                                            className="image-editor-thickness-dot"
+                                            style={{
+                                                width: `${t.dotSize}px`,
+                                                height: `${t.dotSize}px`,
+                                                backgroundColor: selectedColor,
+                                            }}
+                                        />
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Crop Sub-dock */}
+                    {activeTool === 'crop' && (
+                        <div className="image-editor-crop-controls">
+                            <span className="image-editor-crop-tag">
+                                {toPersianDigits(Math.round(cropRect.width))} × {toPersianDigits(Math.round(cropRect.height))}
+                            </span>
+                            {isCropped && (
+                                <button className="image-editor-btn-ghost" onClick={handleResetCrop}>
+                                    <span>ریست کادر</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Main Tools Dock */}
+                    <div className="image-editor-tools-dock">
+                        {/* Crop Button */}
+                        <button
+                            className={`image-editor-icon-btn ${activeTool === 'crop' ? 'image-editor-icon-btn--active' : ''}`}
+                            onClick={() => {
+                                triggerHaptic();
+                                setActiveTool((prev) => (prev === 'crop' ? 'none' : 'crop'));
+                            }}
+                            title="کراپ و برش کادر عکس"
+                        >
+                            <Crop size={18} />
+                        </button>
+
+                        {/* Brush Button */}
+                        <button
+                            className={`image-editor-icon-btn ${activeTool === 'draw' ? 'image-editor-icon-btn--active' : ''}`}
+                            onClick={() => {
+                                triggerHaptic();
+                                setActiveTool((prev) => (prev === 'draw' ? 'none' : 'draw'));
+                            }}
+                            title="قلم نقاشی روی عکس"
+                        >
+                            <Paintbrush size={18} />
+                        </button>
+
+                        <div className="image-editor-divider" />
+
+                        {/* Undo */}
+                        <button
+                            className="image-editor-icon-btn"
+                            onClick={handleUndo}
+                            disabled={strokes.length === 0}
+                            title="واگرد حرکت آخر (Ctrl+Z)"
+                        >
+                            <RotateCcw size={18} />
+                        </button>
+
+                        {/* Clear All Drawing */}
+                        <button
+                            className="image-editor-icon-btn"
+                            onClick={handleClearStrokes}
+                            disabled={strokes.length === 0}
+                            title="پاکسازی تمام نقاشی‌ها"
+                        >
+                            <Trash2 size={18} />
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* Floating Drawing Toolbar (visible only in drawing mode) */}
-            {isDrawingMode && (
-                <div className="image-editor-drawing-bar">
-                    {/* Colors */}
-                    <div className="image-editor-colors">
-                        {COLOR_PALETTE.map((c) => (
-                            <div
-                                key={c.value}
-                                className={`image-editor-color-circle ${selectedColor === c.value ? 'image-editor-color-circle--selected' : ''}`}
-                                style={{ backgroundColor: c.value }}
-                                onClick={() => {
-                                    triggerHaptic();
-                                    setSelectedColor(c.value);
-                                }}
-                                title={c.label}
-                            />
-                        ))}
-                    </div>
-
-                    <div className="image-editor-divider" />
-
-                    {/* Thickness Presets */}
-                    <div className="image-editor-thicknesses">
-                        {THICKNESS_PRESETS.map((t) => (
-                            <button
-                                key={t.value}
-                                className={`image-editor-thickness-btn ${selectedThickness === t.value ? 'image-editor-thickness-btn--selected' : ''}`}
-                                onClick={() => {
-                                    triggerHaptic();
-                                    setSelectedThickness(t.value);
-                                }}
-                                title={t.label}
-                            >
-                                <span
-                                    className="image-editor-thickness-dot"
-                                    style={{
-                                        width: `${t.dotSize}px`,
-                                        height: `${t.dotSize}px`,
-                                        backgroundColor: selectedColor,
-                                    }}
-                                />
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Bottom Bar */}
+            {/* Bottom Action Bar */}
             <div className="image-editor-bottom-bar">
-                {/* Size / Quality Presets */}
-                <div className="image-editor-bottom-bar__right">
-                    <div className="image-editor-size-pills">
-                        <button
-                            className={`image-editor-size-pill ${sizePreset === 'original' ? 'image-editor-size-pill--active' : ''}`}
-                            onClick={() => {
-                                triggerHaptic();
-                                setSizePreset('original');
-                            }}
-                        >
-                            اصلی
-                        </button>
-                        <button
-                            className={`image-editor-size-pill ${sizePreset === '1080p' ? 'image-editor-size-pill--active' : ''}`}
-                            onClick={() => {
-                                triggerHaptic();
-                                setSizePreset('1080p');
-                            }}
-                        >
-                            ۱۰۸۰p
-                        </button>
-                        <button
-                            className={`image-editor-size-pill ${sizePreset === '720p' ? 'image-editor-size-pill--active' : ''}`}
-                            onClick={() => {
-                                triggerHaptic();
-                                setSizePreset('720p');
-                            }}
-                        >
-                            ۷۲۰p
-                        </button>
-                    </div>
-                </div>
-
-                {/* Actions */}
-                <div className="image-editor-bottom-bar__left">
-                    <button className="image-editor-cancel-btn" onClick={onCancel}>
-                        انصراف
-                    </button>
-                    <button className="image-editor-send-btn" onClick={handleSend}>
-                        <span>ارسال</span>
-                        <Send size={16} />
-                    </button>
-                </div>
+                <button className="image-editor-cancel-btn" onClick={onCancel}>
+                    انصراف
+                </button>
+                <button className="image-editor-send-btn" onClick={handleSend}>
+                    <span>ارسال</span>
+                    <Send size={16} />
+                </button>
             </div>
         </div>
     );
+
+    return createPortal(modalContent, document.body);
 }
