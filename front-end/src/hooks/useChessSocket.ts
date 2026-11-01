@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_WS_URL } from '../config/api';
-import type { ChessEvent, ChessGameView } from '../types';
+import type { ChessColor, ChessEmote, ChessEvent, ChessGameView } from '../types';
 
 interface Options {
     token: string | null;
     gameId: string | null;
     onState: (game: ChessGameView, event: ChessEvent | null) => void;
     onError: (code: string) => void;
+    onEmote?: (by: ChessColor, emote: ChessEmote) => void;
 }
 
-export function useChessSocket({ token, gameId, onState, onError }: Options) {
+export function useChessSocket({ token, gameId, onState, onError, onEmote }: Options) {
     const [connected, setConnected] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
     const onStateRef = useRef(onState);
     const onErrorRef = useRef(onError);
+    const onEmoteRef = useRef(onEmote);
 
     useEffect(() => {
         onStateRef.current = onState;
         onErrorRef.current = onError;
-    }, [onState, onError]);
+        onEmoteRef.current = onEmote;
+    }, [onState, onError, onEmote]);
 
     useEffect(() => {
         if (!token || !gameId) return;
@@ -38,6 +41,9 @@ export function useChessSocket({ token, gameId, onState, onError }: Options) {
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'game_state') onStateRef.current(data.game, data.event ?? null);
+                    else if (data.type === 'emote' && data.by && data.emote) {
+                        onEmoteRef.current?.(data.by as ChessColor, data.emote as ChessEmote);
+                    }
                     else if (data.type === 'error') onErrorRef.current(String(data.code || 'error'));
                 } catch {
                     return;

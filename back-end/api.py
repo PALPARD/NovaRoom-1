@@ -6734,6 +6734,14 @@ async def chess_websocket(websocket: WebSocket, token: str = Query(...), gameId:
             if kind == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
+            if kind == "emote":
+                emote = str(data.get("emote") or "")
+                color = chess_service.color_of(game, user_id)
+                if emote in ("cry", "laugh", "mad", "nice") and color in ("white", "black"):
+                    payload = {"type": "emote", "by": color, "emote": emote}
+                    sockets = [ws for conns in chess_rooms.get(gameId, {}).values() for ws in conns]
+                    await asyncio.gather(*(ws.send_json(payload) for ws in sockets), return_exceptions=True)
+                continue
             actions = {
                 "move": lambda g, n: chess_service.apply_move(g, user_id, data.get("uci"), n),
                 "resign": lambda g, n: chess_service.resign(g, user_id, n),

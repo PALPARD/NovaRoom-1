@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, Hourglass } from 'lucide-react';
+import { ChevronLeft, Hourglass, Smile } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import { useChessSocket } from '../../hooks/useChessSocket';
-import type { Chat, ChessColor, ChessEvent, ChessGameView, User } from '../../types';
+import type { Chat, ChessColor, ChessEmote, ChessEvent, ChessGameView, User } from '../../types';
 import {
     fetchChessGameCached,
     getCachedChessGame,
@@ -64,6 +64,13 @@ const formatTimeControl = (tc: string): string => {
 const CAPTURE_ICONS: Record<string, string> = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 const CAPTURE_ORDER = ['q', 'r', 'b', 'n', 'p'];
 
+const CHESS_EMOTES: { id: ChessEmote; label: string; src: string }[] = [
+    { id: 'nice', label: 'آفرین', src: '/gifs/chess/nice.gif' },
+    { id: 'laugh', label: 'خنده', src: '/gifs/chess/laugh.gif' },
+    { id: 'cry', label: 'گریه', src: '/gifs/chess/cry.gif' },
+    { id: 'mad', label: 'عصبانی', src: '/gifs/chess/mad.gif' },
+];
+
 function capturedPieces(moves: ChessGameView['moves']): Record<ChessColor, { piece: string; count: number }[]> {
     const lost: Record<ChessColor, Record<string, number>> = { white: {}, black: {} };
     const board = new Chess();
@@ -111,10 +118,15 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
     const [confirmResign, setConfirmResign] = useState(false);
     const [inviteOpen, setInviteOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+    const [activeEmotes, setActiveEmotes] = useState<Partial<Record<ChessColor, { emote: ChessEmote; seq: number }>>>({});
     const [notFound, setNotFound] = useState<boolean>(() => isChessGameUnavailable(gameId));
     const soundPlyRef = useRef(typeof initialCached?.ply === 'number' ? initialCached.ply : -1);
     const startSoundPlayedRef = useRef(Boolean(initialCached && initialCached.status !== 'waiting'));
     const movesEndRef = useRef<HTMLDivElement | null>(null);
+    const emoteTimersRef = useRef<Partial<Record<ChessColor, number>>>({});
+    const emoteSeqRef = useRef(0);
+    const lastEmoteSentAtRef = useRef(0);
 
     const fetchDetails = useCallback((id: string, force = false) => {
         fetchChessGameCached(id, { force })
@@ -211,12 +223,48 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
     const socketGameId = game && game.status !== 'finished' && isParticipant ? gameId : null;
 
+    const showEmoteForColor = useCallback((by: ChessColor, emote: ChessEmote) => {
+        if (!CHESS_EMOTES.some((item) => item.id === emote)) return;
+        const prevTimer = emoteTimersRef.current[by];
+        if (prevTimer) window.clearTimeout(prevTimer);
+        emoteSeqRef.current += 1;
+        const seq = emoteSeqRef.current;
+        setActiveEmotes((prev) => ({ ...prev, [by]: { emote, seq } }));
+        emoteTimersRef.current[by] = window.setTimeout(() => {
+            setActiveEmotes((prev) => {
+                if (prev[by]?.seq !== seq) return prev;
+                const next = { ...prev };
+                delete next[by];
+                return next;
+            });
+        }, 3200);
+    }, []);
+
+    useEffect(() => {
+        const timers = emoteTimersRef.current;
+        return () => {
+            Object.values(timers).forEach((t) => {
+                if (t) window.clearTimeout(t);
+            });
+        };
+    }, []);
+
     const { send } = useChessSocket({
         token: authToken,
         gameId: socketGameId,
         onState: handleState,
         onError: handleError,
+        onEmote: showEmoteForColor,
     });
+
+    const handleSendEmote = useCallback((emote: ChessEmote) => {
+        const nowTs = Date.now();
+        if (nowTs - lastEmoteSentAtRef.current < 800) return;
+        lastEmoteSentAtRef.current = nowTs;
+        setEmotePickerOpen(false);
+        showEmoteForColor(myColor, emote);
+        send({ type: 'emote', emote });
+    }, [myColor, send, showEmoteForColor]);
 
     useEffect(() => {
         if (game?.status !== 'active' || !game.clocks) return;
@@ -542,16 +590,36 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                 <div className="chess__stage">
                     <div className="chess__player">
                         <div className="chess__player-info">
-                            {oppInfo ? (
-                                <Avatar
-                                    name={oppInfo.name || 'حریف'}
-                                    size="sm"
-                                    src={oppInfo.avatar}
-                                    online={oppId ? game.online[oppColor] : undefined}
-                                />
-                            ) : (
-                                <span className="chess__player-placeholder"><Hourglass size={18} /></span>
-                            )}
+                            <div className="chess__avatar-wrap">
+                                {oppInfo ? (
+                                    <Avatar
+                                        name={oppInfo.name || 'حریف'}
+                                        size="sm"
+                                        src={oppInfo.avatar}
+                                        online={oppId ? game.online[oppColor] : undefined}
+                                    />
+                                ) : (
+                                    <span className="chess__player-placeholder"><Hourglass size={18} /></span>
+                                )}
+                                <AnimatePresence>
+                                    {activeEmotes[oppColor] && (
+                                        <motion.div
+                                            key={activeEmotes[oppColor]!.seq}
+                                            className="chess__emote-pop chess__emote-pop--top"
+                                            initial={{ opacity: 0, scale: 0.3, x: 12, y: -4 }}
+                                            animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.4 }}
+                                            transition={{ type: 'spring', stiffness: 380, damping: 22 }}
+                                        >
+                                            <img
+                                                src={`/gifs/chess/${activeEmotes[oppColor]!.emote}.gif`}
+                                                alt={activeEmotes[oppColor]!.emote}
+                                                className="chess__emote-gif"
+                                            />
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
                             <div className="chess__player-text">
                                 <div className="chess__player-line">
                                     <span className="chess__player-name">
@@ -622,12 +690,32 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
                     <div className="chess__player">
                         <div className="chess__player-info">
-                            <Avatar
-                                name={bottomInfo?.name || currentUser.name}
-                                size="sm"
-                                src={bottomInfo?.avatar}
-                                online={game.online[myColor]}
-                            />
+                            <div className="chess__avatar-wrap">
+                                <Avatar
+                                    name={bottomInfo?.name || currentUser.name}
+                                    size="sm"
+                                    src={bottomInfo?.avatar}
+                                    online={game.online[myColor]}
+                                />
+                                <AnimatePresence>
+                                    {activeEmotes[myColor] && (
+                                        <motion.div
+                                            key={activeEmotes[myColor]!.seq}
+                                            className="chess__emote-pop chess__emote-pop--bottom"
+                                            initial={{ opacity: 0, scale: 0.3, x: 12, y: -4 }}
+                                            animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.4 }}
+                                            transition={{ type: 'spring', stiffness: 380, damping: 22 }}
+                                        >
+                                            <img
+                                                src={`/gifs/chess/${activeEmotes[myColor]!.emote}.gif`}
+                                                alt={activeEmotes[myColor]!.emote}
+                                                className="chess__emote-gif"
+                                            />
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
                             <div className="chess__player-text">
                                 <div className="chess__player-line">
                                     <span className="chess__player-name">{bottomInfo?.name || currentUser.name}</span>
@@ -637,11 +725,48 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                                 <CapturedRow pieces={captured?.[oppColor] ?? []} color={oppColor} />
                             </div>
                         </div>
-                        {myClock !== null && (
-                            <div className={cx('chess__clock', game.status === 'active' && game.turn === myColor && 'chess__clock--active')}>
-                                {formatClock(myClock)}
-                            </div>
-                        )}
+                        <div className="chess__player-end">
+                            {isParticipant && game.status === 'active' && (
+                                <div className="chess__emote-anchor">
+                                    <button
+                                        type="button"
+                                        className={cx('chess__emote-trigger', emotePickerOpen && 'chess__emote-trigger--open')}
+                                        aria-label="ایموت"
+                                        onClick={() => setEmotePickerOpen((v) => !v)}
+                                    >
+                                        <Smile size={18} />
+                                    </button>
+                                    <AnimatePresence>
+                                        {emotePickerOpen && (
+                                            <motion.div
+                                                className="chess__emote-picker"
+                                                initial={{ opacity: 0, scale: 0.88, y: 6 }}
+                                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                                exit={{ opacity: 0, scale: 0.88, y: 6 }}
+                                                transition={{ duration: 0.14 }}
+                                            >
+                                                {CHESS_EMOTES.map((item) => (
+                                                    <button
+                                                        key={item.id}
+                                                        type="button"
+                                                        className="chess__emote-option"
+                                                        title={item.label}
+                                                        onClick={() => handleSendEmote(item.id)}
+                                                    >
+                                                        <img src={item.src} alt={item.label} className="chess__emote-option-img" />
+                                                    </button>
+                                                ))}
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </div>
+                            )}
+                            {myClock !== null && (
+                                <div className={cx('chess__clock', game.status === 'active' && game.turn === myColor && 'chess__clock--active')}>
+                                    {formatClock(myClock)}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {movePairs.length > 0 && (

@@ -7591,3 +7591,115 @@ html.no-blur-effect .chat-list__header,
 .chess-chip:active {
     transform: scale(0.97);
 }
+
+.chess__avatar-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+}
+
+.chess__emote-pop {
+    position: absolute;
+    inset-inline-start: -4px;
+    z-index: 30;
+    transform-origin: top right;
+    pointer-events: none;
+}
+
+.chess__emote-pop--top {
+    top: calc(100% + 4px);
+}
+
+.chess__emote-pop--bottom {
+    bottom: calc(100% + 4px);
+    transform-origin: bottom right;
+}
+
+.chess__emote-gif {
+    width: 76px;
+    height: 76px;
+    display: block;
+    object-fit: contain;
+}
+
+.chess__player-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.chess__emote-anchor {
+    position: relative;
+    display: inline-flex;
+}
+
+.chess__emote-trigger {
+    width: 36px;
+    height: 36px;
+    border-radius: 9999px;
+    border: 1px solid var(--border-primary);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.chess__emote-trigger:hover,
+.chess__emote-trigger--open {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+.chess__emote-trigger:active {
+    transform: scale(0.94);
+}
+
+.chess__emote-picker {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    inset-inline-end: 0;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 20px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.chess__emote-option {
+    width: 46px;
+    height: 46px;
+    padding: 4px;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.12s ease, border-color 0.15s ease;
+}
+
+.chess__emote-option:hover {
+    border-color: var(--border-primary);
+    transform: translateY(-2px);
+}
+
+.chess__emote-option:active {
+    transform: scale(0.94);
+}
+
+.chess__emote-option-img {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    display: block;
+}

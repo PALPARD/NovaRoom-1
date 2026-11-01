@@ -167,6 +167,8 @@ export interface AIMemoryItem {
 
 export type ChessColor = 'white' | 'black';
 
+export type ChessEmote = 'cry' | 'laugh' | 'mad' | 'nice';
+
 export interface ChessPlayerInfo {
     chatId: string;
     name: string;
