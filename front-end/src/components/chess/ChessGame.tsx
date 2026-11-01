@@ -61,6 +61,43 @@ const formatTimeControl = (tc: string): string => {
     return toPersianDigits(tc);
 };
 
+const CAPTURE_ICONS: Record<string, string> = { q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+const CAPTURE_ORDER = ['q', 'r', 'b', 'n', 'p'];
+
+function capturedPieces(moves: ChessGameView['moves']): Record<ChessColor, { piece: string; count: number }[]> {
+    const lost: Record<ChessColor, Record<string, number>> = { white: {}, black: {} };
+    const board = new Chess();
+    for (const entry of moves) {
+        try {
+            const played = board.move(entry.san);
+            if (!played?.captured) continue;
+            const owner: ChessColor = played.color === 'w' ? 'black' : 'white';
+            lost[owner][played.captured] = (lost[owner][played.captured] || 0) + 1;
+        } catch {
+            break;
+        }
+    }
+    const toList = (counts: Record<string, number>) =>
+        CAPTURE_ORDER.filter((piece) => counts[piece]).map((piece) => ({ piece, count: counts[piece] }));
+    return { white: toList(lost.white), black: toList(lost.black) };
+}
+
+function CapturedRow({ pieces, color }: { pieces: { piece: string; count: number }[]; color: ChessColor }) {
+    if (pieces.length === 0) return null;
+    return (
+        <span className="chess__captured">
+            {pieces.map(({ piece, count }) => (
+                <span key={piece} className="chess__captured-item">
+                    <span className="chess__captured-count">×{toPersianDigits(count)}</span>
+                    <span className={cx('chess__captured-piece', `chess__captured-piece--${color}`)}>
+                        {CAPTURE_ICONS[piece]}
+                    </span>
+                </span>
+            ))}
+        </span>
+    );
+}
+
 export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }: ChessGameProps) {
     const initialCached = getCachedChessGame(gameId);
     const [game, setGame] = useState<ChessGameView | null>(() => initialCached);
@@ -119,6 +156,8 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
         if (!game) return false;
         return game.players.white === currentUser.chatId || game.players.black === currentUser.chatId;
     }, [game, currentUser.chatId]);
+
+    const captured = useMemo(() => (game ? capturedPieces(game.moves) : null), [game?.moves]);
 
     const handleState = useCallback((nextGame: ChessGameView, event: ChessEvent | null) => {
         setGame((prev) => {
@@ -483,6 +522,9 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
     const resultSub = game.reason && game.reason !== 'aborted' ? REASON_LABELS[game.reason] || '' : '';
 
+    const winnerColor: ChessColor | null =
+        game.status === 'finished' ? (game.result === '1-0' ? 'white' : game.result === '0-1' ? 'black' : null) : null;
+
     return (
         <motion.div className="profile chess" variants={screenVariants} initial="hidden" animate="visible" exit="exit">
             <div className="profile__header">
@@ -510,9 +552,16 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                             ) : (
                                 <span className="chess__player-placeholder"><Hourglass size={18} /></span>
                             )}
-                            <span className="chess__player-name">
-                                {oppInfo?.name || (game.status === 'waiting' ? 'منتظر حریف…' : 'حریف')}
-                            </span>
+                            <div className="chess__player-text">
+                                <div className="chess__player-line">
+                                    <span className="chess__player-name">
+                                        {oppInfo?.name || (game.status === 'waiting' ? 'منتظر حریف…' : 'حریف')}
+                                    </span>
+                                    <span className={cx('chess__color-dot', `chess__color-dot--${oppColor}`)} />
+                                    {winnerColor === oppColor && <span className="chess__winner-badge">برنده</span>}
+                                </div>
+                                <CapturedRow pieces={captured?.[myColor] ?? []} color={myColor} />
+                            </div>
                         </div>
                         {oppClock !== null && (
                             <div className={cx('chess__clock', game.status === 'active' && game.turn === oppColor && 'chess__clock--active')}>
@@ -579,7 +628,14 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                                 src={bottomInfo?.avatar}
                                 online={game.online[myColor]}
                             />
-                            <span className="chess__player-name">{bottomInfo?.name || currentUser.name}</span>
+                            <div className="chess__player-text">
+                                <div className="chess__player-line">
+                                    <span className="chess__player-name">{bottomInfo?.name || currentUser.name}</span>
+                                    <span className={cx('chess__color-dot', `chess__color-dot--${myColor}`)} />
+                                    {winnerColor === myColor && <span className="chess__winner-badge">برنده</span>}
+                                </div>
+                                <CapturedRow pieces={captured?.[oppColor] ?? []} color={oppColor} />
+                            </div>
                         </div>
                         {myClock !== null && (
                             <div className={cx('chess__clock', game.status === 'active' && game.turn === myColor && 'chess__clock--active')}>
@@ -590,14 +646,16 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
                     {movePairs.length > 0 && (
                         <div className="chess__moves">
-                            {movePairs.map((pair) => (
-                                <span key={pair.num} className="chess__move-pair">
-                                    <span className="chess__move-num">{toPersianDigits(pair.num)}.</span>
-                                    <span>{pair.white}</span>
-                                    {pair.black && <span>{pair.black}</span>}
-                                </span>
-                            ))}
-                            <div ref={movesEndRef} />
+                            <div className="chess__moves-track">
+                                {movePairs.map((pair) => (
+                                    <span key={pair.num} className="chess__move-pair">
+                                        <span className="chess__move-num">{toPersianDigits(pair.num)}.</span>
+                                        <span>{pair.white}</span>
+                                        {pair.black && <span>{pair.black}</span>}
+                                    </span>
+                                ))}
+                                <div ref={movesEndRef} />
+                            </div>
                         </div>
                     )}
 

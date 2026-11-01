@@ -740,6 +740,9 @@ export function ChatRoom({
         if (!reply) return '';
         const repliedMessage = messagesById.get(reply.id);
         const fallbackText = (reply.text || '').trim();
+        if (repliedMessage?.chessInvite) {
+            return repliedMessage.chessInvite.shared ? '♟️ بازی شطرنج' : '♟️ دعوت به بازی شطرنج';
+        }
         if (!repliedMessage?.file) return fallbackText;
         const prefix = filePreviewLabel(repliedMessage.file.mimeType);
         return fallbackText ? `${prefix} • ${fallbackText}` : prefix;
@@ -2505,7 +2508,13 @@ export function ChatRoom({
                             پیام سنجاق شده{pinnedMessage.senderName ? ` • ${pinnedMessage.senderName}` : ''}
                         </div>
                         <div className="chat-room__pinned-bar__text">
-                            {pinnedMessage.text || (pinnedMessage.file ? `[فایل: ${pinnedMessage.file.fileName || 'پیوست'}]` : 'پیام')}
+                            {(() => {
+                                const pinnedFull = messagesById.get(pinnedMessage.id);
+                                if (pinnedFull?.chessInvite) {
+                                    return pinnedFull.chessInvite.shared ? '♟️ بازی شطرنج' : '♟️ دعوت به بازی شطرنج';
+                                }
+                                return pinnedMessage.text || (pinnedMessage.file ? `[فایل: ${pinnedMessage.file.fileName || 'پیوست'}]` : 'پیام');
+                            })()}
                         </div>
                     </div>
                     <button
@@ -2585,7 +2594,8 @@ export function ChatRoom({
                 const showSeenByAction = isGroupChat && activeMsgIsMine && !isOfficialChannel;
                 const canReplyInMessageMenu = !(isOfficialChannel && !isVerifiedUser);
                 const hasCaption = Boolean((activeMsg.text || '').trim());
-                const showCopyAction = !activeMsg.file || hasCaption;
+                const isChessMsg = Boolean(activeMsg.chessInvite);
+                const showCopyAction = !isChessMsg && (!activeMsg.file || hasCaption);
                 const showDownloadAction = Boolean(activeMsg.file?.fileId && msgMenu.isFileDownloaded);
                 const canTogglePin = pinnedMessage?.id === activeMsg.id || !((isGroupChat || isOfficialChannel) && !isVerifiedUser);
 
@@ -2637,7 +2647,7 @@ export function ChatRoom({
                             <Check size={16} />
                             انتخاب
                         </button>
-                        {activeMsg.senderId === currentUserId && !activeMsg.forwardedFrom && (
+                        {activeMsg.senderId === currentUserId && !activeMsg.forwardedFrom && !isChessMsg && (
                             <button className="popover__item" onClick={() => beginEdit(activeMsg)} type="button"><Pencil size={16} />ویرایش</button>
                         )}
                         {showCopyAction && (<button className="popover__item" onClick={() => doCopyMessage(activeMsg)} type="button"><Copy size={16} />کپی</button>)}

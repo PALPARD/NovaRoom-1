@@ -1,6 +1,7 @@
+import { useEffect } from 'react';
 import type { Chat, User } from '../../types';
 import { ChessGame } from './ChessGame';
-import { ChessHome } from './ChessHome';
+import { ChessHome, resetChessLobbyScroll } from './ChessHome';
 
 interface ChessScreenProps {
     currentUser: User;
@@ -19,6 +20,8 @@ export function ChessScreen({
     onOpenGame,
     onExitGame,
 }: ChessScreenProps) {
+    useEffect(() => () => resetChessLobbyScroll(), []);
+
     if (gameId) {
         return (
             <ChessGame

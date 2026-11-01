@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Share2 } from 'lucide-react';
 import { apiFetch } from '../../config/api';
@@ -67,6 +67,12 @@ const REASON_LABELS: Record<string, string> = {
 
 const formatTimeControl = (tc: string) => (tc === 'unlimited' ? 'بدون زمان' : toPersianDigits(tc));
 
+let lobbyScrollTop: number | null = null;
+
+export function resetChessLobbyScroll() {
+    lobbyScrollTop = null;
+}
+
 export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     const initialSnapshot = getChessLobbySnapshot();
     const [currentGame, setCurrentGame] = useState<ChessGameView | null>(() => initialSnapshot?.currentGame ?? null);
@@ -80,6 +86,20 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     const [shareGameId, setShareGameId] = useState<string | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const loadingMoreRef = useRef(false);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+
+    useLayoutEffect(() => {
+        const el = contentRef.current;
+        if (loading || lobbyScrollTop === null) return;
+        if (!el) return;
+        el.scrollTop = lobbyScrollTop;
+        lobbyScrollTop = null;
+    }, [loading]);
+
+    const openGame = (id: string) => {
+        lobbyScrollTop = contentRef.current?.scrollTop ?? 0;
+        onOpenGame(id);
+    };
 
     const loadData = async (force = false) => {
         if (!force && isChessLobbyFresh()) {
@@ -190,7 +210,7 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
             });
             if (res?.game?.id) {
                 setCachedChessGame(res.game);
-                onOpenGame(res.game.id);
+                openGame(res.game.id);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : '';
@@ -238,7 +258,7 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                 <h1 className="profile__header-title">شطرنج</h1>
             </div>
 
-            <div className="profile__content">
+            <div className="profile__content" ref={contentRef}>
                 <div className="chess-lobby__inner">
                     {loading ? (
                         <>
@@ -281,7 +301,7 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                             <button
                                 type="button"
                                 className="chess-primary-btn"
-                                onClick={() => onOpenGame(currentGame.id)}
+                                onClick={() => openGame(currentGame.id)}
                             >
                                 ادامه بازی
                             </button>
@@ -355,7 +375,7 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                                             <div
                                                 key={g.id}
                                                 className="chess-history__item"
-                                                onClick={() => onOpenGame(g.id)}
+                                                onClick={() => openGame(g.id)}
                                             >
                                                 <div className="chess-history__main">
                                                     <Avatar

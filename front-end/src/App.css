@@ -6744,7 +6744,7 @@ html.no-blur-effect .chat-list__header,
     justify-content: space-between;
     gap: 10px;
     padding: 10px 12px;
-    border-radius: 16px;
+    border-radius: 999px;
     border: 1px solid var(--border-secondary);
     background: var(--bg-secondary);
     cursor: pointer;
@@ -7017,6 +7017,84 @@ html.no-blur-effect .chat-list__header,
     min-width: 0;
 }
 
+.chess__color-dot {
+    flex: 0 0 10px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.chess__color-dot--white {
+    background: #f7f7f7;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.chess__color-dot--black {
+    background: #1c1c1c;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.chess__player-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.chess__player-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.chess__winner-badge {
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(76, 175, 80, 0.16);
+    border: 1px solid rgba(76, 175, 80, 0.35);
+    color: #4caf50;
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.chess__captured {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.chess__captured-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.chess__captured-count {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.chess__captured-piece {
+    font-size: 15px;
+    line-height: 1;
+}
+
+.chess__captured-piece--white {
+    color: #ffffff;
+    -webkit-text-stroke: 0.8px rgba(0, 0, 0, 0.6);
+}
+
+.chess__captured-piece--black {
+    color: #2b2b2b;
+    -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.35);
+}
+
 .chess__player-name {
     font-size: 15px;
     font-weight: 600;
@@ -7028,7 +7106,7 @@ html.no-blur-effect .chat-list__header,
 
 .chess__clock {
     padding: 5px 14px;
-    border-radius: 12px;
+    border-radius: 999px;
     min-width: 62px;
     text-align: center;
     flex-shrink: 0;
@@ -7100,15 +7178,30 @@ html.no-blur-effect .chat-list__header,
 .chess__moves {
     display: flex;
     align-items: center;
-    gap: 10px;
-    overflow-x: auto;
     padding: 8px 12px;
     border-radius: 16px;
     background: var(--glass-surface-soft);
     border: 1px solid var(--glass-border);
     font-size: 13px;
     direction: ltr;
+}
+
+.chess__moves-track {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
     white-space: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+}
+
+.chess__moves-track::-webkit-scrollbar {
+    display: none;
 }
 
 .chess__move-pair {
@@ -7187,7 +7280,8 @@ html.no-blur-effect .chat-list__header,
     display: flex;
     flex-direction: column;
     gap: 10px;
-    min-width: 210px;
+    min-width: 245px;
+    max-width: 300px;
     padding: 4px 2px;
     direction: rtl;
 }
@@ -7195,14 +7289,22 @@ html.no-blur-effect .chat-list__header,
 .chess-invite__header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
 }
 
+.chess-invite__header-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
 .chess-invite__icon {
-    width: 38px;
-    height: 38px;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.12);
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -7213,28 +7315,145 @@ html.no-blur-effect .chat-list__header,
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
 }
 
 .chess-invite__title {
     font-size: 14px;
     font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .chess-invite__sub {
-    font-size: 13px;
+    font-size: 12px;
     opacity: 0.85;
+}
+
+.chess-invite__badge {
+    padding: 3px 9px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.chess-invite__badge--live {
+    background: rgba(16, 185, 129, 0.22);
+}
+
+.chess-invite__players {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 16px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.chess-invite__seat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 12px;
+}
+
+.chess-invite__seat--winner {
+    background: color-mix(in srgb, currentColor 11%, transparent);
+    font-weight: 700;
+}
+
+.chess-invite__seat-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.chess-invite__seat-wait {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.chess-invite__seat-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chess-invite__seat-tags {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.chess-invite__piece {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.chess-invite__piece--white {
+    background: #f8fafc;
+    border: 1.5px solid rgba(15, 23, 42, 0.45);
+}
+
+.chess-invite__piece--black {
+    background: #1e293b;
+    border: 1.5px solid rgba(255, 255, 255, 0.55);
+}
+
+.chess-invite__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.chess-invite__stat-pill {
+    padding: 3px 10px;
+    border-radius: 9999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .chess-invite__btn {
     min-height: 40px;
     border-radius: 9999px;
-    border: 1px solid currentColor;
-    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+    background: color-mix(in srgb, currentColor 14%, transparent);
     color: inherit;
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 700;
     font-family: inherit;
     cursor: pointer;
+    transition: transform 0.12s ease, background 0.15s ease;
+}
+
+.chess-invite__btn:hover:not(:disabled) {
+    background: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.chess-invite__btn:active:not(:disabled) {
+    transform: scale(0.98);
 }
 
 .chess-invite__btn:disabled {
@@ -7243,13 +7462,16 @@ html.no-blur-effect .chat-list__header,
 }
 
 .chess-invite__unavailable {
-    font-size: 13px;
-    opacity: 0.75;
+    padding: 7px 10px;
+    border-radius: 12px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    text-align: center;
+    font-size: 12.5px;
+    opacity: 0.8;
 }
 
 
 .chess__body,
-.chess__moves,
 .chess-lobby .profile__content {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
@@ -7277,8 +7499,8 @@ html.no-blur-effect .chat-list__header,
 }
 
 .chess-history__item {
-    padding: 12px 14px;
-    border-radius: 18px;
+    padding: 12px 16px;
+    border-radius: 999px;
 }
 
 .chess-card {
@@ -7319,7 +7541,7 @@ html.no-blur-effect .chat-list__header,
 
 .chess__clock {
     font-size: 16px;
-    border-radius: 14px;
+    border-radius: 999px;
 }
 
 .chess__panel,
