@@ -6,6 +6,7 @@ import { API_BASE_URL } from '../config/api';
 import { validateFileSize } from '../utils/fileUtils';
 import { encryptFileBytesClientSide } from '../utils/e2ee';
 import { saveBlobToCache } from '../utils/mediaCache';
+import { ImageEditorModal } from './ImageEditorModal';
 
 interface FileUploadProps {
     token: string;
@@ -32,6 +33,7 @@ const uploadTasksByChat = new Map<string, UploadTask>();
 export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false, onRegisterUploadFile, onUploadStateChange }: FileUploadProps) {
     const [uploading, setUploading] = useState(false);
     const [pickerMenuOpen, setPickerMenuOpen] = useState(false);
+    const [pendingImageForEditor, setPendingImageForEditor] = useState<File | null>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
     const audioInputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +137,13 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
         }
 
         setPickerMenuOpen(false);
+
+        // Intercept image files and open ImageEditorModal (for drag&drop, file picker, or paste)
+        if (file.type.startsWith('image/')) {
+            setPendingImageForEditor(file);
+            return;
+        }
+
         uploadFile(file);
     };
 
@@ -480,6 +489,20 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
                 )}
             </AnimatePresence>
             </div>
+
+            {pendingImageForEditor && (
+                <ImageEditorModal
+                    imageFile={pendingImageForEditor}
+                    onSend={(fileToSend) => {
+                        setPendingImageForEditor(null);
+                        uploadFile(fileToSend);
+                    }}
+                    onCancel={() => {
+                        setPendingImageForEditor(null);
+                        resetUpload();
+                    }}
+                />
+            )}
         </>
     );
 }
