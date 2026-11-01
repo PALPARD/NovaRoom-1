@@ -6,6 +6,13 @@ import { ChevronLeft, Hourglass } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import { useChessSocket } from '../../hooks/useChessSocket';
 import type { Chat, ChessColor, ChessEvent, ChessGameView, User } from '../../types';
+import {
+    fetchChessGameCached,
+    getCachedChessGame,
+    isChessGameUnavailable,
+    markChessGameUnavailable,
+    setCachedChessGame,
+} from '../../utils/chessCache';
 import { playChessSound, soundForMove } from '../../utils/chessSounds';
 import { cx } from '../../utils/cx';
 import { toPersianDigits } from '../../utils/format';
@@ -55,24 +62,28 @@ const formatTimeControl = (tc: string): string => {
 };
 
 export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }: ChessGameProps) {
-    const [game, setGame] = useState<ChessGameView | null>(null);
+    const initialCached = getCachedChessGame(gameId);
+    const [game, setGame] = useState<ChessGameView | null>(() => initialCached);
     const [pendingFen, setPendingFen] = useState<string | null>(null);
     const [selected, setSelected] = useState<string | null>(null);
     const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
-    const [skew, setSkew] = useState(0);
+    const [skew, setSkew] = useState(() =>
+        initialCached?.serverNow ? initialCached.serverNow - Date.now() : 0,
+    );
     const [now, setNow] = useState(() => Date.now());
     const [confirmResign, setConfirmResign] = useState(false);
     const [inviteOpen, setInviteOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
-    const [notFound, setNotFound] = useState(false);
-    const soundPlyRef = useRef(-1);
-    const startSoundPlayedRef = useRef(false);
+    const [notFound, setNotFound] = useState<boolean>(() => isChessGameUnavailable(gameId));
+    const soundPlyRef = useRef(typeof initialCached?.ply === 'number' ? initialCached.ply : -1);
+    const startSoundPlayedRef = useRef(Boolean(initialCached && initialCached.status !== 'waiting'));
     const movesEndRef = useRef<HTMLDivElement | null>(null);
 
-    const fetchDetails = useCallback((id: string) => {
-        apiFetch(`/chess/games/${encodeURIComponent(id)}`)
+    const fetchDetails = useCallback((id: string, force = false) => {
+        fetchChessGameCached(id, { force })
             .then((res) => {
                 setGame(res);
+                setNotFound(false);
                 const clientNow = Date.now();
                 setNow(clientNow);
                 setSkew((res.serverNow || clientNow) - clientNow);
@@ -90,7 +101,13 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
     }, []);
 
     useEffect(() => {
-        fetchDetails(gameId);
+        const cached = getCachedChessGame(gameId);
+        if (cached && cached.status === 'finished') {
+            setGame(cached);
+            setNotFound(false);
+            return;
+        }
+        fetchDetails(gameId, Boolean(cached));
     }, [fetchDetails, gameId]);
 
     const myColor: ChessColor = useMemo(() => {
@@ -104,10 +121,14 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
     }, [game, currentUser.chatId]);
 
     const handleState = useCallback((nextGame: ChessGameView, event: ChessEvent | null) => {
-        setGame((prev) => ({
-            ...nextGame,
-            playerInfo: nextGame.playerInfo ?? prev?.playerInfo,
-        }));
+        setGame((prev) => {
+            const merged = {
+                ...nextGame,
+                playerInfo: nextGame.playerInfo ?? prev?.playerInfo,
+            };
+            setCachedChessGame(merged);
+            return merged;
+        });
         setPendingFen(null);
         setSelected(null);
         const clientNow = Date.now();
@@ -121,7 +142,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                 startSoundPlayedRef.current = true;
                 playChessSound('game-start');
             }
-            fetchDetails(gameId);
+            fetchDetails(gameId, true);
         } else if (event?.kind === 'move') {
             if (nextGame.ply > soundPlyRef.current) {
                 soundPlyRef.current = nextGame.ply;
@@ -328,7 +349,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                 body: JSON.stringify({ targetChatId }),
             });
             notify({ message: 'دعوت ارسال شد.', type: 'success' });
-            fetchDetails(gameId);
+            fetchDetails(gameId, true);
         } catch {
             notify({ message: 'ارسال دعوت انجام نشد.', type: 'error' });
         }
@@ -358,6 +379,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
         } catch {
             void 0;
         }
+        markChessGameUnavailable(gameId);
         onExitGame();
     };
 

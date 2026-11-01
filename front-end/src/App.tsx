@@ -20,6 +20,7 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { notify } from './utils/notificationBus';
 import { decryptBioClientSide, decryptMessageClientSide, encryptChatTextClientSide } from './utils/e2ee';
 import { clearCachedTextValues, clearChatSnapshots, getChatSnapshot, saveChatSnapshot } from './utils/mediaCache';
+import { clearChessCache } from './utils/chessCache';
 import { useDarkMode } from './hooks/useDarkMode';
 import { BottomNavbar } from './components/BottomNavbar';
 import { ChessScreen } from './components/chess/ChessScreen';
@@ -702,6 +703,7 @@ export function App() {
             setUploadingUserIdsByChat({});
             void clearChatSnapshots();
             void clearCachedTextValues();
+            clearChessCache();
             navigate('/login', { replace: true });
         };
 

@@ -3,6 +3,13 @@ import { motion } from 'framer-motion';
 import { Share2 } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import type { Chat, ChessColor, ChessGameView, User } from '../../types';
+import {
+    getChessLobbySnapshot,
+    isChessLobbyFresh,
+    seedChessGames,
+    setCachedChessGame,
+    setChessLobbySnapshot,
+} from '../../utils/chessCache';
 import { cx } from '../../utils/cx';
 import { toPersianDigits } from '../../utils/format';
 import { notify } from '../../utils/notificationBus';
@@ -61,11 +68,12 @@ const REASON_LABELS: Record<string, string> = {
 const formatTimeControl = (tc: string) => (tc === 'unlimited' ? 'بدون زمان' : toPersianDigits(tc));
 
 export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
-    const [currentGame, setCurrentGame] = useState<ChessGameView | null>(null);
-    const [history, setHistory] = useState<ChessGameView[]>([]);
-    const [hasMore, setHasMore] = useState(false);
+    const initialSnapshot = getChessLobbySnapshot();
+    const [currentGame, setCurrentGame] = useState<ChessGameView | null>(() => initialSnapshot?.currentGame ?? null);
+    const [history, setHistory] = useState<ChessGameView[]>(() => initialSnapshot?.history ?? []);
+    const [hasMore, setHasMore] = useState<boolean>(() => initialSnapshot?.hasMore ?? false);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState<boolean>(() => !initialSnapshot);
     const [timeControl, setTimeControl] = useState<string>('3+2');
     const [color, setColor] = useState<'white' | 'black' | 'random'>('random');
     const [creating, setCreating] = useState(false);
@@ -73,15 +81,39 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const loadingMoreRef = useRef(false);
 
-    const loadData = async () => {
+    const loadData = async (force = false) => {
+        if (!force && isChessLobbyFresh()) {
+            setLoading(false);
+            return;
+        }
         try {
+            const snap = getChessLobbySnapshot();
+            if (snap && !force && snap.currentGame?.status === 'waiting') {
+                const curRes = await apiFetch('/chess/games/current').catch(() => null);
+                const nextCurrent: ChessGameView | null = curRes?.game || null;
+                setCurrentGame(nextCurrent);
+                setChessLobbySnapshot({
+                    currentGame: nextCurrent,
+                    history: snap.history,
+                    hasMore: snap.hasMore,
+                });
+                return;
+            }
             const [curRes, histRes] = await Promise.all([
                 apiFetch('/chess/games/current').catch(() => null),
                 apiFetch(`/chess/games/history?skip=0&limit=${HISTORY_PAGE_SIZE}`).catch(() => null),
             ]);
-            setCurrentGame(curRes?.game || null);
-            setHistory(Array.isArray(histRes?.games) ? histRes.games : []);
-            setHasMore(Boolean(histRes?.hasMore));
+            const nextCurrent: ChessGameView | null = curRes?.game || null;
+            const nextHistory: ChessGameView[] = Array.isArray(histRes?.games) ? histRes.games : [];
+            const nextHasMore = Boolean(histRes?.hasMore);
+            setCurrentGame(nextCurrent);
+            setHistory(nextHistory);
+            setHasMore(nextHasMore);
+            setChessLobbySnapshot({
+                currentGame: nextCurrent,
+                history: nextHistory,
+                hasMore: nextHasMore,
+            });
         } finally {
             setLoading(false);
         }
@@ -100,11 +132,20 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                 `/chess/games/history?skip=${history.length}&limit=${HISTORY_PAGE_SIZE}`,
             );
             const nextGames: ChessGameView[] = Array.isArray(res?.games) ? res.games : [];
+            seedChessGames(nextGames);
+            const nextHasMore = Boolean(res?.hasMore);
             setHistory((prev) => {
                 const seen = new Set(prev.map((g) => g.id));
-                return [...prev, ...nextGames.filter((g) => !seen.has(g.id))];
+                const merged = [...prev, ...nextGames.filter((g) => !seen.has(g.id))];
+                const snap = getChessLobbySnapshot();
+                setChessLobbySnapshot({
+                    currentGame: snap?.currentGame ?? null,
+                    history: merged,
+                    hasMore: nextHasMore,
+                });
+                return merged;
             });
-            setHasMore(Boolean(res?.hasMore));
+            setHasMore(nextHasMore);
         } catch {
             setHasMore(false);
         } finally {
@@ -148,13 +189,14 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                 body: JSON.stringify({ timeControl, color }),
             });
             if (res?.game?.id) {
+                setCachedChessGame(res.game);
                 onOpenGame(res.game.id);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : '';
             if (msg === 'already_in_game') {
                 notify({ message: 'شما در حال حاضر یک بازی فعال دارید', type: 'info' });
-                await loadData();
+                await loadData(true);
             } else {
                 notify({ message: 'ساخت بازی انجام نشد.', type: 'error' });
             }

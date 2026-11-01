@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../../config/api';
 import type { ChessGameView, ChessInvite } from '../../types';
+import {
+    fetchChessGameCached,
+    getCachedChessGame,
+    isChessGameUnavailable,
+    markChessGameUnavailable,
+    setCachedChessGame,
+    type CachedChessGame,
+} from '../../utils/chessCache';
 import { toPersianDigits } from '../../utils/format';
 import { notify } from '../../utils/notificationBus';
 import { PlumpyChessIcon } from '../BottomNavbar';
@@ -25,15 +33,26 @@ const resultLabel = (game: ChessGameView): string => {
 
 export function ChessInviteCard({ invite, isMine }: ChessInviteCardProps) {
     const navigate = useNavigate();
-    const [game, setGame] = useState<(ChessGameView & { me?: string | null }) | null>(null);
-    const [unavailable, setUnavailable] = useState(false);
+    const [game, setGame] = useState<CachedChessGame | null>(() => getCachedChessGame(invite.gameId));
+    const [unavailable, setUnavailable] = useState<boolean>(() => isChessGameUnavailable(invite.gameId));
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
+        const cached = getCachedChessGame(invite.gameId);
+        const alreadyUnavailable = isChessGameUnavailable(invite.gameId);
+        setGame(cached);
+        setUnavailable(alreadyUnavailable);
+
+        if (alreadyUnavailable) return;
+        if (cached && cached.status !== 'waiting') return;
+
         let cancelled = false;
-        apiFetch(`/chess/games/${encodeURIComponent(invite.gameId)}`)
+        fetchChessGameCached(invite.gameId, { force: Boolean(cached) })
             .then((data) => {
-                if (!cancelled) setGame(data);
+                if (!cancelled) {
+                    setGame(data);
+                    setUnavailable(false);
+                }
             })
             .catch(() => {
                 if (!cancelled) setUnavailable(true);
@@ -52,12 +71,16 @@ export function ChessInviteCard({ invite, isMine }: ChessInviteCardProps) {
             return;
         }
         if (game.status !== 'waiting') {
+            markChessGameUnavailable(invite.gameId);
             setUnavailable(true);
             return;
         }
         setBusy(true);
         try {
-            await apiFetch(`/chess/games/${encodeURIComponent(invite.gameId)}/accept`, { method: 'POST' });
+            const res = await apiFetch(`/chess/games/${encodeURIComponent(invite.gameId)}/accept`, { method: 'POST' });
+            if (res?.game) {
+                setCachedChessGame({ ...res.game, me: res.game.players?.black ? 'black' : 'white' });
+            }
             navigate(`/chess/game/${encodeURIComponent(invite.gameId)}`);
         } catch (err: unknown) {
             const code = err instanceof Error ? err.message : '';
@@ -65,7 +88,10 @@ export function ChessInviteCard({ invite, isMine }: ChessInviteCardProps) {
                 ? 'شما در حال حاضر یک بازی فعال دارید'
                 : 'این بازی دیگر در دسترس نیست';
             notify({ message: msg, type: 'error' });
-            if (code !== 'already_in_game') setUnavailable(true);
+            if (code !== 'already_in_game') {
+                markChessGameUnavailable(invite.gameId);
+                setUnavailable(true);
+            }
         } finally {
             setBusy(false);
         }
