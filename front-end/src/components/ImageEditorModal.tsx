@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Crop, Paintbrush, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Crop, Paintbrush, RotateCcw, RotateCw, Send, Trash2, X } from 'lucide-react';
 import { toPersianDigits } from '../utils/format';
 import { triggerHaptic } from '../utils/haptics';
 import './ImageEditorModal.css';
 
 export interface ImageEditorModalProps {
     imageFile: File;
-    onSend: (fileToSend: File) => void;
+    initialStrokes?: Stroke[];
+    initialRedoStack?: Stroke[];
+    initialCropRect?: CropRect;
+    onSend: (
+        fileToSend: File,
+        isEdited: boolean,
+        editorState: {
+            strokes: Stroke[];
+            redoStack: Stroke[];
+            cropRect: CropRect;
+        }
+    ) => void;
     onCancel: () => void;
 }
 
@@ -39,7 +50,14 @@ const THICKNESS_PRESETS = [
     { label: 'ضخیم', value: 22, dotSize: 18 },
 ];
 
-export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorModalProps) {
+export function ImageEditorModal({
+    imageFile,
+    initialStrokes,
+    initialRedoStack,
+    initialCropRect,
+    onSend,
+    onCancel,
+}: ImageEditorModalProps) {
     const [imageLoaded, setImageLoaded] = useState(false);
     const [imgElement, setImgElement] = useState<HTMLImageElement | null>(null);
     const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -50,13 +68,14 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
     const [selectedThickness, setSelectedThickness] = useState<number>(10);
 
     // Drawing state
-    const [strokes, setStrokes] = useState<Stroke[]>([]);
+    const [strokes, setStrokes] = useState<Stroke[]>(initialStrokes || []);
+    const [redoStack, setRedoStack] = useState<Stroke[]>(initialRedoStack || []);
     const currentStrokeRef = useRef<Stroke | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const stageRef = useRef<HTMLDivElement | null>(null);
 
     // Crop state in natural pixels
-    const [cropRect, setCropRect] = useState<CropRect>({ x: 0, y: 0, width: 0, height: 0 });
+    const [cropRect, setCropRect] = useState<CropRect>(initialCropRect || { x: 0, y: 0, width: 0, height: 0 });
     const isCropped =
         imgNaturalSize.width > 0 &&
         (Math.round(cropRect.x) > 0 ||
@@ -84,7 +103,11 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
             const nh = img.naturalHeight;
             setImgElement(img);
             setImgNaturalSize({ width: nw, height: nh });
-            setCropRect({ x: 0, y: 0, width: nw, height: nh });
+            if (initialCropRect && initialCropRect.width > 0 && initialCropRect.height > 0) {
+                setCropRect(initialCropRect);
+            } else {
+                setCropRect({ x: 0, y: 0, width: nw, height: nh });
+            }
             setImageLoaded(true);
         };
         img.src = objectUrl;
@@ -92,7 +115,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         return () => {
             URL.revokeObjectURL(objectUrl);
         };
-    }, [imageFile]);
+    }, [imageFile, initialCropRect]);
 
     // Redraw Canvas (Image + Strokes, clipped to crop area if cropped)
     const redrawCanvas = useCallback(() => {
@@ -229,6 +252,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
 
         if (finishedStroke.points.length > 0) {
             setStrokes((prev) => [...prev, finishedStroke]);
+            setRedoStack([]); // new stroke clears redo history
         }
     };
 
@@ -236,7 +260,18 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
     const handleUndo = () => {
         if (strokes.length === 0) return;
         triggerHaptic();
+        const last = strokes[strokes.length - 1];
         setStrokes((prev) => prev.slice(0, -1));
+        setRedoStack((prev) => [...prev, last]);
+    };
+
+    // Redo last undone stroke
+    const handleRedo = () => {
+        if (redoStack.length === 0) return;
+        triggerHaptic();
+        const toRestore = redoStack[redoStack.length - 1];
+        setRedoStack((prev) => prev.slice(0, -1));
+        setStrokes((prev) => [...prev, toRestore]);
     };
 
     // Clear all strokes
@@ -244,6 +279,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         if (strokes.length === 0) return;
         triggerHaptic();
         setStrokes([]);
+        setRedoStack([]);
     };
 
     // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES)
@@ -327,11 +363,17 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         window.addEventListener('pointerup', onPointerUp);
     };
 
-    // Keyboard Shortcuts: Esc to cancel, Ctrl+Z to undo
+    // Keyboard Shortcuts: Esc to cancel, Ctrl+Z to undo, Ctrl+Y / Ctrl+Shift+Z to redo
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 onCancel();
+            } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+                e.preventDefault();
+                handleRedo();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+                e.preventDefault();
+                handleRedo();
             } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
                 e.preventDefault();
                 handleUndo();
@@ -339,22 +381,30 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [strokes, onCancel]);
+    }, [strokes, redoStack, onCancel]);
 
     // Handle Send Action
     const handleSend = async () => {
         triggerHaptic();
 
-        // 1. If not drawn AND not cropped, send raw file directly (preserves 100% original quality)
         const hasDrawn = strokes.length > 0;
-        if (!hasDrawn && !isCropped) {
-            onSend(imageFile);
+        const isEdited = hasDrawn || isCropped;
+
+        const currentEditorState = {
+            strokes,
+            redoStack,
+            cropRect,
+        };
+
+        // 1. If not drawn AND not cropped, send raw file directly (preserves 100% original quality)
+        if (!isEdited) {
+            onSend(imageFile, false, currentEditorState);
             return;
         }
 
         // 2. Otherwise, export cropped & drawn canvas
         if (!imgElement || !canvasRef.current) {
-            onSend(imageFile);
+            onSend(imageFile, isEdited, currentEditorState);
             return;
         }
 
@@ -368,7 +418,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         exportCanvas.height = targetH;
         const ctx = exportCanvas.getContext('2d');
         if (!ctx) {
-            onSend(imageFile);
+            onSend(imageFile, isEdited, currentEditorState);
             return;
         }
 
@@ -378,7 +428,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         exportCanvas.toBlob(
             (blob) => {
                 if (!blob) {
-                    onSend(imageFile);
+                    onSend(imageFile, isEdited, currentEditorState);
                     return;
                 }
                 const cleanName = imageFile.name.replace(/\.[^/.]+$/, '') + '.jpg';
@@ -386,7 +436,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                     type: 'image/jpeg',
                     lastModified: Date.now(),
                 });
-                onSend(finalFile);
+                onSend(finalFile, true, currentEditorState);
             },
             'image/jpeg',
             0.92,
@@ -650,9 +700,19 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                             className="image-editor-icon-btn"
                             onClick={handleUndo}
                             disabled={strokes.length === 0}
-                            title="واگرد حرکت آخر (Ctrl+Z)"
+                            title="واگرد به عقب (Ctrl+Z)"
                         >
                             <RotateCcw size={18} />
+                        </button>
+
+                        {/* Redo */}
+                        <button
+                            className="image-editor-icon-btn"
+                            onClick={handleRedo}
+                            disabled={redoStack.length === 0}
+                            title="واگرد به جلو (Ctrl+Y)"
+                        >
+                            <RotateCw size={18} />
                         </button>
 
                         {/* Clear All Drawing */}
