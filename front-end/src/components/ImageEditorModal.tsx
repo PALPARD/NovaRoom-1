@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Crop, Paintbrush, RotateCcw, Send, Trash2, X, RefreshCw } from 'lucide-react';
+import { Crop, Paintbrush, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { toPersianDigits } from '../utils/format';
 import { triggerHaptic } from '../utils/haptics';
 import './ImageEditorModal.css';
@@ -24,6 +24,7 @@ type CropRect = {
 
 const COLOR_PALETTE = [
     { label: 'سفید', value: '#ffffff' },
+    { label: 'فیروزه‌ای', value: '#06b6d4' },
     { label: 'زرد', value: '#facc15' },
     { label: 'قرمز', value: '#ef4444' },
     { label: 'سبز', value: '#22c55e' },
@@ -93,7 +94,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         };
     }, [imageFile]);
 
-    // Redraw Canvas (Image + Strokes)
+    // Redraw Canvas (Image + Strokes, clipped to crop area if cropped)
     const redrawCanvas = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas || !imgElement) return;
@@ -110,6 +111,14 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
 
         ctx.clearRect(0, 0, w, h);
         ctx.drawImage(imgElement, 0, 0, w, h);
+
+        // If cropped, clip strokes to cropRect so drawing doesn't bleed outside the user's crop frame
+        ctx.save();
+        if (isCropped && cropRect.width > 0 && cropRect.height > 0) {
+            ctx.beginPath();
+            ctx.rect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
+            ctx.clip();
+        }
 
         // Render strokes
         ctx.lineCap = 'round';
@@ -138,12 +147,14 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
             }
         }
 
+        ctx.restore();
+
         // Update display dimensions for crop overlay alignment
         const rect = canvas.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
             setCanvasDisplaySize({ width: rect.width, height: rect.height });
         }
-    }, [imgElement, imgNaturalSize, strokes]);
+    }, [imgElement, imgNaturalSize, strokes, isCropped, cropRect]);
 
     useEffect(() => {
         if (imageLoaded) {
@@ -179,7 +190,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         };
     };
 
-    // Drawing pointer handlers
+    // Drawing pointer handlers (always active and unobstructed in draw mode)
     const handleDrawingPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
         if (activeTool !== 'draw') return;
         e.preventDefault();
@@ -233,24 +244,6 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
         if (strokes.length === 0) return;
         triggerHaptic();
         setStrokes([]);
-    };
-
-    // Reset crop to 100% full image
-    const handleResetCrop = () => {
-        triggerHaptic();
-        setCropRect({
-            x: 0,
-            y: 0,
-            width: imgNaturalSize.width,
-            height: imgNaturalSize.height,
-        });
-    };
-
-    // Full Reset (Crop + Strokes)
-    const handleFullReset = () => {
-        triggerHaptic();
-        setStrokes([]);
-        handleResetCrop();
     };
 
     // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES)
@@ -436,15 +429,6 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                         )}
                     </div>
                 </div>
-
-                <div className="image-editor-header__left">
-                    {(strokes.length > 0 || isCropped) && (
-                        <button className="image-editor-btn-ghost" onClick={handleFullReset} title="بازنشانی تمام تغییرات">
-                            <RefreshCw size={14} />
-                            <span>بازنشانی</span>
-                        </button>
-                    )}
-                </div>
             </div>
 
             {/* Canvas Viewport */}
@@ -459,13 +443,22 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                         onPointerCancel={handleDrawingPointerUp}
                     />
 
-                    {/* CROP OVERLAY (Always active when in crop mode or cropped) */}
+                    {/* CROP OVERLAY (Only interactive when activeTool === 'crop', purely visual & non-blocking otherwise) */}
                     {(activeTool === 'crop' || isCropped) && canvasDisplaySize.width > 0 && (
-                        <div className="image-editor-crop-overlay">
+                        <div
+                            className="image-editor-crop-overlay"
+                            style={{ pointerEvents: activeTool === 'crop' ? 'auto' : 'none' }}
+                        >
                             {/* Dark Shading Outside Crop Box */}
                             <div
                                 className="image-editor-crop-shade"
-                                style={{ top: 0, left: 0, right: 0, height: `${screenCrop.top}px` }}
+                                style={{
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    height: `${screenCrop.top}px`,
+                                    pointerEvents: activeTool === 'crop' ? 'auto' : 'none',
+                                }}
                             />
                             <div
                                 className="image-editor-crop-shade"
@@ -474,6 +467,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                                     left: 0,
                                     right: 0,
                                     bottom: 0,
+                                    pointerEvents: activeTool === 'crop' ? 'auto' : 'none',
                                 }}
                             />
                             <div
@@ -483,6 +477,7 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                                     height: `${screenCrop.height}px`,
                                     left: 0,
                                     width: `${screenCrop.left}px`,
+                                    pointerEvents: activeTool === 'crop' ? 'auto' : 'none',
                                 }}
                             />
                             <div
@@ -492,17 +487,19 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                                     height: `${screenCrop.height}px`,
                                     left: `${screenCrop.left + screenCrop.width}px`,
                                     right: 0,
+                                    pointerEvents: activeTool === 'crop' ? 'auto' : 'none',
                                 }}
                             />
 
-                            {/* The Active Crop Box */}
+                            {/* The Crop Box */}
                             <div
-                                className="image-editor-crop-box"
+                                className={`image-editor-crop-box ${activeTool !== 'crop' ? 'image-editor-crop-box--passive' : ''}`}
                                 style={{
                                     left: `${screenCrop.left}px`,
                                     top: `${screenCrop.top}px`,
                                     width: `${screenCrop.width}px`,
                                     height: `${screenCrop.height}px`,
+                                    pointerEvents: activeTool === 'crop' ? 'auto' : 'none',
                                 }}
                                 onPointerDown={(e) => activeTool === 'crop' && handleCropPointerDown('move', e)}
                             >
@@ -617,11 +614,6 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
                             <span className="image-editor-crop-tag">
                                 {toPersianDigits(Math.round(cropRect.width))} × {toPersianDigits(Math.round(cropRect.height))}
                             </span>
-                            {isCropped && (
-                                <button className="image-editor-btn-ghost" onClick={handleResetCrop}>
-                                    <span>ریست کادر</span>
-                                </button>
-                            )}
                         </div>
                     )}
 
@@ -678,13 +670,19 @@ export function ImageEditorModal({ imageFile, onSend, onCancel }: ImageEditorMod
 
             {/* Bottom Action Bar */}
             <div className="image-editor-bottom-bar">
-                <button className="image-editor-cancel-btn" onClick={onCancel}>
-                    انصراف
-                </button>
-                <button className="image-editor-send-btn" onClick={handleSend}>
-                    <span>ارسال</span>
-                    <Send size={16} />
-                </button>
+                <div className="image-editor-actions-group">
+                    {/* In RTL: First is on the RIGHT */}
+                    <button className="image-editor-send-btn" onClick={handleSend} title="ارسال عکس">
+                        <span>ارسال</span>
+                        <Send size={16} />
+                    </button>
+
+                    {/* In RTL: Second is on the LEFT of Send */}
+                    <button className="image-editor-cancel-btn" onClick={onCancel} title="انصراف و بستن">
+                        <X size={16} />
+                        <span>انصراف</span>
+                    </button>
+                </div>
             </div>
         </div>
     );

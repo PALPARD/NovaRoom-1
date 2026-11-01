@@ -16,8 +16,12 @@
     -webkit-user-select: none;
     overflow: hidden;
     direction: rtl;
-    font-family: 'Nunito', 'Vazir', 'AppleEmoji', sans-serif;
+    font-family: 'Vazir', 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif !important;
     animation: imageEditorFadeIn 0.18s ease-out;
+}
+
+.image-editor-overlay * {
+    font-family: 'Vazir', 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
 @keyframes imageEditorFadeIn {
@@ -44,8 +48,7 @@
     flex-shrink: 0;
 }
 
-.image-editor-header__right,
-.image-editor-header__left {
+.image-editor-header__right {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -62,7 +65,7 @@
     font-size: 14px;
     font-weight: 700;
     color: #f3f4f6;
-    max-width: 240px;
+    max-width: 260px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -72,31 +75,6 @@
     font-size: 12px;
     color: #9ca3af;
     direction: ltr;
-}
-
-.image-editor-btn-ghost {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.06);
-    color: #d1d5db;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.image-editor-btn-ghost:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
-}
-
-.image-editor-btn-ghost:disabled {
-    opacity: 0.35;
-    pointer-events: none;
 }
 
 /* Close & Top Action Buttons */
@@ -153,7 +131,7 @@
 .image-editor-canvas-stage {
     position: relative;
     max-width: 100%;
-    max-height: calc(100vh - 220px);
+    max-height: calc(100vh - 210px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -166,7 +144,7 @@
 .image-editor-canvas {
     display: block;
     max-width: 100%;
-    max-height: calc(100vh - 220px);
+    max-height: calc(100vh - 210px);
     width: auto;
     height: auto;
     object-fit: contain;
@@ -190,15 +168,19 @@
 .image-editor-crop-shade {
     position: absolute;
     background: rgba(0, 0, 0, 0.65);
-    pointer-events: auto;
+    transition: background 0.15s ease;
 }
 
 /* The Active Crop Box */
 .image-editor-crop-box {
     position: absolute;
     box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.95);
-    pointer-events: auto;
     cursor: move;
+}
+
+.image-editor-crop-box--passive {
+    cursor: default;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65);
 }
 
 /* Rule of Thirds Grid */
@@ -439,14 +421,14 @@
     background: #181d26;
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 999px;
-    padding: 6px 14px;
+    padding: 6px 16px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
     animation: imageEditorSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .image-editor-crop-tag {
-    font-size: 12px;
-    color: #9ca3af;
+    font-size: 13px;
+    color: #e5e7eb;
     direction: ltr;
     font-weight: 600;
 }
@@ -457,30 +439,20 @@
     padding: 0 24px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center; /* Buttons grouped together in the center */
     background: #0e1117;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 20;
     flex-shrink: 0;
 }
 
-.image-editor-cancel-btn {
-    padding: 9px 22px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(255, 255, 255, 0.06);
-    color: #e5e7eb;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s ease;
+.image-editor-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 14px;
 }
 
-.image-editor-cancel-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #ffffff;
-}
-
+/* Primary Send Button (On Right in RTL) */
 .image-editor-send-btn {
     display: flex;
     align-items: center;
@@ -507,6 +479,34 @@
     transform: scale(0.96);
 }
 
+/* Red / Danger Cancel Button (On Left in RTL) */
+.image-editor-cancel-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    border-radius: 999px;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.image-editor-cancel-btn:hover {
+    background: rgba(239, 68, 68, 0.22);
+    border-color: rgba(239, 68, 68, 0.65);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.25);
+}
+
+.image-editor-cancel-btn:active {
+    transform: scale(0.96);
+}
+
 /* Responsive */
 @media (max-width: 640px) {
     .image-editor-header {
@@ -528,5 +528,10 @@
     .image-editor-color-circle {
         width: 20px;
         height: 20px;
+    }
+    .image-editor-send-btn,
+    .image-editor-cancel-btn {
+        padding: 8px 18px;
+        font-size: 13px;
     }
 }
