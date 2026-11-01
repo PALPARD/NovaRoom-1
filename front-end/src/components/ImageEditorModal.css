@@ -6,15 +6,19 @@
     left: 0 !important;
     right: 0 !important;
     bottom: 0 !important;
+    width: 100% !important;
     width: 100vw !important;
-    height: 100vh !important;
+    height: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
     z-index: 999999 !important;
     display: flex;
     flex-direction: column;
     background: #090b0e !important; /* 100% OPAQUE - completely covers chat & navbars */
-    user-select: none;
-    -webkit-user-select: none;
-    overflow: hidden;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    overflow: hidden !important;
+    touch-action: none !important;
     direction: rtl;
     font-family: 'Vazir', 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif !important;
     animation: imageEditorFadeIn 0.18s ease-out;
@@ -37,8 +41,8 @@
 
 /* Header */
 .image-editor-header {
-    height: 56px;
-    padding: 0 18px;
+    height: 54px;
+    padding: 0 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -72,28 +76,30 @@
 }
 
 .image-editor-header__meta {
-    font-size: 12px;
-    color: #9ca3af;
-    direction: ltr;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
 }
 
-/* Close & Top Action Buttons */
+/* Icon Buttons */
 .image-editor-icon-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 36px;
+    height: 36px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.06);
     color: #e5e7eb;
     cursor: pointer;
     transition: all 0.15s ease;
+    padding: 0;
+    touch-action: manipulation;
 }
 
 .image-editor-icon-btn:hover {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
     color: #ffffff;
     transform: scale(1.04);
 }
@@ -123,33 +129,37 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 12px 16px;
+    padding: 10px 14px;
     overflow: hidden;
+    touch-action: none !important;
 }
 
 /* Canvas & Crop Container */
 .image-editor-canvas-stage {
     position: relative;
     max-width: 100%;
-    max-height: calc(100vh - 210px);
+    max-height: calc(100dvh - 190px);
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85);
     border-radius: 10px;
     overflow: hidden;
-    touch-action: none;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
 .image-editor-canvas {
     display: block;
     max-width: 100%;
-    max-height: calc(100vh - 210px);
+    max-height: calc(100dvh - 190px);
     width: auto;
     height: auto;
     object-fit: contain;
-    user-select: none;
-    -webkit-user-select: none;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    touch-action: none !important; /* CRITICAL FOR MOBILE GESTURES! */
 }
 
 .image-editor-canvas--drawable {
@@ -162,13 +172,14 @@
     inset: 0;
     pointer-events: none;
     z-index: 15;
+    touch-action: none !important;
 }
 
 /* Dark Shading outside crop box */
 .image-editor-crop-shade {
     position: absolute;
     background: rgba(0, 0, 0, 0.65);
-    transition: background 0.15s ease;
+    touch-action: none !important;
 }
 
 /* The Active Crop Box */
@@ -176,10 +187,10 @@
     position: absolute;
     box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.95);
     cursor: move;
+    touch-action: none !important;
 }
 
 .image-editor-crop-box--passive {
-    cursor: default;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65);
 }
 
@@ -189,115 +200,143 @@
 .image-editor-crop-grid-v1,
 .image-editor-crop-grid-v2 {
     position: absolute;
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.28);
     pointer-events: none;
 }
 
-.image-editor-crop-grid-h1 { top: 33.33%; left: 0; right: 0; height: 1px; }
-.image-editor-crop-grid-h2 { top: 66.66%; left: 0; right: 0; height: 1px; }
-.image-editor-crop-grid-v1 { left: 33.33%; top: 0; bottom: 0; width: 1px; }
-.image-editor-crop-grid-v2 { left: 66.66%; top: 0; bottom: 0; width: 1px; }
+.image-editor-crop-grid-h1 {
+    top: 33.333%;
+    left: 0;
+    right: 0;
+    height: 1px;
+}
+.image-editor-crop-grid-h2 {
+    top: 66.666%;
+    left: 0;
+    right: 0;
+    height: 1px;
+}
+.image-editor-crop-grid-v1 {
+    left: 33.333%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+}
+.image-editor-crop-grid-v2 {
+    left: 66.666%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+}
 
-/* Crop Handles: 4 Edges */
+/* Edge handles: Top, Bottom, Left, Right with large touch hit zones */
 .image-editor-crop-edge {
     position: absolute;
     pointer-events: auto;
     z-index: 25;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
 .image-editor-crop-edge--top {
-    top: -8px;
-    left: 20px;
-    right: 20px;
-    height: 16px;
+    top: -16px;
+    left: 24px;
+    right: 24px;
+    height: 32px;
     cursor: ns-resize;
 }
 
 .image-editor-crop-edge--bottom {
-    bottom: -8px;
-    left: 20px;
-    right: 20px;
-    height: 16px;
+    bottom: -16px;
+    left: 24px;
+    right: 24px;
+    height: 32px;
     cursor: ns-resize;
 }
 
 .image-editor-crop-edge--left {
-    left: -8px;
-    top: 20px;
-    bottom: 20px;
-    width: 16px;
+    left: -16px;
+    top: 24px;
+    bottom: 24px;
+    width: 32px;
     cursor: ew-resize;
 }
 
 .image-editor-crop-edge--right {
-    right: -8px;
-    top: 20px;
-    bottom: 20px;
-    width: 16px;
+    right: -16px;
+    top: 24px;
+    bottom: 24px;
+    width: 32px;
     cursor: ew-resize;
 }
 
-/* Handle bars on edges */
+/* Handle bars on edges (centered inside the generous hit zone) */
 .image-editor-crop-edge-bar-h {
     position: absolute;
-    top: 6px;
+    top: 14px;
     left: 50%;
     transform: translateX(-50%);
-    width: 36px;
+    width: 38px;
     height: 4px;
     background: #ffffff;
     border-radius: 999px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
 }
 
 .image-editor-crop-edge-bar-v {
     position: absolute;
-    left: 6px;
+    left: 14px;
     top: 50%;
     transform: translateY(-50%);
-    height: 36px;
+    height: 38px;
     width: 4px;
     background: #ffffff;
     border-radius: 999px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
 }
 
-/* Crop Handles: 4 Corners (L-shapes) */
+/* Crop Handles: 4 Corners (L-shapes) with 36px touch hit zone */
 .image-editor-crop-corner {
     position: absolute;
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     pointer-events: auto;
     z-index: 30;
+    touch-action: none !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
 .image-editor-crop-corner--tl {
-    top: -3px;
-    left: -3px;
+    top: -4px;
+    left: -4px;
     border-top: 4px solid #ffffff;
     border-left: 4px solid #ffffff;
     cursor: nwse-resize;
 }
 
 .image-editor-crop-corner--tr {
-    top: -3px;
-    right: -3px;
+    top: -4px;
+    right: -4px;
     border-top: 4px solid #ffffff;
     border-right: 4px solid #ffffff;
     cursor: nesw-resize;
 }
 
 .image-editor-crop-corner--bl {
-    bottom: -3px;
-    left: -3px;
+    bottom: -4px;
+    left: -4px;
     border-bottom: 4px solid #ffffff;
     border-left: 4px solid #ffffff;
     cursor: nesw-resize;
 }
 
 .image-editor-crop-corner--br {
-    bottom: -3px;
-    right: -3px;
+    bottom: -4px;
+    right: -4px;
     border-bottom: 4px solid #ffffff;
     border-right: 4px solid #ffffff;
     cursor: nwse-resize;
@@ -309,38 +348,69 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 8px;
     z-index: 20;
+    max-width: 100%;
 }
 
 .image-editor-tools-dock {
     display: flex;
     align-items: center;
-    gap: 12px;
-    background: #141820;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    gap: 10px;
+    background: #12161f;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 999px;
-    padding: 6px 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 6px 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
-/* Drawing Sub-dock (Colors & Thickness) */
+.image-editor-divider {
+    width: 1px;
+    height: 18px;
+    background: rgba(255, 255, 255, 0.15);
+    margin: 0 2px;
+}
+
+/* Crop Controls Dock */
+.image-editor-crop-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 12px;
+    background: rgba(18, 22, 31, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.image-editor-crop-tag {
+    font-size: 12px;
+    font-weight: 600;
+    color: #e5e7eb;
+    letter-spacing: 0.5px;
+}
+
+/* Drawing Controls Dock */
 .image-editor-draw-controls {
     display: flex;
     align-items: center;
     gap: 12px;
-    background: #181d26;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 999px;
     padding: 6px 14px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
-    animation: imageEditorSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    background: rgba(18, 22, 31, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    animation: imageEditorSlideUp 0.18s ease-out;
 }
 
 @keyframes imageEditorSlideUp {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(6px);
     }
     to {
         opacity: 1;
@@ -355,30 +425,22 @@
 }
 
 .image-editor-color-circle {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: 999px;
-    border: 2px solid transparent;
     cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
-    flex-shrink: 0;
+    touch-action: manipulation;
 }
 
 .image-editor-color-circle:hover {
-    transform: scale(1.18);
+    transform: scale(1.15);
 }
 
 .image-editor-color-circle--selected {
-    transform: scale(1.25);
-    border-color: #ffffff;
-    box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
-}
-
-.image-editor-divider {
-    width: 1px;
-    height: 22px;
-    background: rgba(255, 255, 255, 0.16);
-    flex-shrink: 0;
+    transform: scale(1.22);
+    box-shadow: 0 0 0 2.5px #ffffff, 0 0 10px rgba(255, 255, 255, 0.45);
 }
 
 .image-editor-thicknesses {
@@ -388,58 +450,41 @@
 }
 
 .image-editor-thickness-btn {
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     background: transparent;
-    border: 1px solid transparent;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition: all 0.15s ease;
+    padding: 0;
+    touch-action: manipulation;
 }
 
 .image-editor-thickness-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .image-editor-thickness-btn--selected {
-    background: rgba(255, 255, 255, 0.18);
-    border-color: rgba(255, 255, 255, 0.3);
+    border-color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.18) !important;
 }
 
 .image-editor-thickness-dot {
     border-radius: 999px;
 }
 
-/* Crop Sub-dock */
-.image-editor-crop-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: #181d26;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 999px;
-    padding: 6px 16px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
-    animation: imageEditorSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.image-editor-crop-tag {
-    font-size: 13px;
-    color: #e5e7eb;
-    direction: ltr;
-    font-weight: 600;
-}
-
 /* Bottom Action Bar */
 .image-editor-bottom-bar {
-    height: 68px;
-    padding: 0 24px;
+    height: 64px;
+    padding: 0 20px;
     display: flex;
     align-items: center;
-    justify-content: center; /* Buttons grouped together in the center */
+    justify-content: center;
     background: #0e1117;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 20;
@@ -449,15 +494,16 @@
 .image-editor-actions-group {
     display: flex;
     align-items: center;
-    gap: 14px;
+    justify-content: center;
+    gap: 12px;
 }
 
-/* Primary Send Button (On Right in RTL) */
+/* Accent Send Button (On Right in RTL) */
 .image-editor-send-btn {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 26px;
+    padding: 10px 24px;
     border-radius: 999px;
     border: none;
     background: var(--accent-primary, #2563eb);
@@ -465,8 +511,9 @@
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 4px 18px color-mix(in srgb, var(--accent-primary, #2563eb) 50%, transparent);
-    transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all 0.18s ease;
+    box-shadow: 0 4px 18px color-mix(in srgb, var(--accent-primary, #2563eb) 45%, transparent);
+    touch-action: manipulation;
 }
 
 .image-editor-send-btn:hover {
@@ -493,6 +540,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: all 0.18s ease;
+    touch-action: manipulation;
 }
 
 .image-editor-cancel-btn:hover {
@@ -507,31 +555,52 @@
     transform: scale(0.96);
 }
 
-/* Responsive */
+/* Responsive for Mobile Devices (iPhone, Android) */
 @media (max-width: 640px) {
     .image-editor-header {
-        height: 50px;
-        padding: 0 12px;
+        height: 48px;
+        padding: 0 10px;
+    }
+    .image-editor-header__title {
+        max-width: 170px;
+        font-size: 13px;
+    }
+    .image-editor-body {
+        padding: 4px 8px;
+    }
+    .image-editor-canvas-stage {
+        max-height: calc(100dvh - 180px);
+        max-width: calc(100vw - 16px);
+    }
+    .image-editor-canvas {
+        max-height: calc(100dvh - 180px);
     }
     .image-editor-bottom-bar {
-        height: 60px;
-        padding: 0 14px;
+        height: 56px;
+        padding: 0 10px;
     }
     .image-editor-tools-dock {
-        padding: 4px 10px;
-        gap: 8px;
+        padding: 4px 8px;
+        gap: 6px;
+    }
+    .image-editor-icon-btn {
+        width: 32px;
+        height: 32px;
     }
     .image-editor-draw-controls {
-        padding: 5px 10px;
-        gap: 8px;
+        padding: 4px 8px;
+        gap: 6px;
+        max-width: calc(100vw - 20px);
+        overflow-x: auto;
     }
     .image-editor-color-circle {
-        width: 20px;
-        height: 20px;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
     }
     .image-editor-send-btn,
     .image-editor-cancel-btn {
-        padding: 8px 18px;
+        padding: 7px 16px;
         font-size: 13px;
     }
 }

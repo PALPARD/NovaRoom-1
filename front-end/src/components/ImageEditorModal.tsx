@@ -104,6 +104,7 @@ export function ImageEditorModal({
     const currentStrokeRef = useRef<Stroke | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const stageRef = useRef<HTMLDivElement | null>(null);
+    const animFrameRef = useRef<number | null>(null);
 
     // Crop state in natural pixels
     const [cropRect, setCropRect] = useState<CropRect>(initialCropRect || { x: 0, y: 0, width: 0, height: 0 });
@@ -116,7 +117,7 @@ export function ImageEditorModal({
 
     // Crop dragging state
     const cropDragRef = useRef<{
-        handle: string; // 'top' | 'bottom' | 'left' | 'right' | 'tl' | 'tr' | 'bl' | 'br' | 'move'
+        handle: string;
         startX: number;
         startY: number;
         initialCrop: CropRect;
@@ -125,28 +126,83 @@ export function ImageEditorModal({
     // Canvas display scale tracker
     const [canvasDisplaySize, setCanvasDisplaySize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-    // Load Image
+    // Bulletproof Image Loader (Prevents mobile GPU canvas crash & black screen)
     useEffect(() => {
-        const objectUrl = URL.createObjectURL(imageFile);
-        const img = new Image();
-        img.onload = () => {
-            const nw = img.naturalWidth;
-            const nh = img.naturalHeight;
-            setImgElement(img);
-            setImgNaturalSize({ width: nw, height: nh });
-            if (initialCropRect && initialCropRect.width > 0 && initialCropRect.height > 0) {
-                setCropRect(initialCropRect);
-            } else {
-                setCropRect({ x: 0, y: 0, width: nw, height: nh });
-            }
-            setImageLoaded(true);
+        let isMounted = true;
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            if (!isMounted) return;
+            const dataUrl = reader.result as string;
+            const img = new Image();
+
+            img.onload = () => {
+                if (!isMounted) return;
+                let nw = img.naturalWidth || img.width;
+                let nh = img.naturalHeight || img.height;
+
+                if (!nw || !nh) {
+                    nw = 1200;
+                    nh = 800;
+                }
+
+                // Normalization: Cap maximum working canvas dimension to 2048px (Ultra-HD)
+                // Prevents mobile WebKit/Android GPU canvas out-of-memory crash (which renders a solid black screen)
+                const MAX_DIM = 2048;
+                let targetW = nw;
+                let targetH = nh;
+                if (nw > MAX_DIM || nh > MAX_DIM) {
+                    const ratio = Math.min(MAX_DIM / nw, MAX_DIM / nh);
+                    targetW = Math.round(nw * ratio);
+                    targetH = Math.round(nh * ratio);
+                }
+
+                const normCanvas = document.createElement('canvas');
+                normCanvas.width = targetW;
+                normCanvas.height = targetH;
+                const normCtx = normCanvas.getContext('2d');
+                if (normCtx) {
+                    normCtx.drawImage(img, 0, 0, targetW, targetH);
+                    const normImg = new Image();
+                    normImg.onload = () => {
+                        if (!isMounted) return;
+                        setImgElement(normImg);
+                        setImgNaturalSize({ width: targetW, height: targetH });
+                        if (initialCropRect && initialCropRect.width > 0 && initialCropRect.height > 0) {
+                            const scaleRatio = targetW / nw;
+                            setCropRect({
+                                x: Math.round(initialCropRect.x * scaleRatio),
+                                y: Math.round(initialCropRect.y * scaleRatio),
+                                width: Math.round(initialCropRect.width * scaleRatio),
+                                height: Math.round(initialCropRect.height * scaleRatio),
+                            });
+                        } else {
+                            setCropRect({ x: 0, y: 0, width: targetW, height: targetH });
+                        }
+                        setImageLoaded(true);
+                    };
+                    normImg.src = normCanvas.toDataURL('image/jpeg', 0.95);
+                } else {
+                    setImgElement(img);
+                    setImgNaturalSize({ width: nw, height: nh });
+                    setCropRect({ x: 0, y: 0, width: nw, height: nh });
+                    setImageLoaded(true);
+                }
+            };
+
+            img.onerror = () => {
+                console.error('Error loading image in ImageEditorModal');
+            };
+
+            img.src = dataUrl;
         };
-        img.src = objectUrl;
+
+        reader.readAsDataURL(imageFile);
 
         return () => {
-            URL.revokeObjectURL(objectUrl);
+            isMounted = false;
         };
-    }, [imageFile, initialCropRect]);
+    }, [imageFile]);
 
     // Redraw Canvas (Image + Strokes, clipped to crop area if cropped)
     const redrawCanvas = useCallback(() => {
@@ -157,6 +213,7 @@ export function ImageEditorModal({
 
         const w = imgNaturalSize.width;
         const h = imgNaturalSize.height;
+        if (w === 0 || h === 0) return;
 
         if (canvas.width !== w || canvas.height !== h) {
             canvas.width = w;
@@ -210,6 +267,15 @@ export function ImageEditorModal({
         }
     }, [imgElement, imgNaturalSize, strokes, isCropped, cropRect]);
 
+    // Throttled redraw via requestAnimationFrame for buttery smooth 60fps/120fps touch tracking on mobile
+    const requestRedraw = useCallback(() => {
+        if (animFrameRef.current) return;
+        animFrameRef.current = requestAnimationFrame(() => {
+            animFrameRef.current = null;
+            redrawCanvas();
+        });
+    }, [redrawCanvas]);
+
     useEffect(() => {
         if (imageLoaded) {
             redrawCanvas();
@@ -230,32 +296,36 @@ export function ImageEditorModal({
         return () => window.removeEventListener('resize', updateSize);
     }, []);
 
-    // Convert screen coordinates to canvas natural coordinates
-    const getCanvasCoordinates = (e: ReactPointerEvent<HTMLCanvasElement>): Point | null => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+    // Convert screen coordinates to canvas natural coordinates with bounds clamping
+    const getCanvasCoordinatesFromClient = useCallback(
+        (clientX: number, clientY: number): Point | null => {
+            const canvas = canvasRef.current;
+            if (!canvas) return null;
+            const rect = canvas.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
 
-        return {
-            x: (e.clientX - rect.left) * scaleX,
-            y: (e.clientY - rect.top) * scaleY,
-        };
-    };
+            const scaleX = imgNaturalSize.width / rect.width;
+            const scaleY = imgNaturalSize.height / rect.height;
 
-    // Drawing pointer handlers (always active and unobstructed in draw mode)
+            const clampedX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+            const clampedY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+
+            return {
+                x: clampedX * scaleX,
+                y: clampedY * scaleY,
+            };
+        },
+        [imgNaturalSize],
+    );
+
+    // CONTINUOUS TOUCH & POINTER DRAWING HANDLER (Smooth on all mobile phones & desktops)
     const handleDrawingPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
         if (activeTool !== 'draw') return;
         e.preventDefault();
-        const pt = getCanvasCoordinates(e);
-        if (!pt) return;
+        e.stopPropagation();
 
-        try {
-            (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        } catch {
-            // ignore
-        }
+        const pt = getCanvasCoordinatesFromClient(e.clientX, e.clientY);
+        if (!pt) return;
 
         currentStrokeRef.current = {
             points: [pt],
@@ -263,28 +333,35 @@ export function ImageEditorModal({
             width: selectedThickness * (imgNaturalSize.width / 1000 || 1),
         };
         redrawCanvas();
-    };
 
-    const handleDrawingPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (activeTool !== 'draw' || !currentStrokeRef.current) return;
-        e.preventDefault();
-        const pt = getCanvasCoordinates(e);
-        if (!pt) return;
+        const onPointerMove = (ev: PointerEvent) => {
+            ev.preventDefault();
+            if (!currentStrokeRef.current) return;
+            const movePt = getCanvasCoordinatesFromClient(ev.clientX, ev.clientY);
+            if (!movePt) return;
 
-        currentStrokeRef.current.points.push(pt);
-        redrawCanvas();
-    };
+            currentStrokeRef.current.points.push(movePt);
+            requestRedraw();
+        };
 
-    const handleDrawingPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-        if (activeTool !== 'draw' || !currentStrokeRef.current) return;
-        e.preventDefault();
-        const finishedStroke = currentStrokeRef.current;
-        currentStrokeRef.current = null;
+        const onPointerEnd = (ev: PointerEvent) => {
+            ev.preventDefault();
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerEnd);
+            window.removeEventListener('pointercancel', onPointerEnd);
 
-        if (finishedStroke.points.length > 0) {
-            setStrokes((prev) => [...prev, finishedStroke]);
-            setRedoStack([]); // new stroke clears redo history
-        }
+            const finished = currentStrokeRef.current;
+            currentStrokeRef.current = null;
+            if (finished && finished.points.length > 0) {
+                setStrokes((prev) => [...prev, finished]);
+                setRedoStack([]);
+            }
+            redrawCanvas();
+        };
+
+        window.addEventListener('pointermove', onPointerMove, { passive: false });
+        window.addEventListener('pointerup', onPointerEnd, { passive: false });
+        window.addEventListener('pointercancel', onPointerEnd, { passive: false });
     };
 
     // Undo last stroke
@@ -315,7 +392,7 @@ export function ImageEditorModal({
         setRedoStack([]);
     }, []);
 
-    // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES)
+    // CROP DRAGGING LOGIC (100% INDEPENDENT EDGES, Touch & Mobile Compatible)
     const handleCropPointerDown = (handle: string, e: React.PointerEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -329,10 +406,13 @@ export function ImageEditorModal({
         };
 
         const onPointerMove = (ev: PointerEvent) => {
+            ev.preventDefault();
             if (!cropDragRef.current || !canvasRef.current) return;
-            const { handle, startX, startY, initialCrop } = cropDragRef.current;
+            const { handle: dragHandle, startX, startY, initialCrop } = cropDragRef.current;
 
             const rect = canvasRef.current.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+
             const scaleX = imgNaturalSize.width / rect.width;
             const scaleY = imgNaturalSize.height / rect.height;
 
@@ -349,32 +429,32 @@ export function ImageEditorModal({
             let newH = initialCrop.height;
 
             // 1. Move Entire Box
-            if (handle === 'move') {
+            if (dragHandle === 'move') {
                 newX = Math.max(0, Math.min(nw - newW, initialCrop.x + dx));
                 newY = Math.max(0, Math.min(nh - newH, initialCrop.y + dy));
             }
 
             // 2. Independent Top Edge (Changes ONLY top; bottom edge remains stationary)
-            if (handle === 'top' || handle === 'tl' || handle === 'tr') {
+            if (dragHandle === 'top' || dragHandle === 'tl' || dragHandle === 'tr') {
                 const bottomEdge = initialCrop.y + initialCrop.height;
                 newY = Math.max(0, Math.min(bottomEdge - MIN_DIM, initialCrop.y + dy));
                 newH = bottomEdge - newY;
             }
 
             // 3. Independent Bottom Edge (Changes ONLY bottom; top edge remains stationary)
-            if (handle === 'bottom' || handle === 'bl' || handle === 'br') {
+            if (dragHandle === 'bottom' || dragHandle === 'bl' || dragHandle === 'br') {
                 newH = Math.max(MIN_DIM, Math.min(nh - newY, initialCrop.height + dy));
             }
 
             // 4. Independent Left Edge (Changes ONLY left; right edge remains stationary)
-            if (handle === 'left' || handle === 'tl' || handle === 'bl') {
+            if (dragHandle === 'left' || dragHandle === 'tl' || dragHandle === 'bl') {
                 const rightEdge = initialCrop.x + initialCrop.width;
                 newX = Math.max(0, Math.min(rightEdge - MIN_DIM, initialCrop.x + dx));
                 newW = rightEdge - newX;
             }
 
             // 5. Independent Right Edge (Changes ONLY right; left edge remains stationary)
-            if (handle === 'right' || handle === 'tr' || handle === 'br') {
+            if (dragHandle === 'right' || dragHandle === 'tr' || dragHandle === 'br') {
                 newW = Math.max(MIN_DIM, Math.min(nw - newX, initialCrop.width + dx));
             }
 
@@ -386,14 +466,17 @@ export function ImageEditorModal({
             });
         };
 
-        const onPointerUp = () => {
+        const onPointerUp = (ev: PointerEvent) => {
+            ev.preventDefault();
             cropDragRef.current = null;
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
         };
 
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointermove', onPointerMove, { passive: false });
+        window.addEventListener('pointerup', onPointerUp, { passive: false });
+        window.addEventListener('pointercancel', onPointerUp, { passive: false });
     };
 
     // Keyboard Shortcuts: Esc to cancel, Ctrl+Z to undo, Ctrl+Y / Ctrl+Shift+Z to redo
@@ -550,9 +633,6 @@ export function ImageEditorModal({
                         ref={canvasRef}
                         className={`image-editor-canvas ${activeTool === 'draw' ? 'image-editor-canvas--drawable' : ''}`}
                         onPointerDown={handleDrawingPointerDown}
-                        onPointerMove={handleDrawingPointerMove}
-                        onPointerUp={handleDrawingPointerUp}
-                        onPointerCancel={handleDrawingPointerUp}
                     />
 
                     {/* CROP OVERLAY (Only interactive when activeTool === 'crop', purely visual & non-blocking otherwise) */}
@@ -623,7 +703,7 @@ export function ImageEditorModal({
                                         <div className="image-editor-crop-grid-v1" />
                                         <div className="image-editor-crop-grid-v2" />
 
-                                        {/* 4 Independent Edge Handles */}
+                                        {/* 4 Independent Edge Handles with 32px touch hit zone */}
                                         <div
                                             className="image-editor-crop-edge image-editor-crop-edge--top"
                                             onPointerDown={(e) => handleCropPointerDown('top', e)}
@@ -649,7 +729,7 @@ export function ImageEditorModal({
                                             <div className="image-editor-crop-edge-bar-v" />
                                         </div>
 
-                                        {/* 4 Corner Handles */}
+                                        {/* 4 Corner Handles with 36px touch hit zone */}
                                         <div
                                             className="image-editor-crop-corner image-editor-crop-corner--tl"
                                             onPointerDown={(e) => handleCropPointerDown('tl', e)}
