@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, Check, Hourglass, Link2, Smile, UserRound } from 'lucide-react';
+import { ChevronLeft, Check, Hourglass, Link2, Smile, UserRound, Volume2, VolumeX } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import { useChessSocket } from '../../hooks/useChessSocket';
 import type { Chat, ChessColor, ChessEmote, ChessEvent, ChessGameView, User } from '../../types';
@@ -13,7 +13,7 @@ import {
     markChessGameUnavailable,
     setCachedChessGame,
 } from '../../utils/chessCache';
-import { playChessSound, soundForMove } from '../../utils/chessSounds';
+import { playChessEmoteSound, playChessSound, soundForMove } from '../../utils/chessSounds';
 import { copyText } from '../../utils/clipboard';
 import { cx } from '../../utils/cx';
 import { toPersianDigits } from '../../utils/format';
@@ -123,12 +123,14 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
     const [shareOpen, setShareOpen] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
     const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+    const [emoteSoundMuted, setEmoteSoundMuted] = useState(false);
     const [activeEmotes, setActiveEmotes] = useState<Partial<Record<ChessColor, { emote: ChessEmote; seq: number }>>>({});
     const [notFound, setNotFound] = useState<boolean>(() => isChessGameUnavailable(gameId));
     const soundPlyRef = useRef(typeof initialCached?.ply === 'number' ? initialCached.ply : -1);
     const startSoundPlayedRef = useRef(Boolean(initialCached && initialCached.status !== 'waiting'));
     const movesEndRef = useRef<HTMLDivElement | null>(null);
     const emoteTimersRef = useRef<Partial<Record<ChessColor, number>>>({});
+    const emoteAnchorRef = useRef<HTMLDivElement | null>(null);
     const emoteSeqRef = useRef(0);
     const lastEmoteSentAtRef = useRef(0);
 
@@ -229,6 +231,7 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
 
     const showEmoteForColor = useCallback((by: ChessColor, emote: ChessEmote) => {
         if (!CHESS_EMOTES.some((item) => item.id === emote)) return;
+        if (!emoteSoundMuted) playChessEmoteSound(emote);
         const prevTimer = emoteTimersRef.current[by];
         if (prevTimer) window.clearTimeout(prevTimer);
         emoteSeqRef.current += 1;
@@ -242,7 +245,7 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
                 return next;
             });
         }, 3200);
-    }, []);
+    }, [emoteSoundMuted]);
 
     useEffect(() => {
         const timers = emoteTimersRef.current;
@@ -252,6 +255,15 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
             });
         };
     }, []);
+
+    useEffect(() => {
+        if (!emotePickerOpen) return;
+        const onDocPointerDown = (e: PointerEvent) => {
+            if (!emoteAnchorRef.current?.contains(e.target as Node)) setEmotePickerOpen(false);
+        };
+        document.addEventListener('pointerdown', onDocPointerDown, true);
+        return () => document.removeEventListener('pointerdown', onDocPointerDown, true);
+    }, [emotePickerOpen]);
 
     const { send } = useChessSocket({
         token: authToken,
@@ -761,7 +773,7 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
                         </div>
                         <div className="chess__player-end">
                             {isParticipant && game.status === 'active' && (
-                                <div className="chess__emote-anchor">
+                                <div className="chess__emote-anchor" ref={emoteAnchorRef}>
                                     <button
                                         type="button"
                                         className={cx('chess__emote-trigger', emotePickerOpen && 'chess__emote-trigger--open')}
@@ -790,6 +802,14 @@ export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestM
                                                         <img src={item.src} alt={item.label} className="chess__emote-option-img" />
                                                     </button>
                                                 ))}
+                                                <button
+                                                    type="button"
+                                                    className={cx('chess__emote-mute', emoteSoundMuted && 'chess__emote-mute--active')}
+                                                    aria-label={emoteSoundMuted ? 'روشن کردن صدای ایموت' : 'بی‌صدا کردن صدای ایموت'}
+                                                    onClick={() => setEmoteSoundMuted((v) => !v)}
+                                                >
+                                                    {emoteSoundMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                                                </button>
                                             </motion.div>
                                         )}
                                     </AnimatePresence>
