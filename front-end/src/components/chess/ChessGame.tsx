@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Hourglass } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import { useChessSocket } from '../../hooks/useChessSocket';
 import type { Chat, ChessColor, ChessEvent, ChessGameView, User } from '../../types';
@@ -403,7 +403,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                             <span className="skeleton" style={{ width: 58, height: 28, borderRadius: 10 }} />
                         </div>
                         <div className="chess__board-wrap">
-                            <div className="skeleton" style={{ width: '100%', height: '100%', borderRadius: 14 }} />
+                            <div className="skeleton" style={{ width: '100%', height: '100%', borderRadius: 20 }} />
                         </div>
                         <div className="chess__player">
                             <div className="chess__player-info">
@@ -412,7 +412,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                             </div>
                             <span className="skeleton" style={{ width: 58, height: 28, borderRadius: 10 }} />
                         </div>
-                        <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 16 }} />
+                        <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 18 }} />
                     </div>
                 </div>
             </motion.div>
@@ -478,12 +478,16 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                 <div className="chess__stage">
                     <div className="chess__player">
                         <div className="chess__player-info">
-                            <Avatar
-                                name={oppInfo?.name || 'حریف'}
-                                size="sm"
-                                src={oppInfo?.avatar}
-                                online={oppId ? game.online[oppColor] : undefined}
-                            />
+                            {oppInfo ? (
+                                <Avatar
+                                    name={oppInfo.name || 'حریف'}
+                                    size="sm"
+                                    src={oppInfo.avatar}
+                                    online={oppId ? game.online[oppColor] : undefined}
+                                />
+                            ) : (
+                                <span className="chess__player-placeholder"><Hourglass size={18} /></span>
+                            )}
                             <span className="chess__player-name">
                                 {oppInfo?.name || (game.status === 'waiting' ? 'منتظر حریف…' : 'حریف')}
                             </span>
@@ -577,7 +581,9 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
                     {game.status === 'waiting' && isParticipant && (
                         <div className="chess__panel">
+                            <span className="chess__panel-icon"><Hourglass size={26} /></span>
                             <div className="chess__panel-title">منتظر حریف…</div>
+                            <div className="chess__result-sub">بازی را برای دوستت بفرست تا شروع شود</div>
                             <div className="chess__actions">
                                 <button
                                     type="button"
