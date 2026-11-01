@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess, type Square } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronLeft, Hourglass, Smile } from 'lucide-react';
+import { ChevronLeft, Check, Hourglass, Link2, Smile, UserRound } from 'lucide-react';
 import { apiFetch } from '../../config/api';
 import { useChessSocket } from '../../hooks/useChessSocket';
 import type { Chat, ChessColor, ChessEmote, ChessEvent, ChessGameView, User } from '../../types';
@@ -14,6 +14,7 @@ import {
     setCachedChessGame,
 } from '../../utils/chessCache';
 import { playChessSound, soundForMove } from '../../utils/chessSounds';
+import { copyText } from '../../utils/clipboard';
 import { cx } from '../../utils/cx';
 import { toPersianDigits } from '../../utils/format';
 import { notify } from '../../utils/notificationBus';
@@ -25,6 +26,8 @@ interface ChessGameProps {
     currentUser: User;
     gameId: string;
     authToken: string | null;
+    guestToken?: string | null;
+    isGuestMode?: boolean;
     chats: Chat[];
     onExitGame: () => void;
 }
@@ -105,7 +108,7 @@ function CapturedRow({ pieces, color }: { pieces: { piece: string; count: number
     );
 }
 
-export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }: ChessGameProps) {
+export function ChessGame({ currentUser, gameId, authToken, guestToken, isGuestMode, chats, onExitGame }: ChessGameProps) {
     const initialCached = getCachedChessGame(gameId);
     const [game, setGame] = useState<ChessGameView | null>(() => initialCached);
     const [pendingFen, setPendingFen] = useState<string | null>(null);
@@ -118,6 +121,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
     const [confirmResign, setConfirmResign] = useState(false);
     const [inviteOpen, setInviteOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    const [linkCopied, setLinkCopied] = useState(false);
     const [emotePickerOpen, setEmotePickerOpen] = useState(false);
     const [activeEmotes, setActiveEmotes] = useState<Partial<Record<ChessColor, { emote: ChessEmote; seq: number }>>>({});
     const [notFound, setNotFound] = useState<boolean>(() => isChessGameUnavailable(gameId));
@@ -251,6 +255,7 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
     const { send } = useChessSocket({
         token: authToken,
+        guestToken,
         gameId: socketGameId,
         onState: handleState,
         onError: handleError,
@@ -460,6 +465,19 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
         }
     };
 
+    const handleCopyGameLink = async () => {
+        if (!game?.inviteToken) return;
+        const url = `${window.location.origin}/chess/join/${encodeURIComponent(game.inviteToken)}`;
+        try {
+            await copyText(url);
+            setLinkCopied(true);
+            notify({ message: 'لینک بازی کپی شد', type: 'success' });
+            window.setTimeout(() => setLinkCopied(false), 1800);
+        } catch {
+            notify({ message: 'کپی لینک انجام نشد', type: 'error' });
+        }
+    };
+
     const handleCancelWaiting = async () => {
         try {
             await apiFetch(`/chess/games/${encodeURIComponent(gameId)}`, { method: 'DELETE' });
@@ -570,6 +588,8 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
 
     const resultSub = game.reason && game.reason !== 'aborted' ? REASON_LABELS[game.reason] || '' : '';
 
+    const myRatingChange = game.ratingChanges?.[myColor] ?? null;
+
     const winnerColor: ChessColor | null =
         game.status === 'finished' ? (game.result === '1-0' ? 'white' : game.result === '0-1' ? 'black' : null) : null;
 
@@ -591,13 +611,15 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                     <div className="chess__player">
                         <div className="chess__player-info">
                             <div className="chess__avatar-wrap">
-                                {oppInfo ? (
+                                {oppInfo && !oppInfo.isGuest ? (
                                     <Avatar
                                         name={oppInfo.name || 'حریف'}
                                         size="sm"
                                         src={oppInfo.avatar}
                                         online={oppId ? game.online[oppColor] : undefined}
                                     />
+                                ) : oppInfo?.isGuest ? (
+                                    <span className="chess__player-placeholder"><UserRound size={18} /></span>
                                 ) : (
                                     <span className="chess__player-placeholder"><Hourglass size={18} /></span>
                                 )}
@@ -625,6 +647,9 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                                     <span className="chess__player-name">
                                         {oppInfo?.name || (game.status === 'waiting' ? 'منتظر حریف…' : 'حریف')}
                                     </span>
+                                    {typeof oppInfo?.elo === 'number' && !oppInfo.isGuest && (
+                                        <span className="chess__player-elo">({toPersianDigits(oppInfo.elo)})</span>
+                                    )}
                                     <span className={cx('chess__color-dot', `chess__color-dot--${oppColor}`)} />
                                     {winnerColor === oppColor && <span className="chess__winner-badge">برنده</span>}
                                 </div>
@@ -691,12 +716,18 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                     <div className="chess__player">
                         <div className="chess__player-info">
                             <div className="chess__avatar-wrap">
-                                <Avatar
-                                    name={bottomInfo?.name || currentUser.name}
-                                    size="sm"
-                                    src={bottomInfo?.avatar}
-                                    online={game.online[myColor]}
-                                />
+                                {bottomInfo && !bottomInfo.isGuest ? (
+                                    <Avatar
+                                        name={bottomInfo.name || currentUser.name}
+                                        size="sm"
+                                        src={bottomInfo.avatar}
+                                        online={game.online[myColor]}
+                                    />
+                                ) : bottomInfo?.isGuest ? (
+                                    <span className="chess__player-placeholder"><UserRound size={18} /></span>
+                                ) : (
+                                    <span className="chess__player-placeholder"><Hourglass size={18} /></span>
+                                )}
                                 <AnimatePresence>
                                     {activeEmotes[myColor] && (
                                         <motion.div
@@ -719,6 +750,9 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                             <div className="chess__player-text">
                                 <div className="chess__player-line">
                                     <span className="chess__player-name">{bottomInfo?.name || currentUser.name}</span>
+                                    {typeof bottomInfo?.elo === 'number' && !bottomInfo.isGuest && (
+                                        <span className="chess__player-elo">({toPersianDigits(bottomInfo.elo)})</span>
+                                    )}
                                     <span className={cx('chess__color-dot', `chess__color-dot--${myColor}`)} />
                                     {winnerColor === myColor && <span className="chess__winner-badge">برنده</span>}
                                 </div>
@@ -797,6 +831,16 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                                 >
                                     ارسال به چت
                                 </button>
+                                {game.inviteToken && (
+                                    <button
+                                        type="button"
+                                        className="chess-secondary-btn chess-secondary-btn--icon"
+                                        onClick={handleCopyGameLink}
+                                    >
+                                        {linkCopied ? <Check size={16} /> : <Link2 size={16} />}
+                                        <span>{linkCopied ? 'کپی شد' : 'کپی لینک بازی'}</span>
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     className="chess-secondary-btn chess-secondary-btn--danger"
@@ -866,8 +910,22 @@ export function ChessGame({ currentUser, gameId, authToken, chats, onExitGame }:
                         <div className="chess__panel">
                             <div className="chess__result-title">{resultTitle}</div>
                             {resultSub && <div className="chess__result-sub">{resultSub}</div>}
+                            {myRatingChange && (
+                                <div
+                                    className={cx(
+                                        'chess__rating-change',
+                                        myRatingChange.delta > 0 && 'chess__rating-change--up',
+                                        myRatingChange.delta < 0 && 'chess__rating-change--down',
+                                    )}
+                                >
+                                    {`امتیاز: ${toPersianDigits(myRatingChange.after)}`}
+                                    <span>
+                                        {`(${myRatingChange.delta > 0 ? '+' : myRatingChange.delta < 0 ? '−' : ''}${toPersianDigits(Math.abs(myRatingChange.delta))})`}
+                                    </span>
+                                </div>
+                            )}
                             <div className="chess__actions">
-                                {isParticipant && game.reason !== 'aborted' && (
+                                {isParticipant && !isGuestMode && game.reason !== 'aborted' && (
                                     <button
                                         type="button"
                                         className="chess-secondary-btn"

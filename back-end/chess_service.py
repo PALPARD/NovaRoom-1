@@ -1,5 +1,6 @@
 import random
 import re
+import uuid
 import chess
 
 
@@ -41,6 +42,41 @@ REASONS = {
 }
 
 
+def is_guest_id(user_id):
+    return isinstance(user_id, str) and user_id.startswith("guest_")
+
+
+def _k_factor(elo, games_played):
+    if games_played < 10:
+        return 40
+    if elo < 2100:
+        return 32
+    return 16
+
+
+def compute_elo_changes(white_elo, white_games, black_elo, black_games, result):
+    if result == "1-0":
+        sw, sb = 1.0, 0.0
+    elif result == "0-1":
+        sw, sb = 0.0, 1.0
+    elif result == "1/2-1/2":
+        sw, sb = 0.5, 0.5
+    else:
+        return None
+    ew = 1.0 / (1.0 + 10.0 ** ((black_elo - white_elo) / 400.0))
+    eb = 1.0 - ew
+    kw = _k_factor(white_elo, white_games)
+    kb = _k_factor(black_elo, black_games)
+    dw = int(round(kw * (sw - ew)))
+    db = int(round(kb * (sb - eb)))
+    next_w = max(100, white_elo + dw)
+    next_b = max(100, black_elo + db)
+    return {
+        "white": {"before": white_elo, "after": next_w, "delta": next_w - white_elo},
+        "black": {"before": black_elo, "after": next_b, "delta": next_b - black_elo},
+    }
+
+
 def new_game(creator_id, color, time_control, now):
     if time_control not in TIME_CONTROLS:
         raise ChessError("invalid_time_control")
@@ -69,6 +105,13 @@ def new_game(creator_id, color, time_control, now):
         "createdAt": now,
         "startedAt": None,
         "endedAt": None,
+        "finishedAt": None,
+        "inviteToken": uuid.uuid4().hex[:16],
+        "guestId": None,
+        "guestToken": None,
+        "rated": False,
+        "eloProcessed": False,
+        "ratingChanges": None,
     }
 
 
@@ -109,6 +152,7 @@ def _finish(game, result, reason, now):
     game["result"] = result
     game["reason"] = reason
     game["endedAt"] = now
+    game["finishedAt"] = now
     game["drawOfferedBy"] = None
     return {"kind": "game_over", "result": result, "reason": reason}
 
@@ -138,6 +182,28 @@ def join(game, user_id, now):
         raise ChessError("forbidden")
     seat = "black" if game["players"]["white"] else "white"
     game["players"][seat] = user_id
+    game["rated"] = not is_guest_id(game["creatorId"]) and not is_guest_id(user_id)
+    game["status"] = "active"
+    game["startedAt"] = now
+    game["lastMoveAt"] = now
+    return {"kind": "opponent_joined"}
+
+
+def join_by_link(game, user_id, now, guest_token=None):
+    if game["status"] != "waiting":
+        raise ChessError("not_joinable")
+    if not user_id or user_id == game["creatorId"]:
+        raise ChessError("forbidden")
+    if game.get("invitedChatId") and game["invitedChatId"] != user_id:
+        raise ChessError("forbidden")
+    seat = "black" if game["players"]["white"] else "white"
+    game["players"][seat] = user_id
+    if is_guest_id(user_id):
+        game["guestId"] = user_id
+        game["guestToken"] = guest_token
+        game["rated"] = False
+    else:
+        game["rated"] = not is_guest_id(game["creatorId"])
     game["status"] = "active"
     game["startedAt"] = now
     game["lastMoveAt"] = now
@@ -275,4 +341,7 @@ def public_view(game, now, online):
         "online": online,
         "createdAt": game["createdAt"],
         "finishedAt": game.get("finishedAt"),
+        "inviteToken": game.get("inviteToken"),
+        "rated": bool(game.get("rated")),
+        "ratingChanges": game.get("ratingChanges"),
     }

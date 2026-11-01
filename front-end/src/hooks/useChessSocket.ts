@@ -4,13 +4,14 @@ import type { ChessColor, ChessEmote, ChessEvent, ChessGameView } from '../types
 
 interface Options {
     token: string | null;
+    guestToken?: string | null;
     gameId: string | null;
     onState: (game: ChessGameView, event: ChessEvent | null) => void;
     onError: (code: string) => void;
     onEmote?: (by: ChessColor, emote: ChessEmote) => void;
 }
 
-export function useChessSocket({ token, gameId, onState, onError, onEmote }: Options) {
+export function useChessSocket({ token, guestToken, gameId, onState, onError, onEmote }: Options) {
     const [connected, setConnected] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
     const onStateRef = useRef(onState);
@@ -24,14 +25,18 @@ export function useChessSocket({ token, gameId, onState, onError, onEmote }: Opt
     }, [onState, onError, onEmote]);
 
     useEffect(() => {
-        if (!token || !gameId) return;
+        if (!(token || guestToken) || !gameId) return;
         let closed = false;
         let attempts = 0;
         let retryTimer: number | null = null;
         let heartbeat: number | null = null;
 
+        const params = new URLSearchParams({ gameId });
+        if (token) params.set('token', token);
+        if (guestToken) params.set('guestToken', guestToken);
+
         const connect = () => {
-            const ws = new WebSocket(`${API_WS_URL}/ws/chess?token=${encodeURIComponent(token)}&gameId=${encodeURIComponent(gameId)}`);
+            const ws = new WebSocket(`${API_WS_URL}/ws/chess?${params.toString()}`);
             socketRef.current = ws;
             ws.onopen = () => {
                 attempts = 0;
@@ -76,7 +81,7 @@ export function useChessSocket({ token, gameId, onState, onError, onEmote }: Opt
             socketRef.current?.close();
             socketRef.current = null;
         };
-    }, [token, gameId]);
+    }, [token, guestToken, gameId]);
 
     const send = useCallback((payload: Record<string, unknown>) => {
         const ws = socketRef.current;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import type { Message, View, User, Chat, ChatLastMessage, FileMetadata, AIChatSummary, AIModelKey, PendingForwardDraft, AIUsageStatus, AIMemoryItem, AIAttachmentMeta, AISearchSource } from './types';
-import { apiFetch } from './config/api';
+import { apiFetch, getAuthToken } from './config/api';
 import { useWebSocket } from './hooks/useWebSocket';
 import { ChatList } from './components/ChatList';
 import { ChatRoom } from './components/ChatRoom';
@@ -24,6 +24,7 @@ import { clearChessCache } from './utils/chessCache';
 import { useDarkMode } from './hooks/useDarkMode';
 import { BottomNavbar } from './components/BottomNavbar';
 import { ChessScreen } from './components/chess/ChessScreen';
+import { ChessJoinPage } from './components/chess/ChessJoinPage';
 import './App.css';
 
 
@@ -154,14 +155,9 @@ export function App() {
     const navigate = useNavigate();
     const location = useLocation();
     const isChessGameRoute = location.pathname.startsWith('/chess/game/');
-    const [authToken, setAuthToken] = useState<string | null>(() => {
-        const fromCookie = typeof document !== 'undefined'
-            ? document.cookie.split('; ').find((row) => row.startsWith('auth_token='))?.split('=')[1]
-            : null;
-        if (fromCookie) return decodeURIComponent(fromCookie);
-        const fromStorage = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
-        return fromStorage || null;
-    });
+    const chessJoinToken = location.pathname.match(/^\/chess\/join\/([A-Za-z0-9]+)$/)?.[1] ?? null;
+    const [chessContactOpen, setChessContactOpen] = useState(false);
+    const [authToken, setAuthToken] = useState<string | null>(() => getAuthToken());
     const [isAuthChecking, setIsAuthChecking] = useState(true);
     const [isAuthenticated, setIsAuthenticated] = useState(Boolean(authToken));
     const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1485,6 +1481,10 @@ export function App() {
         }
         apiFetch('/profile/me')
             .then(async (user) => {
+                if (authToken) {
+                    localStorage.setItem('token', authToken);
+                    document.cookie = `auth_token=${encodeURIComponent(authToken)}; path=/; max-age=${60 * 60 * 24 * 180}; samesite=lax`;
+                }
                 const decryptedBio = await decryptBioClientSide(String(user?.bio || ''), authToken || '', String(user?.chatId || ''));
                 setCurrentUser({ ...user, bio: decryptedBio });
                 setIsAuthenticated(true);
@@ -1931,7 +1931,12 @@ export function App() {
             return;
         }
 
-        if (pathname === '/chess' || pathname === '/chess/' || /^\/chess\/game\/[A-Za-z0-9]+$/.test(pathname)) {
+        if (
+            pathname === '/chess' ||
+            pathname === '/chess/' ||
+            /^\/chess\/game\/[A-Za-z0-9]+$/.test(pathname) ||
+            /^\/chess\/join\/[A-Za-z0-9]+$/.test(pathname)
+        ) {
             setShowAIChat(false);
             setPendingUser(null);
             setActiveChatId(null);
@@ -3056,6 +3061,9 @@ export function App() {
                         onResetSuccess={() => navigate('/login')}
                     />
                 } />
+                <Route path="/chess/join/:inviteToken" element={
+                    <ChessJoinPage authToken={null} currentUser={null} />
+                } />
                 <Route path="*" element={<Navigate to="/login" replace />} />
             </Routes>
         );
@@ -3187,15 +3195,29 @@ export function App() {
                             />
                         ) : view === 'chess' && currentUser ? (
                             <>
-                                <ChessScreen
-                                    currentUser={currentUser}
-                                    gameId={location.pathname.match(/^\/chess\/game\/([A-Za-z0-9]+)$/)?.[1] ?? null}
-                                    authToken={authToken}
-                                    chats={chats}
-                                    onOpenGame={(id) => navigate(`/chess/game/${id}`)}
-                                    onExitGame={() => navigate('/chess')}
-                                />
-                                {!isChessGameRoute && (
+                                {chessJoinToken ? (
+                                    <ChessJoinPage
+                                        key={chessJoinToken}
+                                        authToken={authToken}
+                                        currentUser={currentUser}
+                                    />
+                                ) : (
+                                    <ChessScreen
+                                        currentUser={currentUser}
+                                        gameId={location.pathname.match(/^\/chess\/game\/([A-Za-z0-9]+)$/)?.[1] ?? null}
+                                        authToken={authToken}
+                                        chats={chats}
+                                        interactiveOnlineUsers={interactiveOnlineUsers}
+                                        isUserBlocked={isUserBlocked}
+                                        onToggleBlockUser={toggleBlockUser}
+                                        onOpenDirectChat={(user) => handleUserSelectedFromModal(user)}
+                                        onOpenProfile={handleOpenProfile}
+                                        onContactOpenChange={setChessContactOpen}
+                                        onOpenGame={(id) => navigate(`/chess/game/${id}`)}
+                                        onExitGame={() => navigate('/chess')}
+                                    />
+                                )}
+                                {!isChessGameRoute && !chessJoinToken && !chessContactOpen && (
                                     <BottomNavbar
                                         activeTab={activeNavTab}
                                         onSelectTab={handleSelectNavTab}

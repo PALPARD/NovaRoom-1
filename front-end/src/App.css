@@ -7274,6 +7274,7 @@ html.no-blur-effect .chat-list__header,
     flex-direction: column;
     gap: 12px;
     color: var(--text-secondary);
+    direction: rtl;
 }
 
 .chess-invite {
@@ -7702,4 +7703,204 @@ html.no-blur-effect .chat-list__header,
     height: 36px;
     object-fit: contain;
     display: block;
+}
+
+.chess-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 5px;
+    border-radius: 9999px;
+    background: var(--glass-surface-soft);
+    border: 1px solid var(--glass-border);
+}
+
+.chess-tab {
+    min-height: 40px;
+    border-radius: 9999px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.chess-tab--active {
+    background: var(--accent-primary);
+    color: #ffffff;
+}
+
+.chess-secondary-btn--icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.chess__player-elo {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    direction: ltr;
+}
+
+.chess__rating-change {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.chess__rating-change--up {
+    color: #10b981;
+}
+
+.chess__rating-change--down {
+    color: #ef4444;
+}
+
+.chess-leaderboard__my-stats {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.chess-leaderboard__list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chess-leaderboard__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-secondary);
+    background: var(--bg-secondary);
+    color: inherit;
+    font-family: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.chess-leaderboard__item:hover {
+    background: var(--hover-bg-light);
+}
+
+.chess-leaderboard__main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.chess-leaderboard__rank {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.chess-leaderboard__rank--1 {
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #d97706;
+}
+
+.chess-leaderboard__rank--2 {
+    background: rgba(148, 163, 184, 0.2);
+    border-color: rgba(148, 163, 184, 0.45);
+    color: #64748b;
+}
+
+.chess-leaderboard__rank--3 {
+    background: rgba(180, 83, 9, 0.15);
+    border-color: rgba(180, 83, 9, 0.38);
+    color: #b45309;
+}
+
+.chess-leaderboard__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.chess-leaderboard__name {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    min-width: 0;
+}
+
+.chess-leaderboard__name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chess-leaderboard__wld {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.chess-leaderboard__wld--win {
+    color: #10b981;
+    font-weight: 600;
+}
+
+.chess-leaderboard__wld--loss {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.chess-leaderboard__elo {
+    padding: 5px 12px;
+    border-radius: 9999px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.chess-history__rating {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.chess-history__rating--up {
+    color: #10b981;
+}
+
+.chess-history__rating--down {
+    color: #ef4444;
 }

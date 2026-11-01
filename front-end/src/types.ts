@@ -173,6 +173,15 @@ export interface ChessPlayerInfo {
     chatId: string;
     name: string;
     avatar: string;
+    elo?: number | null;
+    verified?: boolean;
+    isGuest?: boolean;
+}
+
+export interface ChessRatingChange {
+    before: number;
+    after: number;
+    delta: number;
 }
 
 export interface ChessGameView {
@@ -180,6 +189,12 @@ export interface ChessGameView {
     status: 'waiting' | 'active' | 'finished';
     creatorId: string;
     invitedChatId: string | null;
+    inviteToken?: string | null;
+    rated?: boolean;
+    ratingChanges?: {
+        white: ChessRatingChange;
+        black: ChessRatingChange;
+    } | null;
     players: { white: string | null; black: string | null };
     playerInfo?: Record<string, ChessPlayerInfo>;
     timeControl: string;
@@ -200,6 +215,19 @@ export interface ChessGameView {
     online: { white: boolean; black: boolean };
     createdAt?: number;
     finishedAt?: number | null;
+}
+
+export interface ChessLeaderboardStats {
+    elo: number;
+    wins: number;
+    losses: number;
+    draws: number;
+    gamesPlayed: number;
+}
+
+export interface ChessLeaderboardEntry extends ChessLeaderboardStats {
+    rank: number;
+    user: User & { blockedByMe?: boolean; blockedByOther?: boolean };
 }
 
 export interface ChessEvent {

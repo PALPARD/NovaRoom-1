@@ -1,5 +1,5 @@
-import { apiFetch } from '../config/api';
-import type { ChessGameView } from '../types';
+import { apiFetch, getAuthToken } from '../config/api';
+import type { ChessGameView, ChessLeaderboardEntry, ChessLeaderboardStats } from '../types';
 
 export type CachedChessGame = ChessGameView & { me?: string | null };
 
@@ -10,14 +10,64 @@ interface ChessLobbySnapshot {
     updatedAt: number;
 }
 
+interface ChessLeaderboardSnapshot {
+    entries: ChessLeaderboardEntry[];
+    myStats: ChessLeaderboardStats;
+    updatedAt: number;
+}
+
 const STORAGE_KEY = 'novaroom_chess_cache_v1';
+const GUEST_SESSION_PREFIX = 'novaroom_chess_guest_';
 const MAX_STORED_GAMES = 150;
 const LOBBY_FRESH_MS = 10_000;
+const LEADERBOARD_FRESH_MS = 30_000;
+
+export interface GuestChessSession {
+    gameId: string;
+    guestId: string;
+    guestToken: string;
+    inviteToken?: string;
+}
+
+export const saveGuestChessSession = (session: GuestChessSession) => {
+    try {
+        window.localStorage.setItem(`${GUEST_SESSION_PREFIX}${session.gameId}`, JSON.stringify(session));
+    } catch {
+        return;
+    }
+};
+
+export const getGuestChessSession = (gameId: string): GuestChessSession | null => {
+    try {
+        const raw = window.localStorage.getItem(`${GUEST_SESSION_PREFIX}${gameId}`);
+        if (!raw) return null;
+        return JSON.parse(raw) as GuestChessSession;
+    } catch {
+        return null;
+    }
+};
+
+export const findGuestChessSessionByInvite = (inviteToken: string): GuestChessSession | null => {
+    try {
+        for (let i = 0; i < window.localStorage.length; i += 1) {
+            const key = window.localStorage.key(i);
+            if (!key?.startsWith(GUEST_SESSION_PREFIX)) continue;
+            const raw = window.localStorage.getItem(key);
+            if (!raw) continue;
+            const session = JSON.parse(raw) as GuestChessSession;
+            if (session?.guestToken && session.inviteToken === inviteToken) return session;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+};
 
 const gamesById = new Map<string, CachedChessGame>();
 const unavailableIds = new Set<string>();
 const inflightGameReqs = new Map<string, Promise<CachedChessGame>>();
 let lobbySnapshot: ChessLobbySnapshot | null = null;
+let leaderboardSnapshot: ChessLeaderboardSnapshot | null = null;
 let hydrated = false;
 
 const hydrateOnce = () => {
@@ -155,7 +205,14 @@ export const fetchChessGameCached = (
     const inflight = inflightGameReqs.get(gameId);
     if (inflight) return inflight;
 
-    const req = apiFetch(`/chess/games/${encodeURIComponent(gameId)}`)
+    const guestSession = getGuestChessSession(gameId);
+    const hasAuthToken = Boolean(getAuthToken());
+    const guestQuery =
+        guestSession?.guestToken && !hasAuthToken
+            ? `?guestToken=${encodeURIComponent(guestSession.guestToken)}`
+            : '';
+
+    const req = apiFetch(`/chess/games/${encodeURIComponent(gameId)}${guestQuery}`)
         .then((data: CachedChessGame) => {
             setCachedChessGame(data);
             return gamesById.get(gameId) ?? data;
@@ -192,11 +249,27 @@ export const setChessLobbySnapshot = (next: {
     };
 };
 
+export const getChessLeaderboardSnapshot = (): { entries: ChessLeaderboardEntry[]; myStats: ChessLeaderboardStats } | null =>
+    leaderboardSnapshot
+        ? { entries: leaderboardSnapshot.entries, myStats: leaderboardSnapshot.myStats }
+        : null;
+
+export const isChessLeaderboardFresh = (): boolean =>
+    Boolean(leaderboardSnapshot && Date.now() - leaderboardSnapshot.updatedAt < LEADERBOARD_FRESH_MS);
+
+export const setChessLeaderboardSnapshot = (
+    entries: ChessLeaderboardEntry[],
+    myStats: ChessLeaderboardStats,
+) => {
+    leaderboardSnapshot = { entries, myStats, updatedAt: Date.now() };
+};
+
 export const clearChessCache = () => {
     gamesById.clear();
     unavailableIds.clear();
     inflightGameReqs.clear();
     lobbySnapshot = null;
+    leaderboardSnapshot = null;
     if (typeof window !== 'undefined') {
         try {
             window.localStorage.removeItem(STORAGE_KEY);

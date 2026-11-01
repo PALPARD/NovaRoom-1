@@ -1070,6 +1070,24 @@ async def get_current_user(
     return user
 
 
+security_optional = HTTPBearer(auto_error=False)
+
+
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+) -> Optional[dict]:
+    if not credentials or not credentials.credentials:
+        return None
+    user = await get_user_from_session_token(credentials.credentials)
+    if not user:
+        return None
+    user["_session_token"] = credentials.credentials
+    user.setdefault("profile", {})
+    user["profile"]["bio"] = decrypt_user_bio(user, credentials.credentials)
+    user["online"] = resolve_user_online_state(user)
+    return user
+
+
 async def _sync_login_seen_by_with_sessions(
     chat_id: str, sessions: List[dict], login_events: Optional[List[dict]] = None
 ) -> None:
@@ -1410,6 +1428,9 @@ async def startup_db():
             cl_chess_games.create_index("creatorId"),
             cl_chess_games.create_index([("players.white", 1), ("status", 1)]),
             cl_chess_games.create_index([("players.black", 1), ("status", 1)]),
+            cl_chess_games.create_index("inviteToken", unique=True, sparse=True),
+            cl_users.create_index([("chessStats.gamesPlayed", -1), ("chessStats.elo", -1)]),
+            cl_users.create_index([("chessStats.elo", -1)]),
             return_exceptions=True,
         )
         AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1421,6 +1442,7 @@ async def startup_db():
     asyncio.create_task(migrate_unencrypted_messages())
     asyncio.create_task(encrypt_existing_uploads())
     asyncio.create_task(sweep_ai_temp_files_task())
+    asyncio.create_task(chess_backfill_stats())
 
 
 async def migrate_unencrypted_messages():
@@ -4127,9 +4149,11 @@ def chess_online(game_id: str, game: dict) -> dict:
 
 
 async def chess_send_all(game_id: str, game: dict, event: Optional[dict]):
+    view = chess_service.public_view(game, now_ms(), chess_online(game_id, game))
+    view["playerInfo"] = await chess_player_info(game)
     payload = {
         "type": "game_state",
-        "game": chess_service.public_view(game, now_ms(), chess_online(game_id, game)),
+        "game": view,
         "event": event,
     }
     sockets = [ws for conns in chess_rooms.get(game_id, {}).values() for ws in conns]
@@ -4182,6 +4206,86 @@ async def chess_expire_waiting(game_id: str):
             pass
 
 
+async def chess_apply_elo_if_needed(game: dict) -> bool:
+    if game.get("status") != "finished" or game.get("eloProcessed"):
+        return False
+    if game.get("reason") == "aborted" or game.get("result") not in ("1-0", "0-1", "1/2-1/2"):
+        game["eloProcessed"] = True
+        return True
+    w_id = game.get("players", {}).get("white")
+    b_id = game.get("players", {}).get("black")
+    if not w_id or not b_id or chess_service.is_guest_id(w_id) or chess_service.is_guest_id(b_id):
+        game["rated"] = False
+        game["eloProcessed"] = True
+        return True
+    w_doc = await cl_users.find_one({"chatId": w_id}, {"chessStats": 1})
+    b_doc = await cl_users.find_one({"chatId": b_id}, {"chessStats": 1})
+    if not w_doc or not b_doc:
+        game["eloProcessed"] = True
+        return True
+    w_stats = w_doc.get("chessStats") or {}
+    b_stats = b_doc.get("chessStats") or {}
+    changes = chess_service.compute_elo_changes(
+        int(w_stats.get("elo", 1200)),
+        int(w_stats.get("gamesPlayed", 0)),
+        int(b_stats.get("elo", 1200)),
+        int(b_stats.get("gamesPlayed", 0)),
+        game["result"],
+    )
+    if not changes:
+        game["eloProcessed"] = True
+        return True
+    game["rated"] = True
+    game["eloProcessed"] = True
+    game["ratingChanges"] = changes
+    now = now_ms()
+    w_inc = {"chessStats.gamesPlayed": 1}
+    b_inc = {"chessStats.gamesPlayed": 1}
+    if game["result"] == "1-0":
+        w_inc["chessStats.wins"] = 1
+        b_inc["chessStats.losses"] = 1
+    elif game["result"] == "0-1":
+        w_inc["chessStats.losses"] = 1
+        b_inc["chessStats.wins"] = 1
+    else:
+        w_inc["chessStats.draws"] = 1
+        b_inc["chessStats.draws"] = 1
+    await cl_users.update_one(
+        {"chatId": w_id},
+        {"$set": {"chessStats.elo": changes["white"]["after"], "chessStats.updatedAt": now}, "$inc": w_inc},
+    )
+    await cl_users.update_one(
+        {"chatId": b_id},
+        {"$set": {"chessStats.elo": changes["black"]["after"], "chessStats.updatedAt": now}, "$inc": b_inc},
+    )
+    return True
+
+
+async def chess_backfill_stats():
+    try:
+        async for game in cl_chess_games.find({"status": "finished", "eloProcessed": {"$ne": True}}):
+            game_id = game["_id"]
+            lock = chess_locks.setdefault(game_id, asyncio.Lock())
+            try:
+                async with lock:
+                    fresh = await cl_chess_games.find_one({"_id": game_id})
+                    if not fresh or fresh.get("eloProcessed"):
+                        continue
+                    if await chess_apply_elo_if_needed(fresh):
+                        await cl_chess_games.update_one(
+                            {"_id": game_id},
+                            {"$set": {
+                                "eloProcessed": True,
+                                "rated": bool(fresh.get("rated")),
+                                "ratingChanges": fresh.get("ratingChanges"),
+                            }},
+                        )
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"Chess backfill warning: {e}")
+
+
 async def chess_run(game_id: str, action):
     lock = chess_locks.setdefault(game_id, asyncio.Lock())
     async with lock:
@@ -4192,6 +4296,8 @@ async def chess_run(game_id: str, action):
         event = chess_service.check_deadline(game, now)
         if event is None:
             event = action(game, now)
+        if game.get("status") == "finished" and not game.get("eloProcessed"):
+            await chess_apply_elo_if_needed(game)
         await cl_chess_games.replace_one({"_id": game_id}, game)
         chess_schedule(game)
     await chess_send_all(game_id, game, event)
@@ -4234,15 +4340,33 @@ async def chess_find_blocking_game(user_id: str, now: int, only_active: bool = F
 
 async def chess_player_info(game: dict) -> dict:
     ids = [i for i in (game["players"]["white"], game["players"]["black"], game["invitedChatId"]) if i]
-    rows = await cl_users.find({"chatId": {"$in": ids}}, {"chatId": 1, "profile": 1}).to_list(len(ids))
-    return {
+    reg_ids = [i for i in ids if not chess_service.is_guest_id(i)]
+    rows = await cl_users.find(
+        {"chatId": {"$in": reg_ids}},
+        {"chatId": 1, "profile": 1, "chessStats": 1, "verified": 1},
+    ).to_list(len(reg_ids)) if reg_ids else []
+    info = {
         str(r["chatId"]): {
             "chatId": str(r["chatId"]),
             "name": (r.get("profile") or {}).get("name", ""),
             "avatar": (r.get("profile") or {}).get("avatar", ""),
+            "elo": int((r.get("chessStats") or {}).get("elo", 1200)),
+            "verified": bool(r.get("verified", False)),
+            "isGuest": False,
         }
         for r in rows
     }
+    for i in ids:
+        if chess_service.is_guest_id(i):
+            info[i] = {
+                "chatId": i,
+                "name": "مهمان",
+                "avatar": "",
+                "elo": None,
+                "verified": False,
+                "isGuest": True,
+            }
+    return info
 
 
 async def chess_response(game: dict) -> dict:
@@ -6377,6 +6501,10 @@ class ChessInviteRequest(BaseModel):
     targetChatId: str
 
 
+class ChessLinkJoinRequest(BaseModel):
+    guestToken: Optional[str] = None
+
+
 @app.post("/chess/games")
 @limiter.limit("20/minute")
 async def create_chess_game(
@@ -6445,15 +6573,20 @@ async def get_chess_history(
 async def get_chess_game(
     request: Request,
     game_id: str,
-    current_user: dict = Depends(get_current_user),
+    guestToken: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_optional_user),
 ):
-    me = current_user["chatId"]
     game = await cl_chess_games.find_one({"_id": game_id})
     if not game:
         raise HTTPException(status_code=404, detail="not_found")
     if game.get("status") == "waiting" and now_ms() - game.get("createdAt", 0) >= chess_service.WAITING_TTL_MS:
         await chess_expire_waiting(game_id)
         raise HTTPException(status_code=404, detail="not_found")
+    me = current_user["chatId"] if current_user else None
+    if not me and guestToken and game.get("guestToken") and game.get("guestToken") == guestToken:
+        me = game.get("guestId")
+    if not me:
+        raise HTTPException(status_code=401, detail="unauthorized")
     color = chess_service.color_of(game, me)
     if color is None and game.get("invitedChatId") != me and game.get("status") != "finished":
         raise HTTPException(status_code=403, detail="forbidden")
@@ -6677,6 +6810,154 @@ async def accept_chess_game(
     return {"game": await chess_response(game)}
 
 
+@app.get("/chess/join/{invite_token}")
+@limiter.limit("60/minute")
+async def inspect_chess_invite(request: Request, invite_token: str):
+    game = await cl_chess_games.find_one({"inviteToken": invite_token})
+    if not game:
+        raise HTTPException(status_code=404, detail="not_found")
+    if game.get("status") == "waiting" and now_ms() - game.get("createdAt", 0) >= chess_service.WAITING_TTL_MS:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"game": await chess_response(game)}
+
+
+@app.post("/chess/join/{invite_token}")
+@limiter.limit("20/minute")
+async def join_chess_by_link(
+    request: Request,
+    invite_token: str,
+    body: Optional[ChessLinkJoinRequest] = None,
+    current_user: Optional[dict] = Depends(get_optional_user),
+):
+    game = await cl_chess_games.find_one({"inviteToken": invite_token})
+    if not game:
+        raise HTTPException(status_code=404, detail="not_found")
+    game_id = game["_id"]
+    if game.get("status") == "waiting" and now_ms() - game.get("createdAt", 0) >= chess_service.WAITING_TTL_MS:
+        raise HTTPException(status_code=404, detail="not_found")
+    now = now_ms()
+
+    if not current_user and request.headers.get("authorization"):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    if current_user:
+        me = current_user["chatId"]
+        if me == game["creatorId"]:
+            raise HTTPException(status_code=409, detail="own_game")
+        if chess_service.color_of(game, me) is not None:
+            return {"game": await chess_response(game), "mode": "user"}
+        if game.get("status") != "waiting":
+            raise HTTPException(status_code=409, detail="not_joinable")
+        my_active = await chess_find_blocking_game(me, now, only_active=True)
+        if my_active and my_active["_id"] != game_id:
+            raise HTTPException(status_code=409, detail="already_in_game")
+        creator_active = await chess_find_blocking_game(game["creatorId"], now, only_active=True)
+        if creator_active and creator_active["_id"] != game_id:
+            raise HTTPException(status_code=409, detail="already_in_game")
+        try:
+            game, _ = await chess_run(game_id, lambda g, n: chess_service.join_by_link(g, me, n))
+        except ChessError as error:
+            raise chess_http_error(error)
+        return {"game": await chess_response(game), "mode": "user"}
+
+    guest_token = (body.guestToken if body else None) or ""
+    if guest_token and game.get("guestToken") == guest_token and game.get("guestId"):
+        return {
+            "game": await chess_response(game),
+            "mode": "guest",
+            "guestId": game["guestId"],
+            "guestToken": game["guestToken"],
+        }
+    if game.get("status") != "waiting":
+        raise HTTPException(status_code=400, detail="not_joinable")
+    creator_active = await chess_find_blocking_game(game["creatorId"], now, only_active=True)
+    if creator_active and creator_active["_id"] != game_id:
+        raise HTTPException(status_code=409, detail="already_in_game")
+    guest_id = f"guest_{uuid.uuid4().hex[:12]}"
+    guest_token = secrets.token_urlsafe(24)
+    try:
+        game, _ = await chess_run(
+            game_id,
+            lambda g, n: chess_service.join_by_link(g, guest_id, n, guest_token=guest_token),
+        )
+    except ChessError as error:
+        raise chess_http_error(error)
+    return {
+        "game": await chess_response(game),
+        "mode": "guest",
+        "guestId": guest_id,
+        "guestToken": guest_token,
+    }
+
+
+@app.get("/chess/leaderboard")
+@limiter.limit("60/minute")
+async def get_chess_leaderboard(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    my_id = current_user["chatId"]
+    session_token = str(current_user.get("_session_token") or "")
+    my_blocked_ids = set(_get_blocked_from_user_doc(current_user))
+    cursor = (
+        cl_users.find(
+            {
+                "chatId": {"$not": {"$regex": "^guest_"}},
+                "chessStats.gamesPlayed": {"$gt": 0},
+            }
+        )
+        .sort([("chessStats.elo", -1), ("chessStats.wins", -1), ("chessStats.gamesPlayed", -1), ("chatId", 1)])
+        .limit(100)
+    )
+    users = await cursor.to_list(100)
+    leaderboard = []
+    for idx, u in enumerate(users):
+        u_id = u["chatId"]
+        u_blocked_ids = set(_get_blocked_from_user_doc(u))
+        blocked_by_me = u_id in my_blocked_ids
+        blocked_by_other = my_id in u_blocked_ids
+        blocked_relation = blocked_by_me or blocked_by_other
+        presence = resolve_user_presence_for_viewer(current_user, u, blocked=blocked_relation)
+        stats = u.get("chessStats") or {}
+        profile = u.get("profile") or {}
+        wins = int(stats.get("wins", 0))
+        losses = int(stats.get("losses", 0))
+        draws = int(stats.get("draws", 0))
+        leaderboard.append({
+            "rank": idx + 1,
+            "elo": int(stats.get("elo", 1200)),
+            "wins": wins,
+            "losses": losses,
+            "draws": draws,
+            "gamesPlayed": int(stats.get("gamesPlayed", wins + losses + draws)),
+            "user": {
+                "chatId": u_id,
+                "username": profile.get("username", ""),
+                "name": profile.get("name", ""),
+                "avatar": "" if blocked_by_other else profile.get("avatar", ""),
+                "bio": decrypt_user_bio(u, session_token),
+                "online": presence["online"],
+                "lastSeen": presence.get("lastSeen"),
+                "lastSeenCategory": presence.get("lastSeenCategory"),
+                "verified": bool(u.get("verified", False)),
+                "registrationDate": u.get("registrationDate"),
+                "blockedByMe": blocked_by_me,
+                "blockedByOther": blocked_by_other,
+            },
+        })
+    my_stats = current_user.get("chessStats") or {}
+    return {
+        "entries": leaderboard,
+        "myStats": {
+            "elo": int(my_stats.get("elo", 1200)),
+            "wins": int(my_stats.get("wins", 0)),
+            "losses": int(my_stats.get("losses", 0)),
+            "draws": int(my_stats.get("draws", 0)),
+            "gamesPlayed": int(my_stats.get("gamesPlayed", 0)),
+        },
+    }
+
+
 @app.delete("/chess/games/{game_id}")
 @limiter.limit("30/minute")
 async def delete_chess_game(
@@ -6701,11 +6982,20 @@ async def delete_chess_game(
 
 
 @app.websocket("/ws/chess")
-async def chess_websocket(websocket: WebSocket, token: str = Query(...), gameId: str = Query(...)):
+async def chess_websocket(
+    websocket: WebSocket,
+    gameId: str = Query(...),
+    token: Optional[str] = Query(None),
+    guestToken: Optional[str] = Query(None),
+):
     await websocket.accept()
-    user = await get_user_from_session_token(token)
-    game = await cl_chess_games.find_one({"_id": gameId}) if user else None
-    user_id = user.get("chatId") if user else None
+    game = await cl_chess_games.find_one({"_id": gameId})
+    user_id = None
+    if token:
+        user = await get_user_from_session_token(token)
+        user_id = user.get("chatId") if user else None
+    if not user_id and guestToken and game and game.get("guestToken") == guestToken:
+        user_id = game.get("guestId")
     if not game or chess_service.color_of(game, user_id) is None:
         await websocket.close(code=1008)
         return

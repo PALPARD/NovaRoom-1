@@ -2,12 +2,22 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { motion } from 'framer-motion';
 import { Share2 } from 'lucide-react';
 import { apiFetch } from '../../config/api';
-import type { Chat, ChessColor, ChessGameView, User } from '../../types';
+import type {
+    Chat,
+    ChessColor,
+    ChessGameView,
+    ChessLeaderboardEntry,
+    ChessLeaderboardStats,
+    User,
+} from '../../types';
 import {
+    getChessLeaderboardSnapshot,
     getChessLobbySnapshot,
+    isChessLeaderboardFresh,
     isChessLobbyFresh,
     seedChessGames,
     setCachedChessGame,
+    setChessLeaderboardSnapshot,
     setChessLobbySnapshot,
 } from '../../utils/chessCache';
 import { cx } from '../../utils/cx';
@@ -17,14 +27,24 @@ import { screenVariants } from '../../utils/screenMotion';
 import { Avatar } from '../Avatar';
 import { PlumpyChessIcon } from '../BottomNavbar';
 import { ForwardModal } from '../ForwardModal';
+import { VerifiedBadge } from '../VerifiedBadge';
 
 interface ChessHomeProps {
     currentUser: User;
     chats: Chat[];
     onOpenGame: (gameId: string) => void;
+    onSelectUser: (user: User) => void;
 }
 
 const HISTORY_PAGE_SIZE = 30;
+
+const EMPTY_LEADERBOARD_STATS: ChessLeaderboardStats = {
+    elo: 1200,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    gamesPlayed: 0,
+};
 
 const TIME_CONTROL_GROUPS = [
     { label: 'بدون زمان', items: [{ value: 'unlimited', label: 'بدون زمان' }] },
@@ -68,16 +88,23 @@ const REASON_LABELS: Record<string, string> = {
 const formatTimeControl = (tc: string) => (tc === 'unlimited' ? 'بدون زمان' : toPersianDigits(tc));
 
 let lobbyScrollTop: number | null = null;
+let lobbyTab: 'play' | 'leaderboard' = 'play';
 
 export function resetChessLobbyScroll() {
     lobbyScrollTop = null;
+    lobbyTab = 'play';
 }
 
-export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
+export function ChessHome({ currentUser, chats, onOpenGame, onSelectUser }: ChessHomeProps) {
     const initialSnapshot = getChessLobbySnapshot();
     const [currentGame, setCurrentGame] = useState<ChessGameView | null>(() => initialSnapshot?.currentGame ?? null);
     const [history, setHistory] = useState<ChessGameView[]>(() => initialSnapshot?.history ?? []);
     const [hasMore, setHasMore] = useState<boolean>(() => initialSnapshot?.hasMore ?? false);
+    const [tab, setTab] = useState<'play' | 'leaderboard'>(lobbyTab);
+    const [leaderboard, setLeaderboard] = useState<{
+        entries: ChessLeaderboardEntry[];
+        myStats: ChessLeaderboardStats;
+    } | null>(() => getChessLeaderboardSnapshot());
     const [loadingMore, setLoadingMore] = useState(false);
     const [loading, setLoading] = useState<boolean>(() => !initialSnapshot);
     const [timeControl, setTimeControl] = useState<string>('3+2');
@@ -86,6 +113,7 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     const [shareGameId, setShareGameId] = useState<string | null>(null);
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const loadingMoreRef = useRef(false);
+    const leaderboardRequestedRef = useRef(false);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
     useLayoutEffect(() => {
@@ -99,6 +127,11 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     const openGame = (id: string) => {
         lobbyScrollTop = contentRef.current?.scrollTop ?? 0;
         onOpenGame(id);
+    };
+
+    const selectTab = (next: 'play' | 'leaderboard') => {
+        lobbyTab = next;
+        setTab(next);
     };
 
     const loadData = async (force = false) => {
@@ -142,6 +175,23 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
     useEffect(() => {
         void loadData();
     }, []);
+
+    useEffect(() => {
+        if (tab !== 'leaderboard' || leaderboardRequestedRef.current || isChessLeaderboardFresh()) return;
+        leaderboardRequestedRef.current = true;
+        apiFetch('/chess/leaderboard')
+            .then((res: { entries?: ChessLeaderboardEntry[]; myStats?: ChessLeaderboardStats }) => {
+                const entries = Array.isArray(res?.entries) ? res.entries : [];
+                const myStats = res?.myStats ?? EMPTY_LEADERBOARD_STATS;
+                setChessLeaderboardSnapshot(entries, myStats);
+                setLeaderboard({ entries, myStats });
+            })
+            .catch(() => {
+                if (!leaderboard) {
+                    setLeaderboard({ entries: [], myStats: EMPTY_LEADERBOARD_STATS });
+                }
+            });
+    }, [tab, leaderboard]);
 
     const loadMoreHistory = useCallback(async () => {
         if (loadingMoreRef.current || !hasMore) return;
@@ -260,6 +310,25 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
 
             <div className="profile__content" ref={contentRef}>
                 <div className="chess-lobby__inner">
+                    <div className="chess-tabs">
+                        <button
+                            type="button"
+                            className={cx('chess-tab', tab === 'play' && 'chess-tab--active')}
+                            onClick={() => selectTab('play')}
+                        >
+                            بازی و سابقه
+                        </button>
+                        <button
+                            type="button"
+                            className={cx('chess-tab', tab === 'leaderboard' && 'chess-tab--active')}
+                            onClick={() => selectTab('leaderboard')}
+                        >
+                            لیدربرد
+                        </button>
+                    </div>
+
+                    {tab === 'play' ? (
+                        <>
                     {loading ? (
                         <>
                             <div className="chess-card">
@@ -371,6 +440,8 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                                         const oppInfo = (oppId && g.playerInfo?.[oppId]) || null;
                                         const outcome = outcomeForUser(g);
                                         const reason = g.reason ? REASON_LABELS[g.reason] || '' : '';
+                                        const myColor: ChessColor = oppColor === 'black' ? 'white' : 'black';
+                                        const ratingChange = g.ratingChanges?.[myColor] ?? null;
                                         return (
                                             <div
                                                 key={g.id}
@@ -391,6 +462,17 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                                                             {formatTimeControl(g.timeControl)}
                                                             {reason ? ` • ${reason}` : ''}
                                                             {` • ${toPersianDigits(Math.ceil(g.ply / 2))} حرکت`}
+                                                            {ratingChange && (
+                                                                <span
+                                                                    className={cx(
+                                                                        'chess-history__rating',
+                                                                        ratingChange.delta > 0 && 'chess-history__rating--up',
+                                                                        ratingChange.delta < 0 && 'chess-history__rating--down',
+                                                                    )}
+                                                                >
+                                                                    {` • ${ratingChange.delta > 0 ? '+' : ratingChange.delta < 0 ? '−' : ''}${toPersianDigits(Math.abs(ratingChange.delta))}`}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -423,6 +505,96 @@ export function ChessHome({ currentUser, chats, onOpenGame }: ChessHomeProps) {
                                 </div>
                             )}
                         </div>
+                    )}
+                        </>
+                    ) : (
+                        <>
+                            <div className="chess-card">
+                                <div className="chess-leaderboard__my-stats">
+                                    <div className="chess-leaderboard__main">
+                                        <Avatar
+                                            name={currentUser.name}
+                                            size="sm"
+                                            src={currentUser.avatar}
+                                            online={currentUser.online}
+                                        />
+                                        <div className="chess-leaderboard__meta">
+                                            <div className="chess-leaderboard__name">{currentUser.name}</div>
+                                            <div className="chess-leaderboard__wld">
+                                                <span className="chess-leaderboard__wld--win">
+                                                    {`برد: ${toPersianDigits(leaderboard?.myStats.wins ?? 0)}`}
+                                                </span>
+                                                <span>{`مساوی: ${toPersianDigits(leaderboard?.myStats.draws ?? 0)}`}</span>
+                                                <span className="chess-leaderboard__wld--loss">
+                                                    {`باخت: ${toPersianDigits(leaderboard?.myStats.losses ?? 0)}`}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span className="chess-leaderboard__elo">
+                                        {`امتیاز: ${toPersianDigits(leaderboard?.myStats.elo ?? 1200)}`}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="chess-card">
+                                <div className="chess-section__label">لیدربرد</div>
+                                {!leaderboard ? (
+                                    <div className="chess-leaderboard__list">
+                                        <div className="skeleton" style={{ height: 54, width: '100%', borderRadius: 9999 }} />
+                                        <div className="skeleton" style={{ height: 54, width: '100%', borderRadius: 9999 }} />
+                                        <div className="skeleton" style={{ height: 54, width: '100%', borderRadius: 9999 }} />
+                                        <div className="skeleton" style={{ height: 54, width: '100%', borderRadius: 9999 }} />
+                                    </div>
+                                ) : leaderboard.entries.length === 0 ? (
+                                    <div className="chess-history__empty">هنوز بازی رتبه‌بندی‌شده‌ای ثبت نشده است</div>
+                                ) : (
+                                    <div className="chess-leaderboard__list">
+                                        {leaderboard.entries.map((entry) => (
+                                            <button
+                                                key={entry.user.chatId}
+                                                type="button"
+                                                className="chess-leaderboard__item"
+                                                onClick={() => onSelectUser(entry.user)}
+                                            >
+                                                <div className="chess-leaderboard__main">
+                                                    <span
+                                                        className={cx(
+                                                            'chess-leaderboard__rank',
+                                                            entry.rank <= 3 && `chess-leaderboard__rank--${entry.rank}`,
+                                                        )}
+                                                    >
+                                                        {toPersianDigits(entry.rank)}
+                                                    </span>
+                                                    <Avatar
+                                                        name={entry.user.name}
+                                                        size="sm"
+                                                        src={entry.user.avatar}
+                                                        online={!entry.user.blockedByOther && Boolean(entry.user.online)}
+                                                    />
+                                                    <div className="chess-leaderboard__meta">
+                                                        <div className="chess-leaderboard__name">
+                                                            <span className="chess-leaderboard__name-text">{entry.user.name}</span>
+                                                            {entry.user.verified && <VerifiedBadge size={15} />}
+                                                        </div>
+                                                        <div className="chess-leaderboard__wld">
+                                                            <span className="chess-leaderboard__wld--win">
+                                                                {`برد: ${toPersianDigits(entry.wins)}`}
+                                                            </span>
+                                                            <span>{`مساوی: ${toPersianDigits(entry.draws)}`}</span>
+                                                            <span className="chess-leaderboard__wld--loss">
+                                                                {`باخت: ${toPersianDigits(entry.losses)}`}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <span className="chess-leaderboard__elo">{toPersianDigits(entry.elo)}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
                     )}
                 </div>
             </div>

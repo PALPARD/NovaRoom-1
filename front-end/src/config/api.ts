@@ -15,21 +15,24 @@ export const API_WS_URL = (() => {
     return API_BASE_URL;
 })();
 
+export const getAuthToken = (): string | null => {
+    const tokenFromStorage = (typeof localStorage !== 'undefined'
+        ? localStorage.getItem('token')
+        : null);
+    if (tokenFromStorage) return tokenFromStorage;
+    const tokenFromCookie = (typeof document !== 'undefined'
+        ? document.cookie.split('; ').find((row) => row.startsWith('auth_token='))?.split('=')[1]
+        : null);
+    return tokenFromCookie ? decodeURIComponent(tokenFromCookie) : null;
+};
+
 export const getHeaders = (includeAuth = true) => {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
     };
 
     if (includeAuth) {
-        const tokenFromCookie = (typeof document !== 'undefined'
-            ? document.cookie.split('; ').find((row) => row.startsWith('auth_token='))?.split('=')[1]
-            : null);
-        const tokenFromStorage = (typeof localStorage !== 'undefined'
-            ? localStorage.getItem('token')
-            : null);
-        const token = tokenFromCookie
-            ? decodeURIComponent(tokenFromCookie)
-            : (tokenFromStorage || null);
+        const token = getAuthToken();
         if (token) headers.Authorization = `Bearer ${token}`;
     }
 
