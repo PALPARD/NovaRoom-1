@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { ArrowDown, ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed, X, Plus, Paperclip, Globe, Loader2 } from 'lucide-react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { ChevronLeft, Copy, Check, SendHorizontal, Brain, PanelRight, PencilLine, Trash2, History, CornerUpLeft, ChevronDown, Pin, PinOff, MessageSquareDashed, X, Plus, Paperclip, Globe, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -284,6 +284,8 @@ export function AIChatRoom({
     const modelDropdownRef = useRef<HTMLDivElement | null>(null);
 
     const msgMenuRef = useRef<HTMLDivElement | null>(null);
+    const inputAreaRef = useRef<HTMLDivElement | null>(null);
+    const [composerHeight, setComposerHeight] = useState(0);
     const aiChatActionMenuRef = useRef<HTMLDivElement | null>(null);
     const aiChatActionBtnRef = useRef<HTMLElement | null>(null);
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -1147,6 +1149,16 @@ export function AIChatRoom({
     const hasComposerChips = Boolean(reasoningEnabled || webSearchEnabled || stagedAttachment || attachmentUploading);
     const isInAIChat = Boolean(temporaryMode || activeAIChatId || messages.length > 0 || isResponding || isTyping);
 
+    useLayoutEffect(() => {
+        const el = inputAreaRef.current;
+        if (!el) return;
+        const update = () => setComposerHeight(el.offsetHeight);
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [hasComposerChips]);
+
     useEffect(() => {
         if (hasComposerChips && isAtBottomRef.current) {
             requestAnimationFrame(() => scrollToBottom(true));
@@ -1293,9 +1305,10 @@ export function AIChatRoom({
             )}
 
             <div
-                className={cx('chat-room__messages', hasComposerChips && 'chat-room__messages--with-chips')}
+                className="chat-room__messages"
                 ref={messagesContainerRef}
                 onScroll={onMessagesScroll}
+                style={{ paddingBottom: (composerHeight || 56) + 26 }}
             >
                 <div className="chat-room__messages-inner">
                     {loading ? null : messages.length === 0 && !isResponding && !isTyping ? (
@@ -2033,53 +2046,30 @@ export function AIChatRoom({
                             setNewMsgCount(0);
                             setShowScrollBtn(false);
                         }}
+                        className="chat-room__send-btn chat-room__send-btn--disabled"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         transition={{ duration: 0.14, ease: 'easeOut' }}
                         style={{
                             position: 'absolute',
-                            right: 18,
-                            bottom: hasComposerChips ? 136 : 96,
-                            width: newMsgCount > 0 ? 'auto' : 44,
-                            height: newMsgCount > 0 ? 'auto' : 44,
-                            justifyContent: 'center',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 10,
-                            padding: newMsgCount > 0 ? '8px 14px' : 0,
-                            borderRadius: 9999,
-                            border: '1px solid var(--glass-border)',
-                            background: 'var(--glass-surface-elevated)',
-                            backdropFilter: 'var(--glass-blur)',
-                            WebkitBackdropFilter: 'var(--glass-blur)',
+                            right: 12,
+                            bottom: (composerHeight || 56) + 18,
+                            zIndex: 12,
                             color: 'var(--text-primary)',
-                            boxShadow: 'var(--glass-shadow), var(--glass-specular)',
                             cursor: 'pointer',
-                            fontSize: 12,
-                            lineHeight: '12px',
                         }}
                     >
-                        <ArrowDown size={16} />
+                        <ChevronDown size={20} />
                         {newMsgCount > 0 && (
-                            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{newMsgCount}</span>
-                                <span
-                                    style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: 999,
-                                        background: 'var(--accent-primary)',
-                                        marginTop: 4,
-                                    }}
-                                />
-                            </span>
+                            <span className="chat-room__scroll-badge">{toPersianDigits(newMsgCount)}</span>
                         )}
                     </motion.button>
                 )}
             </AnimatePresence>
 
             <div
+                ref={inputAreaRef}
                 className="chat-room__input-area"
             >
                 {(reasoningEnabled || webSearchEnabled || stagedAttachment || attachmentUploading) && (

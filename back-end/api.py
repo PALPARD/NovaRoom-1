@@ -4381,8 +4381,8 @@ async def stream_ai_reply(
 
     ai_scope = f"ai:{ai_chat_id}"
     sources: List[Dict[str, Any]] = []
-    urls_to_fetch = list(detected_urls or [])
-    effective_search = bool(search_enabled or urls_to_fetch)
+    urls_to_fetch = list(detected_urls or []) if search_enabled else []
+    effective_search = bool(search_enabled)
     analyzing_attachment = bool(prepared_attachment)
     ai_message_doc = {
         "userId": user_id,
@@ -4745,8 +4745,8 @@ async def handle_ai_message(
             )
             return
 
-    detected_urls = extract_urls_from_text(text)
-    if (use_web_search or detected_urls) and not await consume_search_quota(user_id):
+    detected_urls = extract_urls_from_text(text) if use_web_search else []
+    if use_web_search and not await consume_search_quota(user_id):
         if prepared_attachment:
             await _cleanup_ai_temp_attachment(prepared_attachment)
         await finish_error(

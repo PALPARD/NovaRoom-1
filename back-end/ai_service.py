@@ -415,7 +415,7 @@ async def perform_deepseek_web_search(
                         ).strip()[:400],
                     }
                 )
-            top_to_fetch = sources[:3]
+            top_to_fetch = sources[:1]
             if top_to_fetch:
                 fetched_contents = await asyncio.gather(
                     *(

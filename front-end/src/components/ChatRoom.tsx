@@ -710,12 +710,7 @@ export function ChatRoom({
         
         if (unreadAnchorId || autoJumpedToUnreadRef.current || displayUnreadCount > 0) return;
 
-        const hasOverflow = (c.scrollHeight - c.clientHeight) > 300;
-        if (!hasOverflow) return;
-        if (computeNearBottom()) return;
-
-        
-        if (c.scrollTop < 20) scrollToBottom(false);
+        pinToBottomSync();
     };
 
     const getReplySenderName = (reply: MessageReplyType | null | undefined) => {
@@ -1406,8 +1401,7 @@ export function ChatRoom({
             if (!container) return;
             const mem = scrollMemoryRef.current[chatId];
             if (userHasScrolledRef.current || (mem && mem.userInteracted && !mem.atBottom)) return;
-            markProgrammaticScroll();
-            container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+            pinToBottomSync();
         });
         return () => cancelAnimationFrame(raf);
     }, [chatId, chatContentReady, loading, messages.length, displayUnreadCount, unreadAnchorId]);
