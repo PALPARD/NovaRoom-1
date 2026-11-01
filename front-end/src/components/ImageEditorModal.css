@@ -50,6 +50,7 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 20;
     flex-shrink: 0;
+    touch-action: manipulation !important;
 }
 
 .image-editor-header__right {
@@ -94,18 +95,22 @@
     cursor: pointer;
     transition: all 0.15s ease;
     padding: 0;
-    touch-action: manipulation;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.image-editor-icon-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-    transform: scale(1.04);
+@media (hover: hover) and (pointer: fine) {
+    .image-editor-icon-btn:hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.25);
+        color: #ffffff;
+        transform: scale(1.04);
+    }
 }
 
 .image-editor-icon-btn:active {
-    transform: scale(0.95);
+    transform: scale(0.92) !important;
+    background: rgba(255, 255, 255, 0.18) !important;
 }
 
 .image-editor-icon-btn--active {
@@ -351,6 +356,7 @@
     margin-top: 8px;
     z-index: 20;
     max-width: 100%;
+    touch-action: manipulation !important;
 }
 
 .image-editor-tools-dock {
@@ -364,6 +370,7 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
+    touch-action: manipulation !important;
 }
 
 .image-editor-divider {
@@ -383,6 +390,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 999px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    touch-action: manipulation !important;
 }
 
 .image-editor-crop-tag {
@@ -405,6 +413,7 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     animation: imageEditorSlideUp 0.18s ease-out;
+    touch-action: manipulation !important;
 }
 
 @keyframes imageEditorSlideUp {
@@ -422,6 +431,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    touch-action: manipulation !important;
 }
 
 .image-editor-color-circle {
@@ -431,11 +441,18 @@
     cursor: pointer;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
-    touch-action: manipulation;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.image-editor-color-circle:hover {
-    transform: scale(1.15);
+@media (hover: hover) and (pointer: fine) {
+    .image-editor-color-circle:hover {
+        transform: scale(1.15);
+    }
+}
+
+.image-editor-color-circle:active {
+    transform: scale(0.9);
 }
 
 .image-editor-color-circle--selected {
@@ -447,6 +464,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    touch-action: manipulation !important;
 }
 
 .image-editor-thickness-btn {
@@ -461,12 +479,19 @@
     cursor: pointer;
     transition: all 0.15s ease;
     padding: 0;
-    touch-action: manipulation;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.image-editor-thickness-btn:hover {
-    border-color: rgba(255, 255, 255, 0.35);
-    background: rgba(255, 255, 255, 0.08);
+@media (hover: hover) and (pointer: fine) {
+    .image-editor-thickness-btn:hover {
+        border-color: rgba(255, 255, 255, 0.35);
+        background: rgba(255, 255, 255, 0.08);
+    }
+}
+
+.image-editor-thickness-btn:active {
+    transform: scale(0.9);
 }
 
 .image-editor-thickness-btn--selected {
@@ -489,6 +514,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 20;
     flex-shrink: 0;
+    touch-action: manipulation !important;
 }
 
 .image-editor-actions-group {
@@ -496,6 +522,7 @@
     align-items: center;
     justify-content: center;
     gap: 12px;
+    touch-action: manipulation !important;
 }
 
 /* Accent Send Button (On Right in RTL) */
@@ -513,17 +540,21 @@
     cursor: pointer;
     transition: all 0.18s ease;
     box-shadow: 0 4px 18px color-mix(in srgb, var(--accent-primary, #2563eb) 45%, transparent);
-    touch-action: manipulation;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.image-editor-send-btn:hover {
-    background: var(--accent-hover, #1d4ed8);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 22px color-mix(in srgb, var(--accent-primary, #2563eb) 65%, transparent);
+@media (hover: hover) and (pointer: fine) {
+    .image-editor-send-btn:hover {
+        background: var(--accent-hover, #1d4ed8);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 22px color-mix(in srgb, var(--accent-primary, #2563eb) 65%, transparent);
+    }
 }
 
 .image-editor-send-btn:active {
-    transform: scale(0.96);
+    transform: scale(0.94) !important;
+    opacity: 0.9;
 }
 
 /* Red / Danger Cancel Button (On Left in RTL) */
@@ -540,19 +571,23 @@
     font-weight: 600;
     cursor: pointer;
     transition: all 0.18s ease;
-    touch-action: manipulation;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.image-editor-cancel-btn:hover {
-    background: rgba(239, 68, 68, 0.22);
-    border-color: rgba(239, 68, 68, 0.65);
-    color: #ffffff;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.25);
+@media (hover: hover) and (pointer: fine) {
+    .image-editor-cancel-btn:hover {
+        background: rgba(239, 68, 68, 0.22);
+        border-color: rgba(239, 68, 68, 0.65);
+        color: #ffffff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.25);
+    }
 }
 
 .image-editor-cancel-btn:active {
-    transform: scale(0.96);
+    transform: scale(0.94) !important;
+    opacity: 0.9;
 }
 
 /* Responsive for Mobile Devices (iPhone, Android) */
