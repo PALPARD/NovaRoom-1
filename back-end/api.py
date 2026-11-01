@@ -56,6 +56,8 @@ from email_service import (
     clear_reset_code,
 )
 from api_reaction_helper import aggregate_reactions
+import chess_service
+from chess_service import ChessError
 from file_service import (
     UPLOAD_DIR,
     save_uploaded_file,
@@ -139,10 +141,22 @@ cl_ai_chats = db["ai_chats"]
 cl_ai_usage = db["ai_usage"]
 cl_ai_memories = db["ai_memories"]
 cl_ai_temp_files = db["ai_temp_files"]
+cl_chess_games = db["chess_games"]
 
 active_connections: Dict[str, List[WebSocket]] = {}
 active_ai_connections: Dict[str, List[WebSocket]] = {}
 active_ai_stream_tasks: Dict[str, asyncio.Task] = {}
+chess_rooms: Dict[str, Dict[str, List[WebSocket]]] = {}
+chess_locks: Dict[str, asyncio.Lock] = {}
+chess_timers: Dict[str, asyncio.TimerHandle] = {}
+chess_abandon_tasks: Dict[str, asyncio.Task] = {}
+CHESS_INVITE_TEXT = "♟ دعوت به بازی شطرنج"
+CHESS_SHARE_TEXT = "♟ نتیجه بازی شطرنج"
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
 
 security = HTTPBearer()
 
@@ -1393,10 +1407,15 @@ async def startup_db():
             cl_ai_memories.create_index([("userId", 1), ("updatedAt", -1)]),
             cl_ai_usage.create_index([("userId", 1), ("dateKey", 1)]),
             cl_ai_usage.create_index("updatedAt", expireAfterSeconds=2 * 86400),
+            cl_chess_games.create_index("creatorId"),
+            cl_chess_games.create_index([("players.white", 1), ("status", 1)]),
+            cl_chess_games.create_index([("players.black", 1), ("status", 1)]),
             return_exceptions=True,
         )
         AI_TEMP_DIR.mkdir(parents=True, exist_ok=True)
         await cl_users.update_many({}, {"$set": {"online": False, "wsConnectionCount": 0}})
+        async for g in cl_chess_games.find({"status": {"$in": ["active", "waiting"]}}):
+            chess_schedule(g)
     except Exception as e:
         print(f"Startup DB warning: {e}")
     asyncio.create_task(migrate_unencrypted_messages())
@@ -3047,6 +3066,7 @@ async def get_messages(
             "reasoningDurationSec": int(m.get("reasoningDurationSec", 0) or 0),
             "aiModelKey": m.get("aiModelKey"),
             "aiModelName": m.get("aiModelName"),
+            "chessInvite": m.get("chessInvite"),
         }
         for m in msgs
     ]
@@ -4096,6 +4116,145 @@ async def broadcast(user_ids: Iterable[str], payload: dict):
     await asyncio.gather(
         *(safe_send(uid, payload) for uid in set(user_ids)), return_exceptions=True
     )
+
+
+def chess_online(game_id: str, game: dict) -> dict:
+    room = chess_rooms.get(game_id, {})
+    return {
+        "white": bool(room.get(game["players"]["white"] or "")),
+        "black": bool(room.get(game["players"]["black"] or "")),
+    }
+
+
+async def chess_send_all(game_id: str, game: dict, event: Optional[dict]):
+    payload = {
+        "type": "game_state",
+        "game": chess_service.public_view(game, now_ms(), chess_online(game_id, game)),
+        "event": event,
+    }
+    sockets = [ws for conns in chess_rooms.get(game_id, {}).values() for ws in conns]
+    await asyncio.gather(*(ws.send_json(payload) for ws in sockets), return_exceptions=True)
+
+
+def chess_schedule(game: dict):
+    game_id = game["_id"]
+    handle = chess_timers.pop(game_id, None)
+    if handle:
+        handle.cancel()
+    if game["status"] == "waiting":
+        deadline = game["createdAt"] + chess_service.WAITING_TTL_MS
+        delay = max(0.0, (deadline - now_ms()) / 1000) + 0.05
+        chess_timers[game_id] = asyncio.get_running_loop().call_later(
+            delay, lambda: asyncio.create_task(chess_expire_waiting(game_id))
+        )
+        return
+    deadline = chess_service.deadline_ms(game)
+    if deadline is None:
+        return
+    delay = max(0.0, (deadline - now_ms()) / 1000) + 0.05
+    chess_timers[game_id] = asyncio.get_running_loop().call_later(
+        delay, lambda: asyncio.create_task(chess_on_deadline(game_id))
+    )
+
+
+async def chess_expire_waiting(game_id: str):
+    lock = chess_locks.setdefault(game_id, asyncio.Lock())
+    sockets = []
+    async with lock:
+        game = await cl_chess_games.find_one({"_id": game_id})
+        if not game or game.get("status") != "waiting":
+            return
+        if now_ms() - game.get("createdAt", 0) < chess_service.WAITING_TTL_MS:
+            chess_schedule(game)
+            return
+        await cl_chess_games.delete_one({"_id": game_id})
+        handle = chess_timers.pop(game_id, None)
+        if handle:
+            handle.cancel()
+        room = chess_rooms.pop(game_id, {})
+        sockets = [ws for conns in room.values() for ws in conns]
+    chess_locks.pop(game_id, None)
+    for ws in sockets:
+        try:
+            await ws.send_json({"type": "error", "code": "forbidden"})
+            await ws.close()
+        except Exception:
+            pass
+
+
+async def chess_run(game_id: str, action):
+    lock = chess_locks.setdefault(game_id, asyncio.Lock())
+    async with lock:
+        game = await cl_chess_games.find_one({"_id": game_id})
+        if not game:
+            raise ChessError("not_found")
+        now = now_ms()
+        event = chess_service.check_deadline(game, now)
+        if event is None:
+            event = action(game, now)
+        await cl_chess_games.replace_one({"_id": game_id}, game)
+        chess_schedule(game)
+    await chess_send_all(game_id, game, event)
+    return game, event
+
+
+async def chess_on_deadline(game_id: str):
+    try:
+        await chess_run(game_id, lambda game, now: None)
+    except ChessError:
+        pass
+
+
+async def chess_abandon_after(game_id: str, user_id: str):
+    await asyncio.sleep(chess_service.DISCONNECT_GRACE_MS / 1000)
+    if chess_rooms.get(game_id, {}).get(user_id):
+        return
+    try:
+        await chess_run(
+            game_id,
+            lambda game, now: chess_service.abandon(game, chess_service.color_of(game, user_id), now),
+        )
+    except ChessError:
+        pass
+
+
+async def chess_find_blocking_game(user_id: str, now: int, only_active: bool = False):
+    await cl_chess_games.delete_many(
+        {"status": "waiting", "createdAt": {"$lte": now - chess_service.WAITING_TTL_MS}}
+    )
+    statuses = ["active"] if only_active else ["active", "waiting"]
+    query = {
+        "status": {"$in": statuses},
+        "$or": [{"players.white": user_id}, {"players.black": user_id}, {"creatorId": user_id}],
+    }
+    async for g in cl_chess_games.find(query):
+        return g
+    return None
+
+
+async def chess_player_info(game: dict) -> dict:
+    ids = [i for i in (game["players"]["white"], game["players"]["black"], game["invitedChatId"]) if i]
+    rows = await cl_users.find({"chatId": {"$in": ids}}, {"chatId": 1, "profile": 1}).to_list(len(ids))
+    return {
+        str(r["chatId"]): {
+            "chatId": str(r["chatId"]),
+            "name": (r.get("profile") or {}).get("name", ""),
+            "avatar": (r.get("profile") or {}).get("avatar", ""),
+        }
+        for r in rows
+    }
+
+
+async def chess_response(game: dict) -> dict:
+    view = chess_service.public_view(game, now_ms(), chess_online(game["_id"], game))
+    view["playerInfo"] = await chess_player_info(game)
+    return view
+
+
+def chess_http_error(error: ChessError) -> HTTPException:
+    status = {"not_found": 404, "forbidden": 403}.get(error.code, 400)
+    return HTTPException(status_code=status, detail=error.code)
+
 
 
 async def safe_send_ai(user_id: str, message: dict):
@@ -6207,6 +6366,407 @@ async def delete_ai_message(
 
     await cl_ai_messages.delete_one({"_id": oid})
     return {"success": True, "message": "Message deleted successfully"}
+
+
+class ChessCreateGameRequest(BaseModel):
+    timeControl: str
+    color: str = "random"
+
+
+class ChessInviteRequest(BaseModel):
+    targetChatId: str
+
+
+@app.post("/chess/games")
+@limiter.limit("20/minute")
+async def create_chess_game(
+    request: Request,
+    body: ChessCreateGameRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    now = now_ms()
+    blocking = await chess_find_blocking_game(me, now)
+    if blocking:
+        raise HTTPException(status_code=409, detail="already_in_game")
+    try:
+        game = chess_service.new_game(me, body.color, body.timeControl, now)
+    except ChessError as error:
+        raise chess_http_error(error)
+    game["_id"] = uuid.uuid4().hex
+    await cl_chess_games.insert_one(game)
+    chess_schedule(game)
+    return {"game": await chess_response(game)}
+
+
+@app.get("/chess/games/current")
+@limiter.limit("60/minute")
+async def get_current_chess_game(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    now = now_ms()
+    game = await chess_find_blocking_game(me, now)
+    if not game:
+        return {"game": None}
+    return {"game": await chess_response(game)}
+
+
+@app.get("/chess/games/history")
+@limiter.limit("60/minute")
+async def get_chess_history(
+    request: Request,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=30),
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    query = {
+        "status": "finished",
+        "reason": {"$ne": "aborted"},
+        "$or": [{"players.white": me}, {"players.black": me}],
+    }
+    docs = (
+        await cl_chess_games.find(query)
+        .sort([("finishedAt", -1), ("createdAt", -1), ("_id", -1)])
+        .skip(skip)
+        .limit(limit + 1)
+        .to_list(limit + 1)
+    )
+    has_more = len(docs) > limit
+    page = docs[:limit]
+    games = [await chess_response(g) for g in page]
+    return {"games": games, "hasMore": has_more}
+
+
+@app.get("/chess/games/{game_id}")
+@limiter.limit("120/minute")
+async def get_chess_game(
+    request: Request,
+    game_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    game = await cl_chess_games.find_one({"_id": game_id})
+    if not game:
+        raise HTTPException(status_code=404, detail="not_found")
+    if game.get("status") == "waiting" and now_ms() - game.get("createdAt", 0) >= chess_service.WAITING_TTL_MS:
+        await chess_expire_waiting(game_id)
+        raise HTTPException(status_code=404, detail="not_found")
+    color = chess_service.color_of(game, me)
+    if color is None and game.get("invitedChatId") != me and game.get("status") != "finished":
+        raise HTTPException(status_code=403, detail="forbidden")
+    view = await chess_response(game)
+    view["me"] = color
+    return view
+
+
+@app.post("/chess/games/{game_id}/invite")
+@limiter.limit("30/minute")
+async def invite_to_chess_game(
+    request: Request,
+    game_id: str,
+    body: ChessInviteRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    target_id = str(body.targetChatId or "").strip()
+    if not target_id or target_id == me:
+        raise HTTPException(status_code=400, detail="bad_request")
+    target_user = await cl_users.find_one({"chatId": target_id}, {"chatId": 1})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="not_found")
+    if await _is_direct_blocked_between(me, target_id):
+        raise HTTPException(status_code=403, detail="forbidden")
+    lock = chess_locks.setdefault(game_id, asyncio.Lock())
+    async with lock:
+        game = await cl_chess_games.find_one({"_id": game_id})
+        if not game:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            chess_service.set_invitee(game, me, target_id)
+        except ChessError as error:
+            raise chess_http_error(error)
+        await cl_chess_games.replace_one({"_id": game_id}, game)
+    chat_id = get_chat_id_for_two(me, target_id)
+    chat_doc = await cl_chats.find_one({"_id": chat_id})
+    now_dt = utc_now()
+    if not chat_doc:
+        await cl_chats.insert_one(
+            {
+                "_id": chat_id,
+                "participants": sorted([me, target_id]),
+                "createdAt": now_dt,
+                "updatedAt": now_dt,
+                "lastMessage": None,
+            }
+        )
+    message_doc = {
+        "chatId": chat_id,
+        "senderId": me,
+        "text": CHESS_INVITE_TEXT,
+        "textEncrypted": True,
+        "timestamp": now_dt,
+        "seenBy": [me],
+        "replyTo": None,
+        "reactions": [],
+        "chessInvite": {"gameId": game_id, "timeControl": game["timeControl"]},
+    }
+    inserted = await cl_messages.insert_one(message_doc)
+    msg_id = str(inserted.inserted_id)
+    last_msg = {
+        "id": msg_id,
+        "text": CHESS_INVITE_TEXT,
+        "senderId": me,
+        "timestamp": now_dt,
+        "file": None,
+    }
+    await cl_chats.update_one(
+        {"_id": chat_id},
+        {"$set": {"lastMessage": last_msg, "updatedAt": now_dt}},
+    )
+    await broadcast(
+        [me, target_id],
+        {
+            "type": "new_message",
+            "chatId": chat_id,
+            "message": {
+                "id": msg_id,
+                "chatId": chat_id,
+                "senderId": me,
+                "text": CHESS_INVITE_TEXT,
+                "timestamp": dt_to_epoch_ms(now_dt),
+                "seen": False,
+                "replyTo": None,
+                "edited": False,
+                "reactions": [],
+                "file": None,
+                "clientId": None,
+                "chessInvite": message_doc["chessInvite"],
+            },
+        },
+    )
+    return {"ok": True}
+
+
+@app.post("/chess/games/{game_id}/share")
+@limiter.limit("30/minute")
+async def share_chess_game(
+    request: Request,
+    game_id: str,
+    body: ChessInviteRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    target_id = str(body.targetChatId or "").strip()
+    if not target_id or target_id == me:
+        raise HTTPException(status_code=400, detail="bad_request")
+    game = await cl_chess_games.find_one({"_id": game_id})
+    if not game or game.get("status") != "finished":
+        raise HTTPException(status_code=404, detail="not_found")
+    if chess_service.color_of(game, me) is None:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    chat_doc = await cl_chats.find_one({"_id": target_id})
+    now_dt = utc_now()
+    if chat_doc:
+        participants = chat_doc.get("participants", []) or []
+        if me not in participants:
+            raise HTTPException(status_code=403, detail="forbidden")
+        if chat_doc.get("chatType") != "group":
+            other_id = next((p for p in participants if p != me), "")
+            if other_id and await _is_direct_blocked_between(me, other_id):
+                raise HTTPException(status_code=403, detail="forbidden")
+        chat_id = target_id
+    else:
+        target_user = await cl_users.find_one({"chatId": target_id}, {"chatId": 1})
+        if not target_user:
+            raise HTTPException(status_code=404, detail="not_found")
+        if await _is_direct_blocked_between(me, target_id):
+            raise HTTPException(status_code=403, detail="forbidden")
+        chat_id = get_chat_id_for_two(me, target_id)
+        existing_chat = await cl_chats.find_one({"_id": chat_id})
+        if not existing_chat:
+            await cl_chats.insert_one(
+                {
+                    "_id": chat_id,
+                    "participants": sorted([me, target_id]),
+                    "createdAt": now_dt,
+                    "updatedAt": now_dt,
+                    "lastMessage": None,
+                }
+            )
+        participants = sorted([me, target_id])
+
+    message_doc = {
+        "chatId": chat_id,
+        "senderId": me,
+        "text": CHESS_SHARE_TEXT,
+        "textEncrypted": True,
+        "timestamp": now_dt,
+        "seenBy": [me],
+        "replyTo": None,
+        "reactions": [],
+        "chessInvite": {"gameId": game_id, "timeControl": game["timeControl"], "shared": True},
+    }
+    inserted = await cl_messages.insert_one(message_doc)
+    msg_id = str(inserted.inserted_id)
+    last_msg = {
+        "id": msg_id,
+        "text": CHESS_SHARE_TEXT,
+        "senderId": me,
+        "timestamp": now_dt,
+        "file": None,
+    }
+    await cl_chats.update_one(
+        {"_id": chat_id},
+        {"$set": {"lastMessage": last_msg, "updatedAt": now_dt}},
+    )
+    await broadcast(
+        participants,
+        {
+            "type": "new_message",
+            "chatId": chat_id,
+            "message": {
+                "id": msg_id,
+                "chatId": chat_id,
+                "senderId": me,
+                "text": CHESS_SHARE_TEXT,
+                "timestamp": dt_to_epoch_ms(now_dt),
+                "seen": False,
+                "replyTo": None,
+                "edited": False,
+                "reactions": [],
+                "file": None,
+                "clientId": None,
+                "chessInvite": message_doc["chessInvite"],
+            },
+        },
+    )
+    return {"ok": True}
+
+
+@app.post("/chess/games/{game_id}/accept")
+@limiter.limit("30/minute")
+async def accept_chess_game(
+    request: Request,
+    game_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    game = await cl_chess_games.find_one({"_id": game_id})
+    if not game:
+        raise HTTPException(status_code=404, detail="not_found")
+    if game.get("status") == "waiting" and now_ms() - game.get("createdAt", 0) >= chess_service.WAITING_TTL_MS:
+        await chess_expire_waiting(game_id)
+        raise HTTPException(status_code=404, detail="not_found")
+    if game.get("invitedChatId") != me:
+        raise HTTPException(status_code=403, detail="forbidden")
+    now = now_ms()
+    my_active = await chess_find_blocking_game(me, now, only_active=True)
+    if my_active and my_active["_id"] != game_id:
+        raise HTTPException(status_code=409, detail="already_in_game")
+    creator_active = await chess_find_blocking_game(game["creatorId"], now, only_active=True)
+    if creator_active and creator_active["_id"] != game_id:
+        raise HTTPException(status_code=409, detail="already_in_game")
+    try:
+        game, _ = await chess_run(game_id, lambda g, n: chess_service.join(g, me, n))
+    except ChessError as error:
+        raise chess_http_error(error)
+    return {"game": await chess_response(game)}
+
+
+@app.delete("/chess/games/{game_id}")
+@limiter.limit("30/minute")
+async def delete_chess_game(
+    request: Request,
+    game_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    me = current_user["chatId"]
+    lock = chess_locks.setdefault(game_id, asyncio.Lock())
+    async with lock:
+        game = await cl_chess_games.find_one({"_id": game_id})
+        if not game:
+            raise HTTPException(status_code=404, detail="not_found")
+        if game.get("creatorId") != me or game.get("status") != "waiting":
+            raise HTTPException(status_code=403, detail="forbidden")
+        await cl_chess_games.delete_one({"_id": game_id})
+        handle = chess_timers.pop(game_id, None)
+        if handle:
+            handle.cancel()
+    chess_locks.pop(game_id, None)
+    return {"ok": True}
+
+
+@app.websocket("/ws/chess")
+async def chess_websocket(websocket: WebSocket, token: str = Query(...), gameId: str = Query(...)):
+    await websocket.accept()
+    user = await get_user_from_session_token(token)
+    game = await cl_chess_games.find_one({"_id": gameId}) if user else None
+    user_id = user.get("chatId") if user else None
+    if not game or chess_service.color_of(game, user_id) is None:
+        await websocket.close(code=1008)
+        return
+    room = chess_rooms.setdefault(gameId, {})
+    room.setdefault(user_id, []).append(websocket)
+    pending = chess_abandon_tasks.pop(f"{gameId}:{user_id}", None)
+    if pending:
+        pending.cancel()
+    await chess_send_all(gameId, game, {"kind": "presence"})
+    chess_schedule(game)
+    stamps = []
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=95)
+            except asyncio.TimeoutError:
+                break
+            except ValueError:
+                continue
+            now = time.time()
+            stamps = [t for t in stamps if now - t < 10] + [now]
+            if len(stamps) > 100:
+                await websocket.close(code=1008)
+                break
+            kind = data.get("type") if isinstance(data, dict) else None
+            if kind == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+            actions = {
+                "move": lambda g, n: chess_service.apply_move(g, user_id, data.get("uci"), n),
+                "resign": lambda g, n: chess_service.resign(g, user_id, n),
+                "abort": lambda g, n: chess_service.abort(g, user_id, n),
+                "draw_offer": lambda g, n: chess_service.offer_draw(g, user_id, n),
+                "draw_accept": lambda g, n: chess_service.accept_draw(g, user_id, n),
+                "draw_decline": lambda g, n: chess_service.decline_draw(g, user_id, n),
+            }
+            action = actions.get(kind)
+            if not action:
+                await websocket.send_json({"type": "error", "code": "bad_request"})
+                continue
+            try:
+                await chess_run(gameId, action)
+            except ChessError as error:
+                await websocket.send_json({"type": "error", "code": error.code})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        conns = chess_rooms.get(gameId, {}).get(user_id, [])
+        if websocket in conns:
+            conns.remove(websocket)
+        if not conns:
+            chess_rooms.get(gameId, {}).pop(user_id, None)
+            if not chess_rooms.get(gameId):
+                chess_rooms.pop(gameId, None)
+            latest = await cl_chess_games.find_one({"_id": gameId})
+            if latest:
+                await chess_send_all(gameId, latest, {"kind": "presence"})
+                if latest["status"] == "active" and chess_service.is_timed(latest):
+                    chess_abandon_tasks[f"{gameId}:{user_id}"] = asyncio.create_task(
+                        chess_abandon_after(gameId, user_id)
+                    )
 
 
 if __name__ == "__main__":

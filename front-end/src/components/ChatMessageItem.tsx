@@ -6,6 +6,7 @@ import type { Components } from 'react-markdown';
 import type { FileMetadata, Message } from '../types';
 import { Avatar } from './Avatar';
 import { FileMessage } from './FileMessage';
+import { ChessInviteCard } from './chess/ChessInviteCard';
 import { toPersianDigits } from '../utils/format';
 import { triggerHaptic } from '../utils/haptics';
 import { copyText } from '../utils/clipboard';
@@ -599,14 +600,17 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                             )}
                         </div>
                     )}
-                    {message.text && !(message.reasoningEnabled && message.reasoningContent) && (
+                    {message.chessInvite && (
+                        <ChessInviteCard invite={message.chessInvite} isMine={isMine} />
+                    )}
+                    {message.text && !message.chessInvite && !(message.reasoningEnabled && message.reasoningContent) && (
                         <MemoMessageTextContent
                             rawText={displayText}
                             isBigEmojiOnly={isBigEmojiOnly}
                             emojiOnlyClass={emojiOnlyClass}
                         />
                     )}
-                    {message.text && message.reasoningEnabled && message.reasoningContent && (
+                    {message.text && !message.chessInvite && message.reasoningEnabled && message.reasoningContent && (
                         <div className="ai-reasoning-answer" style={{ marginTop: 0 }}>
                             <MemoMessageTextContent
                                 rawText={displayText}

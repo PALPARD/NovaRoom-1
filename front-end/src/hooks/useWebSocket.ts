@@ -6,6 +6,7 @@ import { decryptMessageClientSide, encryptChatTextClientSide } from '../utils/e2
 
 interface UseWebSocketProps {
     token: string | null;
+    enabled?: boolean;
     onNewMessage: (chatId: string, message: any) => void;
     onMessageEdited?: (chatId: string, message: any) => void;
     onMessageDeleted?: (chatId: string, messageId: string, lastMessage?: any, messageIds?: string[]) => void;
@@ -63,6 +64,7 @@ const eventTypeAliases: Record<string, string> = {
 
 export function useWebSocket({
     token,
+    enabled = true,
     onNewMessage,
     onMessageEdited,
     onMessageDeleted,
@@ -87,6 +89,8 @@ export function useWebSocket({
 }: UseWebSocketProps) {
     const socketRef = useRef<WebSocket | null>(null);
     const isConnectedRef = useRef(false);
+    const enabledRef = useRef(enabled);
+    enabledRef.current = enabled;
     const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
     const [reconnectExhausted, setReconnectExhausted] = useState(false);
 
@@ -169,6 +173,7 @@ export function useWebSocket({
 
     const scheduleReconnect = useCallback(() => {
         if (!shouldReconnectRef.current) return;
+        if (!enabledRef.current) return;
         if (!token) return;
         if (reconnectTimerRef.current != null) return;
         if (reconnectAttemptsRef.current >= WS_MAX_RECONNECT_ATTEMPTS) {
@@ -186,7 +191,7 @@ export function useWebSocket({
     }, [token]);
 
     const connect = useCallback(() => {
-        if (!token) return;
+        if (!token || !enabledRef.current) return;
 
         if (socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING) return;
         if (socketRef.current?.readyState === WebSocket.CLOSING || socketRef.current?.readyState === WebSocket.CLOSED) {
@@ -666,7 +671,7 @@ export function useWebSocket({
     useEffect(() => {
         shouldReconnectRef.current = true;
 
-        if (token) {
+        if (token && enabled) {
             connect();
         } else {
             disconnect();
@@ -675,7 +680,7 @@ export function useWebSocket({
         return () => {
             disconnect();
         };
-    }, [token, connect, disconnect]);
+    }, [token, enabled, connect, disconnect]);
 
     useEffect(() => {
         if (!token) return;

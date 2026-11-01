@@ -81,6 +81,7 @@ export interface Message {
     searchSources?: AISearchSource[];
     analyzingAttachment?: boolean;
     aiAttachment?: AIAttachmentMeta;
+    chessInvite?: ChessInvite;
 }
 
 export interface ChatLastMessage {
@@ -164,4 +165,58 @@ export interface AIMemoryItem {
 }
 
 
-export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage' | 'settingsPrivacy';
+export type ChessColor = 'white' | 'black';
+
+export interface ChessPlayerInfo {
+    chatId: string;
+    name: string;
+    avatar: string;
+}
+
+export interface ChessGameView {
+    id: string;
+    status: 'waiting' | 'active' | 'finished';
+    creatorId: string;
+    invitedChatId: string | null;
+    players: { white: string | null; black: string | null };
+    playerInfo?: Record<string, ChessPlayerInfo>;
+    timeControl: string;
+    baseMs: number;
+    incMs: number;
+    moves: { uci: string; san: string }[];
+    fen: string;
+    turn: ChessColor;
+    clocks: { white: number; black: number } | null;
+    lastMoveAt: number;
+    serverNow: number;
+    ply: number;
+    lastMove: { from: string; to: string } | null;
+    result: string | null;
+    reason: string | null;
+    drawOfferedBy: ChessColor | null;
+    inCheck: boolean;
+    online: { white: boolean; black: boolean };
+    createdAt?: number;
+    finishedAt?: number | null;
+}
+
+export interface ChessEvent {
+    kind: 'move' | 'game_over' | 'draw_offered' | 'draw_declined' | 'opponent_joined' | 'presence';
+    by?: ChessColor;
+    san?: string;
+    uci?: string;
+    capture?: boolean;
+    castle?: boolean;
+    promotion?: boolean;
+    check?: boolean;
+    result?: string;
+    reason?: string;
+}
+
+export interface ChessInvite {
+    gameId: string;
+    timeControl: string;
+    shared?: boolean;
+}
+
+export type View = 'chatList' | 'chatRoom' | 'newChat' | 'profile' | 'profileEdit' | 'settings' | 'settingsDevices' | 'settingsTheme' | 'settingsLogs' | 'settingsDataStorage' | 'settingsPrivacy' | 'chess';

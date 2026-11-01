@@ -22,6 +22,7 @@ import { decryptBioClientSide, decryptMessageClientSide, encryptChatTextClientSi
 import { clearCachedTextValues, clearChatSnapshots, getChatSnapshot, saveChatSnapshot } from './utils/mediaCache';
 import { useDarkMode } from './hooks/useDarkMode';
 import { BottomNavbar } from './components/BottomNavbar';
+import { ChessScreen } from './components/chess/ChessScreen';
 import './App.css';
 
 
@@ -151,6 +152,7 @@ export function App() {
     const DESKTOP_SIDEBAR_KEY = 'desktopLayout:chatListWidth';
     const navigate = useNavigate();
     const location = useLocation();
+    const isChessGameRoute = location.pathname.startsWith('/chess/game/');
     const [authToken, setAuthToken] = useState<string | null>(() => {
         const fromCookie = typeof document !== 'undefined'
             ? document.cookie.split('; ').find((row) => row.startsWith('auth_token='))?.split('=')[1]
@@ -1446,6 +1448,7 @@ export function App() {
     
     const { sendMessage: sendViaWS, editMessage: editViaWS, deleteMessage: deleteViaWS, sendSeen, sendTyping, sendUploadStatus, reconnectExhausted, reconnectNow, sendAIMessage, stopAIGeneration } = useWebSocket({
         token: authToken,
+        enabled: !isChessGameRoute,
         onNewMessage: handleNewMessage,
         onMessageEdited: handleMessageEdited,
         onMessageDeleted: handleMessageDeleted,
@@ -1573,6 +1576,29 @@ export function App() {
 
     const hasInitialWsConnectRef = useRef(false);
     const prevWsConnectedRef = useRef(false);
+    const [isUpdating, setIsUpdating] = useState(false);
+    const wasInChessGameRef = useRef(false);
+
+    useEffect(() => {
+        if (isChessGameRoute) {
+            wasInChessGameRef.current = true;
+            return;
+        }
+        if (!wasInChessGameRef.current) return;
+        wasInChessGameRef.current = false;
+        setIsUpdating(true);
+    }, [isChessGameRoute]);
+
+    useEffect(() => {
+        if (!isUpdating || !wsConnected) return;
+        let cancelled = false;
+        loadChats(false).finally(() => {
+            if (!cancelled) setIsUpdating(false);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [isUpdating, wsConnected, loadChats]);
 
     useEffect(() => {
         const wasConnected = prevWsConnectedRef.current;
@@ -1632,7 +1658,7 @@ export function App() {
         };
 
         const intervalId = window.setInterval(() => {
-            if (wsConnected) return;
+            if (wsConnected || isChessGameRoute) return;
             void syncFromServer();
         }, 15000);
 
@@ -1650,6 +1676,7 @@ export function App() {
     }, [
         isAuthenticated,
         wsConnected,
+        isChessGameRoute,
         loadChats,
         fetchPagedMessages,
         currentUser,
@@ -1899,6 +1926,14 @@ export function App() {
         }
         if (pathname === '/settings/devices/logs') {
             setView('settingsLogs');
+            return;
+        }
+
+        if (pathname === '/chess' || pathname === '/chess/' || /^\/chess\/game\/[A-Za-z0-9]+$/.test(pathname)) {
+            setShowAIChat(false);
+            setPendingUser(null);
+            setActiveChatId(null);
+            setView('chess');
             return;
         }
 
@@ -2655,9 +2690,14 @@ export function App() {
         }
     }, [aiResponding, aiRespondingChatId, navigate]);
 
-    const handleSelectNavTab = useCallback((tab: 'ai' | 'chats' | 'settings' | 'profile') => {
+    const handleSelectNavTab = useCallback((tab: 'ai' | 'chess' | 'chats' | 'settings' | 'profile') => {
         if (tab === 'ai') {
             handleOpenAIChat();
+        } else if (tab === 'chess') {
+            setShowAIChat(false);
+            setActiveChatId(null);
+            setView('chess');
+            navigate('/chess');
         } else if (tab === 'chats') {
             if (showAIChat || view !== 'chatList') {
                 setShowAIChat(false);
@@ -3041,8 +3081,10 @@ export function App() {
     const currentSearchParams = new URLSearchParams(location.search);
     const isInfoRouteActive = currentSearchParams.get('panel') === 'info' && view !== 'profile' && view !== 'profileEdit';
 
-    const activeNavTab: 'ai' | 'chats' | 'settings' | 'profile' = showAIChat
+    const activeNavTab: 'ai' | 'chess' | 'chats' | 'settings' | 'profile' = showAIChat
         ? 'ai'
+        : view === 'chess'
+        ? 'chess'
         : view === 'profile' || view === 'profileEdit'
         ? 'profile'
         : String(view).startsWith('settings')
@@ -3054,13 +3096,14 @@ export function App() {
             <NotificationCenter />
             <div className={cx('app', 'app--resizable-desktop')} style={desktopSidebarWidth != null ? ({ ['--desktop-sidebar-width' as string]: `${desktopSidebarWidth}px` }) : undefined}>
                 {!showAIChat && (
-                    <div className={cx('app__sidebar', (view === 'chatRoom' || view === 'newChat' || view === 'profile' || view === 'profileEdit' || String(view).startsWith('settings')) && 'app__sidebar--hidden-mobile')}>
+                    <div className={cx('app__sidebar', (view === 'chatRoom' || view === 'newChat' || view === 'chess' || view === 'profile' || view === 'profileEdit' || String(view).startsWith('settings')) && 'app__sidebar--hidden-mobile')}>
                         <ChatList
                             chats={chats}
                             currentUser={currentUser!}
                             activeChatId={activeChatId}
-                            wsConnected={wsConnected}
+                            wsConnected={wsConnected || isChessGameRoute}
                             wsReconnectExhausted={wsReconnectExhausted}
+                            isUpdating={isUpdating}
                             interactiveOnlineUsers={interactiveOnlineUsers}
                             onSelectChat={handleSelectChat}
                             onNewChatClick={handleNewChatClick}
@@ -3140,6 +3183,25 @@ export function App() {
                                 onJoinGroup={handleJoinGroup}
                                 currentUser={currentUser}
                             />
+                        ) : view === 'chess' && currentUser ? (
+                            <>
+                                <ChessScreen
+                                    currentUser={currentUser}
+                                    gameId={location.pathname.match(/^\/chess\/game\/([A-Za-z0-9]+)$/)?.[1] ?? null}
+                                    authToken={authToken}
+                                    chats={chats}
+                                    onOpenGame={(id) => navigate(`/chess/game/${id}`)}
+                                    onExitGame={() => navigate('/chess')}
+                                />
+                                {!isChessGameRoute && (
+                                    <BottomNavbar
+                                        activeTab={activeNavTab}
+                                        onSelectTab={handleSelectNavTab}
+                                        currentUser={currentUser}
+                                        hasUnseenSettings={unseenLoginCount > 0}
+                                    />
+                                )}
+                            </>
                         ) : (view === 'profile' || view === 'profileEdit') && currentUser ? (
                             <>
                                 <Profile

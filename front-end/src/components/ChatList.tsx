@@ -17,6 +17,7 @@ interface ChatListProps {
     activeChatId: string | null;
     wsConnected: boolean;
     wsReconnectExhausted: boolean;
+    isUpdating?: boolean;
     interactiveOnlineUsers?: Record<string, number>;
     onSelectChat: (chatId: string) => void;
     onNewChatClick: () => void;
@@ -371,6 +372,7 @@ export const ChatList = memo(function ChatList({
     activeChatId,
     wsConnected,
     wsReconnectExhausted,
+    isUpdating = false,
     interactiveOnlineUsers,
     onSelectChat,
     onNewChatClick,
@@ -871,7 +873,7 @@ export const ChatList = memo(function ChatList({
                         <div className="chat-list__title-wrap">
                             <span className="chat-list__brand-logo" aria-hidden="true" />
                             <h1 className="chat-list__title">
-                                {wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...')}
+                                {isUpdating ? 'Updating...' : (wsConnected ? 'NovaRoom' : (wsReconnectExhausted ? 'Disconnected' : 'Connecting...'))}
                             </h1>
                             {!wsConnected && wsReconnectExhausted && (
                                 <button

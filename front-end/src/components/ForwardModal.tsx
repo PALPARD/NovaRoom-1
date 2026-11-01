@@ -11,6 +11,8 @@ interface ForwardModalProps {
     currentUserId: string;
     currentUserVerified?: boolean;
     forwardCount?: number;
+    title?: string;
+    hideSavedMessages?: boolean;
     onClose: () => void;
     onForward?: (chatId: string) => void;
     onSelectTargetChat?: (chatId: string) => void;
@@ -20,7 +22,7 @@ interface ForwardModalProps {
 const toPersianDigits = (num: number | string) =>
     String(num).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[parseInt(d, 10)]);
 
-export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified = false, forwardCount, onClose, onForward, onSelectTargetChat, onSelectChat }: ForwardModalProps) {
+export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified = false, forwardCount, title, hideSavedMessages = false, onClose, onForward, onSelectTargetChat, onSelectChat }: ForwardModalProps) {
     const [searchQuery, setSearchQuery] = useState('');
     const dragControls = useDragControls();
 
@@ -68,7 +70,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
         )
         : availableChats;
 
-    const showSavedMessages = !searchQuery;
+    const showSavedMessages = !searchQuery && !hideSavedMessages;
     const isGroupChat = (chat: Chat) =>
         chat.chatType === 'group' || chat.id.startsWith('grp_') || Boolean(chat.otherUser?.isGroup);
 
@@ -108,7 +110,7 @@ export function ForwardModal({ isOpen, chats, currentUserId, currentUserVerified
                             <div className="forward-sheet__grabber" aria-hidden="true" />
 
                             <div className="forward-sheet__header">
-                                <h2>{forwardCount && forwardCount > 1 ? `فوروارد ${toPersianDigits(forwardCount)} پیام` : 'فوروارد پیام'}</h2>
+                                <h2>{title ?? (forwardCount && forwardCount > 1 ? `فوروارد ${toPersianDigits(forwardCount)} پیام` : 'فوروارد پیام')}</h2>
                             </div>
                         </div>
 

@@ -30,6 +30,15 @@ export function PlumpyChatIcon({ size = 24, className }: { size?: number; classN
     );
 }
 
+export function PlumpyChessIcon({ size = 24, className }: { size?: number; className?: string }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true">
+            <path d="M18.5,18c-0.176,0-12.824,0-13,0C4.672,18,4,18.672,4,19.5S4.672,21,5.5,21c0.176,0,12.824,0,13,0c0.828,0,1.5-0.672,1.5-1.5S19.328,18,18.5,18z" fill="currentColor" />
+            <path d="M18,18v-0.025c0-1.151-0.612-2.199-1.582-2.819C14.953,14.219,13,12.5,13,10h3c1.105,0,2-0.895,2-2v0c0-0.63-0.296-1.222-0.8-1.6L14,4l0-0.921c0-0.606-0.537-1.084-1.137-0.999C8.983,2.632,6,5.968,6,10v8H18z" opacity=".35" fill="currentColor" />
+        </svg>
+    );
+}
+
 export function PlumpySettingsIcon({ size = 24, className }: { size?: number; className?: string }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true">
@@ -49,8 +58,8 @@ export function PlumpyUserIcon({ size = 24, className }: { size?: number; classN
 }
 
 export interface BottomNavbarProps {
-    activeTab: 'ai' | 'chats' | 'settings' | 'profile';
-    onSelectTab: (tab: 'ai' | 'chats' | 'settings' | 'profile') => void;
+    activeTab: 'ai' | 'chess' | 'chats' | 'settings' | 'profile';
+    onSelectTab: (tab: 'ai' | 'chess' | 'chats' | 'settings' | 'profile') => void;
     currentUser?: User | null;
     hasUnseenSettings?: boolean;
 }
@@ -80,6 +89,29 @@ export function BottomNavbar({ activeTab, onSelectTab, currentUser, hasUnseenSet
                     </AnimatePresence>
                     <span className="bottom-navbar__icon">
                         <PlumpyBotIcon />
+                    </span>
+                </button>
+
+                <button
+                    type="button"
+                    className={cx('bottom-navbar__tab', activeTab === 'chess' && 'bottom-navbar__tab--active')}
+                    onClick={() => onSelectTab('chess')}
+                    aria-label="شطرنج"
+                >
+                    <AnimatePresence>
+                        {activeTab === 'chess' && (
+                            <motion.span
+                                key="pill-chess"
+                                className="bottom-navbar__pill"
+                                initial={{ opacity: 0, scale: 0.6 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.6 }}
+                                transition={{ duration: 0.18, ease: 'easeOut' }}
+                            />
+                        )}
+                    </AnimatePresence>
+                    <span className="bottom-navbar__icon">
+                        <PlumpyChessIcon />
                     </span>
                 </button>
 
