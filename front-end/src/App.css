@@ -7735,6 +7735,32 @@ html.no-blur-effect .chat-list__header,
     display: block;
 }
 
+.chess__emote-mute {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 9999px;
+    border: 1px solid var(--border-primary);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.chess__emote-mute:hover,
+.chess__emote-mute--active {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+.chess__emote-mute:active {
+    transform: scale(0.94);
+}
+
 .chess-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;

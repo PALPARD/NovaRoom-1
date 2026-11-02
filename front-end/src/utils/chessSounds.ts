@@ -1,3 +1,5 @@
+import type { ChessEmote } from '../types';
+
 export type ChessSound = 'move-self' | 'move-opponent' | 'capture' | 'castle' | 'move-check' | 'promote' | 'game-start' | 'game-end' | 'illegal';
 
 let ctx: AudioContext | null = null;
@@ -102,6 +104,22 @@ export const playChessSound = (name: ChessSound) => {
             wood(c, t, 300, 0.6, 0.8);
             wood(c, t + 0.08, 300, 0.6, 0.8);
         }
+    } catch {
+        return;
+    }
+};
+
+const emoteAudio = new Map<ChessEmote, HTMLAudioElement>();
+
+export const playChessEmoteSound = (emote: ChessEmote) => {
+    try {
+        let audio = emoteAudio.get(emote);
+        if (!audio) {
+            audio = new Audio(`/sounds/chess/${emote}.mp3`);
+            emoteAudio.set(emote, audio);
+        }
+        audio.currentTime = 0;
+        void audio.play().catch(() => {});
     } catch {
         return;
     }
