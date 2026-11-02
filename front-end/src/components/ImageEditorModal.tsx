@@ -33,9 +33,11 @@ function TelegramRedoIcon({ size = 20 }: { size?: number }) {
 
 export interface ImageEditorModalProps {
     imageFile: File;
+    imageDataUrl?: string;
     initialStrokes?: Stroke[];
     initialRedoStack?: Stroke[];
     initialCropRect?: CropRect;
+    onLoadedDataUrl?: (dataUrl: string) => void;
     onSend: (
         fileToSend: File,
         isEdited: boolean,
@@ -78,9 +80,11 @@ const THICKNESS_PRESETS = [
 
 export function ImageEditorModal({
     imageFile,
+    imageDataUrl,
     initialStrokes,
     initialRedoStack,
     initialCropRect,
+    onLoadedDataUrl,
     onSend,
     onCancel,
 }: ImageEditorModalProps) {
@@ -125,16 +129,12 @@ export function ImageEditorModal({
     // Canvas display scale tracker
     const [canvasDisplaySize, setCanvasDisplaySize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-    // Direct High-Performance Image Loader (Zero RAM spike, no toDataURL encoding, instantaneous)
+    // Bulletproof Persistent Image Loader (Supports cached in-memory data URL, FileReader, and ObjectURL fallback)
     useEffect(() => {
         let isMounted = true;
-        const reader = new FileReader();
 
-        reader.onload = () => {
-            if (!isMounted) return;
-            const dataUrl = reader.result as string;
+        const processImage = (src: string) => {
             const img = new Image();
-
             img.onload = () => {
                 if (!isMounted) return;
                 let nw = img.naturalWidth || img.width;
@@ -167,19 +167,44 @@ export function ImageEditorModal({
                 setImageLoaded(true);
             };
 
-            img.onerror = () => {
-                console.error('Error loading image in ImageEditorModal');
+            img.onerror = (e) => {
+                console.error('Error loading image source in ImageEditorModal:', e);
             };
 
-            img.src = dataUrl;
+            img.src = src;
         };
 
-        reader.readAsDataURL(imageFile);
+        if (imageDataUrl) {
+            // FAST & PERSISTENT PATH: Loaded directly from in-memory cached base64
+            // Never fails even if mobile OS revokes native ContentProvider file stream!
+            processImage(imageDataUrl);
+        } else {
+            // First time load: Read file via FileReader
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (!isMounted) return;
+                const dataUrl = reader.result as string;
+                onLoadedDataUrl?.(dataUrl);
+                processImage(dataUrl);
+            };
+
+            reader.onerror = (err) => {
+                console.warn('FileReader failed, attempting URL.createObjectURL fallback:', err);
+                try {
+                    const objectUrl = URL.createObjectURL(imageFile);
+                    processImage(objectUrl);
+                } catch (fallbackErr) {
+                    console.error('ObjectURL fallback failed:', fallbackErr);
+                }
+            };
+
+            reader.readAsDataURL(imageFile);
+        }
 
         return () => {
             isMounted = false;
         };
-    }, [imageFile]);
+    }, [imageFile, imageDataUrl]);
 
     // Redraw Canvas (Full background + all committed strokes)
     const redrawCanvas = useCallback(() => {
@@ -667,9 +692,16 @@ export function ImageEditorModal({
             {/* Canvas Viewport */}
             <div className="image-editor-body">
                 <div className="image-editor-canvas-stage" ref={stageRef}>
+                    {!imageLoaded && (
+                        <div className="image-editor-stage-loader">
+                            <div className="image-editor-spinner" />
+                            <span className="image-editor-loader-text">در حال بارگذاری تصویر...</span>
+                        </div>
+                    )}
                     <canvas
                         ref={canvasRef}
                         className={`image-editor-canvas ${activeTool === 'draw' ? 'image-editor-canvas--drawable' : ''}`}
+                        style={{ opacity: imageLoaded ? 1 : 0 }}
                         onPointerDown={handleDrawingPointerDown}
                     />
 
