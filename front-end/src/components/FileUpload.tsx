@@ -47,7 +47,6 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
 
     const editorSessionRef = useRef<{
         originalFile: File;
-        dataUrl?: string;
         strokes: any[];
         redoStack: any[];
         cropRect: any;
@@ -68,12 +67,11 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
     });
 
     useEffect(() => {
-        // Only clear session if file is genuinely detached AND not currently uploading/editing
-        if (!fileAttached && !uploading && !pendingImageForEditor) {
+        if (!fileAttached) {
             editorSessionRef.current = null;
             onEditorStateChangeRef.current?.(null);
         }
-    }, [fileAttached, uploading, pendingImageForEditor]);
+    }, [fileAttached]);
 
     const clearPickerCloseTimer = () => {
         if (pickerCloseTimerRef.current != null) {
@@ -163,20 +161,11 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             if (editorSessionRef.current?.originalFile !== file) {
                 editorSessionRef.current = {
                     originalFile: file,
-                    dataUrl: undefined,
                     strokes: [],
                     redoStack: [],
                     cropRect: { x: 0, y: 0, width: 0, height: 0 },
                     isEdited: false,
                 };
-                // Pre-cache dataUrl immediately while native file handle is fresh and hot
-                const reader = new FileReader();
-                reader.onload = () => {
-                    if (editorSessionRef.current && reader.result) {
-                        editorSessionRef.current.dataUrl = reader.result as string;
-                    }
-                };
-                reader.readAsDataURL(file);
             }
             setPendingImageForEditor(file);
             return;
@@ -531,15 +520,9 @@ export function FileUpload({ token, chatId, onFileUploaded, fileAttached = false
             {pendingImageForEditor && (
                 <ImageEditorModal
                     imageFile={editorSessionRef.current?.originalFile || pendingImageForEditor}
-                    imageDataUrl={editorSessionRef.current?.dataUrl}
                     initialStrokes={editorSessionRef.current?.strokes}
                     initialRedoStack={editorSessionRef.current?.redoStack}
                     initialCropRect={editorSessionRef.current?.cropRect}
-                    onLoadedDataUrl={(url: string) => {
-                        if (editorSessionRef.current) {
-                            editorSessionRef.current.dataUrl = url;
-                        }
-                    }}
                     onSend={(fileToSend, isEdited, editorState) => {
                         setPendingImageForEditor(null);
                         if (editorSessionRef.current) {
