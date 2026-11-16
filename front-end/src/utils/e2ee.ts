@@ -340,21 +340,32 @@ export const unlockE2EEBundleWithPassword = async (
     bundle: { publicKey?: string | null; encryptedPrivateKey?: string | null; pbkdf2Salt?: string | null },
 ): Promise<boolean> => {
     if (!bundle?.publicKey || !bundle?.encryptedPrivateKey || !bundle?.pbkdf2Salt || !hasWebCrypto()) return false;
-    try {
-        const salt = fromBase64Url(bundle.pbkdf2Salt);
-        const packed = fromBase64Url(bundle.encryptedPrivateKey);
-        if (packed.length <= E2EE_GCM_IV_SIZE) return false;
-        const iv = packed.subarray(0, E2EE_GCM_IV_SIZE);
-        const cipher = packed.subarray(E2EE_GCM_IV_SIZE);
-        const wrappingKey = await derivePasswordWrappingKey(password, salt);
-        const pkcs8 = new Uint8Array(
-            await crypto.subtle.decrypt({ name: 'AES-GCM', iv: asBufferSource(iv) }, wrappingKey, asBufferSource(cipher)),
-        );
-        saveLocalE2EEIdentity(userChatId, bundle.publicKey, toBase64Url(pkcs8));
-        return true;
-    } catch {
-        return false;
+    const salt = fromBase64Url(bundle.pbkdf2Salt);
+    const packed = fromBase64Url(bundle.encryptedPrivateKey);
+    if (packed.length <= E2EE_GCM_IV_SIZE) return false;
+    const iv = packed.subarray(0, E2EE_GCM_IV_SIZE);
+    const cipher = packed.subarray(E2EE_GCM_IV_SIZE);
+
+    for (const iters of [PBKDF2_ITERATIONS, 120000]) {
+        try {
+            const baseKey = await crypto.subtle.importKey('raw', asBufferSource(toUtf8(password)), 'PBKDF2', false, ['deriveKey']);
+            const wrappingKey = await crypto.subtle.deriveKey(
+                { name: 'PBKDF2', salt: asBufferSource(salt), iterations: iters, hash: 'SHA-256' },
+                baseKey,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['encrypt', 'decrypt'],
+            );
+            const pkcs8 = new Uint8Array(
+                await crypto.subtle.decrypt({ name: 'AES-GCM', iv: asBufferSource(iv) }, wrappingKey, asBufferSource(cipher)),
+            );
+            saveLocalE2EEIdentity(userChatId, bundle.publicKey, toBase64Url(pkcs8));
+            return true;
+        } catch {
+            // try legacy/alternative iteration count
+        }
     }
+    return false;
 };
 
 export const saveLocalE2EEIdentity = (userChatId: string, publicKeyBase64: string, privateKeyPkcs8Base64: string) => {
