@@ -3696,18 +3696,24 @@ async def login(req: LoginRequest, request: Request):
     if not ident:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if "@" in ident:
+    clean_ident = ident.lstrip("@").strip()
+    user = None
+    if "@" in clean_ident and "." in clean_ident.split("@")[-1]:
         user = await cl_users.find_one(
-            {"$or": [{"login.email": ident}, {"login.email": ident.lower()}]}
+            {"$or": [{"login.email": clean_ident}, {"login.email": clean_ident.lower()}]}
         )
-    else:
+    if not user:
         user = await cl_users.find_one(
             {
                 "profile.username": {
-                    "$regex": f"^{re.escape(normalize_username(ident))}$",
+                    "$regex": f"^{re.escape(normalize_username(clean_ident))}$",
                     "$options": "i",
                 }
             }
+        )
+    if not user and "@" in ident:
+        user = await cl_users.find_one(
+            {"$or": [{"login.email": ident}, {"login.email": ident.lower()}]}
         )
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
