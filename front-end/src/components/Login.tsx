@@ -74,30 +74,44 @@ export function Login({ onLoginSuccess }: LoginProps) {
         setLoading(true);
 
         try {
-            const { bundle: candidateBundle, privateKeyPkcs8Base64 } = await generateUserE2EEBundle(password);
-            const data = await apiFetch('/auth/login', {
-                method: 'POST',
-                body: JSON.stringify({
-                    identifier,
-                    password,
-                    deviceName: detectDeviceName(),
-                    e2ee: candidateBundle,
-                }),
+            let candidateBundle: any = null;
+            let privateKeyPkcs8Base64 = "";
+            try {
+                const generated = await generateUserE2EEBundle(password);
+                if (generated) {
+                    candidateBundle = generated.bundle;
+                    privateKeyPkcs8Base64 = generated.privateKeyPkcs8Base64;
+                }
+            } catch {
+            }
+
+            const bodyPayload: any = {
+                identifier,
+                password,
+                deviceName: detectDeviceName(),
+            };
+            if (candidateBundle) {
+                bodyPayload.e2ee = candidateBundle;
+            }
+
+            const data = await apiFetch("/auth/login", {
+                method: "POST",
+                body: JSON.stringify(bodyPayload),
             });
 
-            const userChatId = String(data?.user?.chatId || '');
+            const userChatId = String(data?.user?.chatId || "");
             const storedBundle = data?.user?.e2ee;
-            if (storedBundle?.publicKey && storedBundle.publicKey !== candidateBundle.publicKey) {
+            if (storedBundle?.publicKey && candidateBundle && storedBundle.publicKey !== candidateBundle.publicKey) {
                 const unlocked = await unlockE2EEBundleWithPassword(userChatId, password, storedBundle);
                 if (!unlocked) {
-                    setError('رمز عبور با کلیدهای رمزنگاری این حساب هم‌خوانی ندارد');
+                    setError("رمز عبور با کلیدهای رمزنگاری این حساب هم‌خوانی ندارد");
                     return;
                 }
-            } else {
+            } else if (candidateBundle) {
                 saveLocalE2EEIdentity(userChatId, candidateBundle.publicKey, privateKeyPkcs8Base64);
             }
 
-            localStorage.setItem('token', data.token);
+            localStorage.setItem("token", data.token);
             onLoginSuccess(data.user, data.token);
         } catch (err: any) {
             setError(getErrorMessage(err));

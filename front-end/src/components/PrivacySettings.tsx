@@ -293,7 +293,8 @@ export function PrivacySettings({ onBack, currentUser, onUpdateCurrentUser, onLo
         setPasswordSaving(true);
         try {
             const rewrapped = await rewrapPrivateKeyWithNewPassword(newPassword, undefined, undefined, currentUser?.chatId || '');
-            const e2ee = rewrapped || (await generateUserE2EEBundle(newPassword)).bundle;
+            const generated = await generateUserE2EEBundle(newPassword);
+            const e2ee = rewrapped || generated?.bundle || null;
             await apiFetch('/auth/change-password', {
                 method: 'POST',
                 body: JSON.stringify({ currentPassword, newPassword, e2ee }),

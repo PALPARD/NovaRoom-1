@@ -150,40 +150,56 @@ export function Register({ onRegisterSuccess, onBackToLogin }: RegisterProps) {
         setLoading(true);
 
         try {
-            const { bundle: e2eeBundle, privateKeyPkcs8Base64 } = await generateUserE2EEBundle(password);
+            let e2eeBundle: any = null;
+            let privateKeyPkcs8Base64 = "";
+            try {
+                const generated = await generateUserE2EEBundle(password);
+                if (generated) {
+                    e2eeBundle = generated.bundle;
+                    privateKeyPkcs8Base64 = generated.privateKeyPkcs8Base64;
+                }
+            } catch {
+            }
+
+            const bodyPayload: any = {
+                token,
+                name: name.trim(),
+                username: username.trim(),
+                password,
+                deviceName: detectDeviceName(),
+            };
+            if (e2eeBundle) {
+                bodyPayload.e2ee = e2eeBundle;
+            }
+
             const response = await fetch(`${API_BASE_URL}/auth/register`, {
-                method: 'POST',
+                method: "POST",
                 headers: {
-                    'Content-Type': 'application/json',
-                    'ngrok-skip-browser-warning': 'true',
+                    "Content-Type": "application/json",
+                    "ngrok-skip-browser-warning": "true",
                 },
-                body: JSON.stringify({
-                    token,
-                    name: name.trim(),
-                    username: username.trim(),
-                    password,
-                    deviceName: detectDeviceName(),
-                    e2ee: e2eeBundle,
-                }),
+                body: JSON.stringify(bodyPayload),
             });
 
             if (!response.ok) {
                 const body = await response.json().catch(() => ({}));
-                const detail = String(body?.detail || '');
+                const detail = String(body?.detail || "");
                 if (response.status === 409) {
-                    setError('این نام کاربری قبلاً گرفته شده است');
-                } else if (response.status === 400 && detail.toLowerCase().includes('link')) {
-                    setError('این لینک نامعتبر یا منقضی شده است');
+                    setError("این نام کاربری قبلاً گرفته شده است");
+                } else if (response.status === 400 && detail.toLowerCase().includes("link")) {
+                    setError("این لینک نامعتبر یا منقضی شده است");
                 } else if (response.status === 400) {
-                    setError(detail || 'درخواست نامعتبر است');
+                    setError(detail || "درخواست نامعتبر است");
                 } else {
-                    setError('خطای سرور. لطفاً بعداً تلاش کنید');
+                    setError("خطای سرور. لطفاً بعداً تلاش کنید");
                 }
                 return;
             }
 
             const data = await response.json();
-            saveLocalE2EEIdentity(String(data?.user?.chatId || ''), e2eeBundle.publicKey, privateKeyPkcs8Base64);
+            if (e2eeBundle) {
+                saveLocalE2EEIdentity(String(data?.user?.chatId || ""), e2eeBundle.publicKey, privateKeyPkcs8Base64);
+            }
             localStorage.setItem('token', data.token);
             onRegisterSuccess(data.user, data.token);
         } catch {

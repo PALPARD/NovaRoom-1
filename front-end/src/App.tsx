@@ -22,7 +22,7 @@ import { cx } from './utils/cx';
 import { NotificationCenter } from './components/NotificationCenter';
 import { PwaInstallModal } from './components/PwaInstallModal';
 import { notify } from './utils/notificationBus';
-import { clearLocalE2EEIdentity, decryptBioClientSide, decryptClientText, decryptMessageClientSide, encryptChatTextClientSide, loadLocalE2EEIdentity, registerPeerPublicKey } from './utils/e2ee';
+import { clearLocalE2EEIdentity, decryptBioClientSide, decryptClientText, decryptMessageClientSide, encryptChatTextClientSide, hasWebCrypto, loadLocalE2EEIdentity, registerPeerPublicKey } from './utils/e2ee';
 import { clearCachedTextValues, clearChatSnapshots, getChatSnapshot, saveChatSnapshot } from './utils/mediaCache';
 import { clearChessCache } from './utils/chessCache';
 import {
@@ -2069,7 +2069,7 @@ export function App() {
         apiFetch('/profile/me')
             .then(async (user) => {
                 const uid = String(user?.chatId || '');
-                if (!uid || !loadLocalE2EEIdentity(uid)) {
+                if (!uid || (hasWebCrypto() && !loadLocalE2EEIdentity(uid))) {
                     localStorage.removeItem('token');
                     document.cookie = 'auth_token=; path=/; max-age=0; samesite=lax';
                     setAuthToken(null);

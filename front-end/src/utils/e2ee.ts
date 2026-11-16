@@ -247,7 +247,7 @@ const randomBytes = (length: number): Uint8Array => {
     return out;
 };
 
-const hasWebCrypto = () => typeof crypto !== 'undefined' && !!crypto.subtle;
+export const hasWebCrypto = () => typeof crypto !== 'undefined' && !!crypto.subtle;
 
 let activeUserChatId = '';
 let activePrivateKeyPkcs8: Uint8Array | null = null;
@@ -295,7 +295,8 @@ const packWrappedPrivateKey = async (
 
 export const generateUserE2EEBundle = async (
     password: string,
-): Promise<{ bundle: E2EEBundle; privateKeyPkcs8Base64: string }> => {
+): Promise<{ bundle: E2EEBundle; privateKeyPkcs8Base64: string } | null> => {
+    if (!hasWebCrypto()) return null;
     const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
     const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey));
     const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', keyPair.privateKey));

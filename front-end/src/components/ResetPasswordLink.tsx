@@ -71,7 +71,8 @@ export function ResetPasswordLink({ token }: ResetPasswordLinkProps) {
         setLoading(true);
         try {
             const rewrapped = await rewrapPrivateKeyWithNewPassword(password, undefined, undefined, targetChatId);
-            const e2ee = rewrapped || (await generateUserE2EEBundle(password)).bundle;
+            const generated = await generateUserE2EEBundle(password);
+            const e2ee = rewrapped || generated?.bundle || null;
             const response = await fetch(`${API_BASE_URL}/auth/password-link/consume`, {
                 method: 'POST',
                 headers: {
